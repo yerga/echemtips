@@ -4,11 +4,11 @@
 
 The current application includes:
 
-- Watch Current with full-rate recording and a stoppable, decimated live view.
+- Watch Current and Watch Position as separate, explicitly started monitors with full-rate recording and stoppable, decimated live views.
 - Standalone cyclic voltammetry with separate raw and CV plots.
 - Standalone approach with contact detection, pause/stop, and optional retract.
-- Approach followed by CV or potential-step current-time acquisition.
-- Scan hopping with CV or current-time acquisition, full-experiment Z/current histories, contact-height maps, and current maps.
+- Approach followed by CV or potential-step current-time acquisition, with optional X/Y prepositioning.
+- Scan hopping with CV or current-time acquisition, serpentine or raster paths, contact-height/current maps, and live spacing and duration estimates.
 - Bounded X/Y/Z piezo movement and controlled potential output.
 - Simulation and NI USB-7856R operation with a fixed, explicit channel map.
 - A separate data-analysis UI for eChemTips CSV recordings and identified legacy LabVIEW exports.
@@ -37,6 +37,8 @@ Select **Simulation**, connect, and choose an experiment. The simulated surface 
 Use **Settings → Save as defaults and apply** to persist the selected backend, piezo ranges, bitfile, data folder, Current 1/2 sensitivities, command-voltage ratio, and acquisition options. Defaults are stored in the operating system's per-user application-settings folder and load regardless of the directory used to start eChemTips.
 
 Recordings are streamed to uniquely named CSV and JSON metadata files in `data/`, or in the directory selected in Settings. The complete data rate is written to disk while plots retain a bounded, decimated display buffer.
+
+Approach thresholds are entered in pA in the operator UI. Every approach-based page includes a dedicated **Accept current Z as contact and continue** action for intentional manual acceptance; the global **End waypoint** control only advances the active FPGA waypoint and is not contact confirmation. Long scan traces show a rolling 120-second window while the recorder continues to preserve the complete acquisition.
 
 ## Analyze data
 
