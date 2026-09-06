@@ -143,6 +143,22 @@ class QtLayoutTests(unittest.TestCase):
         finally:
             window.close()
 
+    def test_watch_position_is_separate_and_opt_in(self) -> None:
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        monitor = window.pages["Watch position"]
+        sample = Sample(1.0, 12.0, 23.0, 34.0, 0.1, 0.0, 1.25, 0.2)
+        try:
+            self.assertFalse(monitor.live_enabled)
+            monitor.on_samples([sample])
+            self.assertEqual(len(monitor.plot.x_values), 0)
+            monitor.set_live_view(True)
+            monitor.on_samples([sample])
+            self.assertEqual(tuple(series[-1] for series in monitor.plot.series), (12.0, 23.0, 34.0))
+            self.assertEqual(tuple(curve.name() for curve in monitor.plot.curves), ("X", "Y", "Z"))
+        finally:
+            window.close()
+
 
 if __name__ == "__main__":
     unittest.main()

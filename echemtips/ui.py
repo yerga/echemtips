@@ -198,7 +198,7 @@ class InstrumentReadoutBar(QtWidgets.QFrame):
 
 class WatchPage(BasePage):
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Watch current", "Monitor live current and position, control the potential outputs, and record without blocking the display.")
+        super().__init__(app, "Watch current", "Monitor Current 1 and Current 2, control the potential outputs, and record without blocking the display.")
         layout = QtWidgets.QHBoxLayout(self.body)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
@@ -338,6 +338,108 @@ class WatchPage(BasePage):
         self.position_label.setText(f"Z  {latest.z_um:.3f} µm")
         for sample in samples:
             self.plot.append(sample.elapsed_s, sample.current1_na, sample.current2_na, redraw=False)
+        self.plot.redraw()
+
+
+class WatchPositionPage(BasePage):
+    def __init__(self, app: "EChemTipsApp") -> None:
+        super().__init__(app, "Watch position", "Monitor the measured X, Y, and Z piezo positions as a dedicated time trace.")
+        layout = QtWidgets.QHBoxLayout(self.body)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        controls = Card("Position monitor", "The graph starts only when requested; recording remains full-rate.")
+        controls.setMinimumWidth(285)
+        controls.setMaximumWidth(350)
+        form = _vbox(controls.body)
+        self.start_recording_button = button("Start recording", self.start_recording)
+        self.stop_recording_button = button("Stop and save", self.stop_recording, "danger")
+        self.stop_recording_button.setEnabled(False)
+        self.live_enabled = False
+        self.live_button = button("Start live view", self.toggle_live_view)
+        form.addWidget(self.start_recording_button)
+        form.addWidget(self.stop_recording_button)
+        form.addWidget(self.live_button)
+        form.addWidget(button("Clear graph", lambda: self.plot.clear()))
+        self.live_status_label = label("Live view is off. Start it to plot new samples.", "muted", word_wrap=True)
+        form.addWidget(self.live_status_label)
+        form.addStretch(1)
+        control_scroll = scroll_area(controls, minimum_width=285)
+        control_scroll.setMaximumWidth(350)
+        layout.addWidget(control_scroll)
+
+        self.plot = Plot(
+            "Measured piezo positions",
+            "Position (µm)",
+            (COLORS["blue"], COLORS["warning"], COLORS["accent"]),
+            app.settings.display_max_points,
+            names=("X", "Y", "Z"),
+        )
+        layout.addWidget(_plot_card("Position history", "Measured position channels AI0, AI1, and AI2.", self.plot), 1)
+
+    def _can_control_recording(self) -> bool:
+        try:
+            self.app.require_connection()
+            if self.app.any_experiment_active:
+                raise BackendError("The active experiment owns the recording. Use its Stop button.")
+        except BackendError as exc:
+            self.app.show_error(str(exc))
+            return False
+        return True
+
+    def start_recording(self) -> None:
+        if not self._can_control_recording():
+            return
+        try:
+            if self.app.recorder.active:
+                raise BackendError("A recording is already active.")
+            self.app.recorder.start("Watch Position", self.app.settings)
+            self.set_live_view(True)
+            self.app._sync_action_states()
+            self.app.toast("Recording measured piezo positions", "success")
+        except (BackendError, OSError, ValueError) as exc:
+            self.app.show_error(f"Could not start the recording: {exc}")
+
+    def stop_recording(self) -> None:
+        if not self._can_control_recording():
+            return
+        try:
+            if not self.app.recorder.active or self.app.recorder.name != "Watch Position":
+                raise BackendError("There is no Watch Position recording to stop.")
+            self.app.flush_acquisition()
+            path = self.app.finish_recording()
+            self.app._sync_action_states()
+            self.app.toast(f"Saved {path.name}" if path else "Recording stopped", "success")
+        except (BackendError, OSError, ValueError) as exc:
+            self.app.show_error(f"Could not stop the recording: {exc}")
+
+    def toggle_live_view(self) -> None:
+        if self.live_enabled:
+            self.set_live_view(False)
+            self.app.toast("Position live view stopped")
+            return
+        try:
+            self.app.require_connection()
+            if self.app.any_experiment_active:
+                raise BackendError("Use the active experiment page to view its data while the experiment is running.")
+            self.set_live_view(True)
+            self.app.toast("Position live view started", "success")
+        except BackendError as exc:
+            self.app.show_error(str(exc))
+
+    def set_live_view(self, enabled: bool, *, clear_on_start: bool = True) -> None:
+        enabled = bool(enabled)
+        if enabled and not self.live_enabled and clear_on_start:
+            self.plot.clear()
+        self.live_enabled = enabled
+        self.live_button.setText("Stop live view" if enabled else "Start live view")
+        self.live_status_label.setText("Plotting samples acquired from now." if enabled else "Live view is off. Start it to plot new samples.")
+
+    def on_samples(self, samples: list[Sample]) -> None:
+        if not samples or not self.live_enabled:
+            return
+        for sample in samples:
+            self.plot.append(sample.elapsed_s, sample.x_um, sample.y_um, sample.z_um, redraw=False)
         self.plot.redraw()
 
 
@@ -953,7 +1055,7 @@ class SettingsPage(BasePage):
 
 
 class EChemTipsApp(QtWidgets.QMainWindow):
-    PAGE_NAMES = ("Watch current", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
+    PAGE_NAMES = ("Watch current", "Watch position", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
 
     def __init__(self) -> None:
         super().__init__(); configure_pyqtgraph(); self.setWindowTitle("eChemTips — Scanning Electrochemistry"); self.resize(1440, 900); self.setMinimumSize(1080, 680)
@@ -973,7 +1075,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         brand_row = QtWidgets.QWidget(); br = _hbox(brand_row); mark = label("e", "brand"); mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); mark.setFixedSize(36, 36); mark.setStyleSheet(f"background:{COLORS['accent']}; border-radius:8px; color:white;")
         brand = label("eChemTips", "brand"); br.addWidget(mark); br.addWidget(brand); br.addStretch(1); side.addWidget(brand_row); side.addWidget(label("SCANNING ELECTROCHEMISTRY", "sidebarMuted")); side.addSpacing(18)
         self.nav_buttons: dict[str, QtWidgets.QPushButton] = {}; group = QtWidgets.QButtonGroup(self); group.setExclusive(True)
-        glyphs = ("◉", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
+        glyphs = ("◉", "⌁", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
         for index, (name, glyph) in enumerate(zip(self.PAGE_NAMES, glyphs), 1):
             nav = button(f"{glyph}   {name}", lambda checked=False, page=name: self.show_page(page)); nav.setProperty("role", "nav"); nav.setCheckable(True); group.addButton(nav); side.addWidget(nav); self.nav_buttons[name] = nav
             shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
@@ -990,7 +1092,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.statusBar().setSizeGripEnabled(False)
 
     def _build_pages(self) -> None:
-        self.pages: dict[str, BasePage] = {"Watch current": WatchPage(self), "CV": StandaloneCVPage(self), "Approach": StandaloneApproachPage(self), "Approach + CV": ApproachCVPage(self), "Approach + I-t": ApproachITPage(self), "Scan hopping + CV": ScanHoppingCVPage(self), "Scan hopping + I-t": ScanHoppingITPage(self), "Move piezo": MovePiezoPage(self), "Settings": SettingsPage(self)}
+        self.pages: dict[str, BasePage] = {"Watch current": WatchPage(self), "Watch position": WatchPositionPage(self), "CV": StandaloneCVPage(self), "Approach": StandaloneApproachPage(self), "Approach + CV": ApproachCVPage(self), "Approach + I-t": ApproachITPage(self), "Scan hopping + CV": ScanHoppingCVPage(self), "Scan hopping + I-t": ScanHoppingITPage(self), "Move piezo": MovePiezoPage(self), "Settings": SettingsPage(self)}
         for page in self.pages.values(): self.stack.addWidget(page)
 
     def show_page(self, name: str) -> None:
@@ -1048,16 +1150,21 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         suffix = f" · {' · '.join(notes)}" if notes else ""; self.connection_label.setText(f"{'Connected' if connected else 'Disconnected'} · {self.backend.label}{suffix}"); self.execution_label.setText("Idle" if connected else "Offline")
         self.connect_button.setText("Disconnect" if connected else "Connect"); caps = self.backend.capabilities; self.pause_button.setEnabled(connected and caps.pause_resume); self.resume_button.setEnabled(connected and caps.pause_resume); self.next_waypoint_button.setEnabled(connected and caps.end_current_waypoint)
         if not connected and hasattr(self, "pages"):
-            watch = self.pages.get("Watch current")
-            if isinstance(watch, WatchPage): watch.set_live_view(False)
+            for page_name in ("Watch current", "Watch position"):
+                watch = self.pages.get(page_name)
+                if isinstance(watch, (WatchPage, WatchPositionPage)): watch.set_live_view(False)
             self.instrument_readout.clear()
         self._sync_action_states()
 
     def _sync_action_states(self) -> None:
         if not hasattr(self, "pages"): return
-        connected = self.backend.connected; watch = self.pages["Watch current"]
-        watch_owned = self.recorder.active and self.recorder.name == "Watch Current"; watch.start_recording_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); watch.stop_recording_button.setEnabled(watch_owned)
-        watch.live_button.setEnabled(connected and not self.any_experiment_active)
+        connected = self.backend.connected
+        for page_name, recording_name in (("Watch current", "Watch Current"), ("Watch position", "Watch Position")):
+            watch = self.pages[page_name]
+            watch_owned = self.recorder.active and self.recorder.name == recording_name
+            watch.start_recording_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active)
+            watch.stop_recording_button.setEnabled(watch_owned)
+            watch.live_button.setEnabled(connected and not self.any_experiment_active)
         for page_name, key in {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it"}.items():
             page = self.pages[page_name]; page.start_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); page.stop_button.setEnabled(self.experiments[key].active)
 
@@ -1135,7 +1242,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 readout.set_sample(self._sample)
             for name, page in self.pages.items():
                 if name in {"Scan hopping + CV", "Scan hopping + I-t"}: continue
-                if name == "Watch current" and not page.live_enabled: continue
+                if name in {"Watch current", "Watch position"} and not page.live_enabled: continue
                 page.on_samples(samples)
         else:
             for name in ("CV", "Approach", "Approach + I-t"):
