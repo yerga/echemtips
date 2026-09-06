@@ -627,7 +627,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         cv_page = QtWidgets.QWidget(); cvl = _vbox(cv_page); self.cv_pixel_label = label("Waiting for a CV", "muted")
         self.cv_plot = Plot("Potential 1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential 1 (V)")
         cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Cyclic voltammogram", "Only CV samples from the latest pixel.", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV at pixel")
-        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm"); self.current_map = Heatmap("nA")
+        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
         ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential.", self.current_map), 1); self.visual_tabs.addTab(maps, "Maps")
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1
 
@@ -648,14 +648,25 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
     def on_samples(self, samples: list[Sample]) -> None:
-        experiment = self.experiment; state_before = experiment.state; point_before = experiment.point_index; hardware = experiment._hardware
-        update = experiment.tick_samples(samples)
-        if update is None: return
+        experiment = self.experiment; hardware = experiment._hardware
+        if not experiment.active or not samples: return
+        point_before = experiment.point_index
+        if hardware:
+            update = experiment.tick_samples(samples)
+        else:
+            # One simulator acquisition drain was measured before this UI
+            # update. Tag it at the current pixel and advance the simulated
+            # waveform only from its newest measurement.
+            for sample in samples: experiment._tag(sample, point_before)
+            state_before = experiment.state
+            update = experiment.tick_samples([samples[-1]])
         cv_changed = False
         for sample in samples:
             self.z_plot.append(sample.elapsed_s, sample.z_um, redraw=False); self.current_plot.append(sample.elapsed_s, sample.current1_na, redraw=False)
-            if hardware: point_index, stage = self.app.backend.hardware_scan_context(sample.line_number)
-            else: point_index, stage = (sample.scan_pixel if sample.scan_pixel >= 0 else point_before), ("cv" if state_before == ExperimentState.CV else "")
+            if hardware:
+                point_index, stage = self.app.backend.hardware_scan_context(sample.line_number)
+            else:
+                point_index, stage = point_before, ("cv" if state_before == ExperimentState.CV and sample is samples[-1] else "")
             if stage == "cv" and point_index >= 0:
                 if point_index != self._cv_point:
                     self.cv_plot.clear(); self._cv_point = point_index; row, column = experiment.params.grid()[point_index][:2]
@@ -691,7 +702,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         tl.addWidget(_plot_card("Z", "Full scan Z history.", self.z_plot), 1); tl.addWidget(_plot_card("Current", "Full scan Current 1 history.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential 1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Pixel I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Pixel I–t elapsed (s)")
         il.addWidget(_plot_card("Potential", "Timed steps at the latest pixel.", self.voltage_plot), 1); il.addWidget(_plot_card("Current", "I–t response at the latest pixel.", self.it_plot), 1); tabs.addTab(it, "I–t at pixel")
-        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm"); self.current_map = Heatmap("nA")
+        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
         ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold.", self.current_map), 1); tabs.addTab(maps, "Maps")
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None
 

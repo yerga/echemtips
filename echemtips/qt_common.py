@@ -254,40 +254,73 @@ class Plot(QtWidgets.QWidget):
 
 
 class Heatmap(QtWidgets.QWidget):
-    """Interactive map with numeric hover values and a visible color scale."""
+    """Pixel map with a compact labelled color bar and exact hover readout."""
 
-    def __init__(self, unit: str) -> None:
+    def __init__(self, unit: str, quantity: str = "Value") -> None:
         super().__init__()
         self.unit = unit
+        self.quantity = quantity
         self.rows = 1
         self.columns = 1
         self.values: dict[tuple[int, int], float] = {}
         self.plot_item = pg.PlotItem()
-        self.view = pg.ImageView(view=self.plot_item)
-        self.view.ui.roiBtn.hide()
-        self.view.ui.menuBtn.hide()
+        self.view = pg.GraphicsLayoutWidget()
+        self.view.setBackground(COLORS["panel"])
+        self.view.addItem(self.plot_item, row=0, col=0)
+        self.image_item = pg.ImageItem(axisOrder="row-major")
+        self.plot_item.addItem(self.image_item)
         self.plot_item.setLabel("bottom", "X pixel")
         self.plot_item.setLabel("left", "Y pixel")
+        self.plot_item.getAxis("bottom").setTickSpacing(1, 1)
+        self.plot_item.getAxis("left").setTickSpacing(1, 1)
+        self.plot_item.showGrid(x=True, y=True, alpha=0.12)
+        self.plot_item.getViewBox().setAspectLocked(True)
+        self.plot_item.getViewBox().invertY(True)
+        self.color_bar = pg.ColorBarItem(
+            values=(0.0, 1.0),
+            width=14,
+            colorMap=pg.colormap.get("viridis"),
+            label=f"{self.quantity} ({self.unit})",
+            interactive=False,
+            colorMapMenu=False,
+            pen=pg.mkPen(COLORS["text"]),
+        )
+        self.color_bar.setImageItem(self.image_item, insert_in=self.plot_item)
         self.view.setMinimumHeight(230)
         self.summary = label("Waiting for contact data", "muted")
+        self.hover = label("Hover a pixel for its value", "muted")
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         layout.addWidget(self.view, 1)
         layout.addWidget(self.summary)
+        layout.addWidget(self.hover)
+        self.view.scene().sigMouseMoved.connect(self._show_hover_value)
         self.set_data({}, 1, 1)
+
+    def _show_hover_value(self, scene_position: QtCore.QPointF) -> None:
+        if not self.plot_item.sceneBoundingRect().contains(scene_position):
+            return
+        point = self.plot_item.getViewBox().mapSceneToView(scene_position)
+        column, row = round(point.x()), round(point.y())
+        value = self.values.get((row, column))
+        if value is None or not math.isfinite(value):
+            self.hover.setText(f"Pixel ({column + 1}, {row + 1}) · no data")
+        else:
+            self.hover.setText(f"Pixel ({column + 1}, {row + 1}) · {value:.5g} {self.unit}")
 
     def set_data(self, values: dict[tuple[int, int], float], rows: int, columns: int) -> None:
         self.values = dict(values)
         self.rows = max(1, rows)
         self.columns = max(1, columns)
+        self.plot_item.getAxis("bottom").setTicks([[(index, str(index + 1)) for index in range(self.columns)]])
+        self.plot_item.getAxis("left").setTicks([[(index, str(index + 1)) for index in range(self.rows)]])
         data = np.full((self.rows, self.columns), np.nan, dtype=float)
         for (row, column), value in values.items():
             if 0 <= row < self.rows and 0 <= column < self.columns and math.isfinite(value):
                 data[row, column] = value
         finite = data[np.isfinite(data)]
         display = data if finite.size else np.zeros_like(data)
-        levels = None
         if finite.size:
             low, high = float(finite.min()), float(finite.max())
             if math.isclose(low, high):
@@ -295,10 +328,14 @@ class Heatmap(QtWidgets.QWidget):
                 levels = (low - padding, high + padding)
             else:
                 levels = (low, high)
-            self.summary.setText(f"{low:.4g} to {high:.4g} {self.unit} · {finite.size}/{data.size} pixels")
+            self.summary.setText(f"{self.quantity} scale: {low:.4g}–{high:.4g} {self.unit} · {finite.size}/{data.size} pixels")
         else:
+            levels = (0.0, 1.0)
             self.summary.setText("Waiting for contact data")
-        self.view.setImage(display, autoRange=False, autoLevels=levels is None, levels=levels, axes={"x": 1, "y": 0})
+            self.hover.setText("Hover a pixel for its value")
+        self.image_item.setImage(display, autoLevels=False, levels=levels)
+        self.image_item.setRect(QtCore.QRectF(-0.5, -0.5, self.columns, self.rows))
+        self.color_bar.setLevels(levels)
         self.plot_item.getViewBox().setRange(xRange=(-0.5, self.columns - 0.5), yRange=(-0.5, self.rows - 0.5), padding=0.03)
 
 

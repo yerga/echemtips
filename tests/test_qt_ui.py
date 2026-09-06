@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
+from echemtips.qt_common import Heatmap
 from echemtips.ui import EChemTipsApp, create_application
 
 
@@ -56,6 +57,19 @@ class QtLayoutTests(unittest.TestCase):
             self.assertTrue(window.export_button.isVisible())
         finally:
             window.close()
+
+    def test_heatmap_has_compact_labelled_scale(self) -> None:
+        heatmap = Heatmap("nA", "Current 1")
+        heatmap.resize(500, 420)
+        heatmap.show()
+        heatmap.set_data({(0, 0): 1.5, (0, 1): 2.5}, 1, 2)
+        self.qt_app.processEvents()
+        try:
+            self.assertEqual(heatmap.color_bar.getAxis("left").labelText, "Current 1 (nA)")
+            self.assertEqual(heatmap.color_bar.levels(), (1.5, 2.5))
+            self.assertFalse(hasattr(heatmap.view, "ui"))
+        finally:
+            heatmap.close()
 
 
 if __name__ == "__main__":

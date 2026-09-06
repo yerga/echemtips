@@ -147,6 +147,9 @@ class ApproachCVExperiment:
                 self.state = ExperimentState.CONTACT
                 self.detail = f"Feedback threshold reached at Z = {sample.z_um:.3f} um"
                 self._begin_cv()
+                # This contact sample was acquired at the approach potential.
+                # The next sample is the first one measured at the CV start.
+                return ExperimentUpdate(self.state, self.detail, self.progress)
             elif endpoint:
                 self.backend.stop_motion()
                 self.backend.move("Z", p.start_z_um, max(10.0, p.approach_rate_um_s))
@@ -341,6 +344,9 @@ class ScanHoppingCVExperiment:
                 self.contact_z[key] = sample.z_um
                 self.contact_detected[key] = True
                 self._begin_simulated_cv()
+                # Do not advance the sweep using a sample that was acquired at
+                # the approach potential. The next sample is at cv_start_v.
+                return
             elif endpoint:
                 self.contact_detected[(row, column)] = False
                 self.backend.stop_motion()

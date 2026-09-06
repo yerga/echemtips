@@ -294,6 +294,22 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(update.state, ExperimentState.CV)
         self.assertEqual(update.progress, 0.6)
 
+    def test_scan_cv_acquires_its_first_point_at_the_configured_start(self) -> None:
+        settings = AppSettings()
+        backend = SimulationBackend(settings)
+        backend.connect()
+        experiment = ScanHoppingCVExperiment(backend, settings)
+        params = ScanHoppingCVParameters(x_points=1, y_points=1, cv_start_v=-0.2)
+        experiment.start(params)
+        experiment.state = ExperimentState.APPROACHING
+        contact = Sample(0, 35, 35, 68, params.approach_voltage_v, 0, 3, 0, 0)
+        experiment.tick_samples([contact])
+        self.assertEqual(experiment.state, ExperimentState.CV)
+        self.assertAlmostEqual(experiment._cv_voltage, params.cv_start_v)
+        first_cv_sample = backend.read_sample()
+        self.assertAlmostEqual(first_cv_sample.voltage1_v, params.cv_start_v)
+        backend.disconnect()
+
     def test_scan_hopping_cv_simulation_completes_maps(self) -> None:
         settings = AppSettings()
         backend = SimulationBackend(settings, seed=4)
