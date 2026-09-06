@@ -47,8 +47,6 @@ class BackendCapabilities:
     pause_resume: bool
     end_current_waypoint: bool
     live_potential: bool
-    secondary_feedback: bool
-    proportional_feedback: bool
     measured_position: bool
     full_rate_acquisition: bool
 
@@ -91,7 +89,7 @@ class InstrumentBackend(ABC):
     @property
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
-            True, True, True, False, False, True,
+            True, True, True, True,
             self.full_rate_data_available,
         )
 
@@ -178,8 +176,7 @@ class InstrumentBackend(ABC):
         raise BackendError("Ending the current waypoint is not supported by this backend.")
 
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
-        if config.secondary_enabled or config.proportional_gain:
-            raise BackendError("Advanced feedback is not executed by this backend.")
+        del config
 
     def execution_status(self) -> ExecutionSnapshot:
         return ExecutionSnapshot("", ExecutionState.IDLE, 0, 0, 0, 0, "No FPGA program")
@@ -389,8 +386,6 @@ class NIFPGABackend(InstrumentBackend):
             supports("pause") and supports("resume"),
             supports("end_current_waypoint"),
             True,
-            supports("configure_feedback"),
-            supports("configure_feedback"),
             self.full_rate_data_available,
             self.full_rate_data_available,
         )

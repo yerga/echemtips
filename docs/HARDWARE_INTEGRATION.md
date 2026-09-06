@@ -122,7 +122,7 @@ The native implementation deliberately separates method logic from common host b
 - `ni_driver.py` owns exactly one active program, applies the compiled scalers, services refills, verifies line-count/waiting-state completion, drains final acquisition data, and exposes pause, resume, end-current-line, ChangeOnFly potential, and feedback configuration operations.
 - `acquisition.py` continuously drains the hardware outside Qt rendering. The recorder receives every sample; PyQtGraph plots receive separately decimated buffers that preserve the experiment's first and last points.
 
-The advanced feedback settings write both threshold channels, comparison polarity, proportional gain, maximum Z update, running-average terms, self-reference-on-hold, and all three bulk-retraction distances. Waypoint update intervals are compiled into each frame. These are host configuration operations only: feedback decisions and Z updates remain FPGA-resident.
+Each approach method selects Current 1 or Current 2, a contact threshold, and comparison polarity. The driver writes fixed neutral values to the deployed target's unused secondary/proportional/running-average/bulk registers at initialization and before a method, preventing stale FPGA state from enabling unsupported feedback modes. Contact decisions and Z stopping remain FPGA-resident.
 
 The current application always treats AI1 as Y-position readback. It does not expose the original Current 4 multiplexing mode.
 

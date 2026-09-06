@@ -406,42 +406,31 @@ class WECSPMDriver:
             return current_to_raw(value, sensitivity)
         raise ValueError(f"Unsupported feedback channel: {channel}")
 
-    def _distance_to_raw(self, distance_um: float) -> int:
-        multiplier = 2.0 if self.settings.z_bipolar else 1.0
-        return clamp_i16(distance_um * 32768.0 * multiplier / self.settings.z_range_um)
-
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
-        """Apply ChangeOnFly feedback controls; execution remains on FPGA."""
-        if config.primary_channel not in FEEDBACK_SIGNAL_CODES or config.secondary_channel not in FEEDBACK_SIGNAL_CODES:
+        """Configure the selected contact current and neutralize unused FPGA modes."""
+        if config.primary_channel not in FEEDBACK_SIGNAL_CODES:
             raise ValueError("Unsupported feedback signal selection.")
-        if not math.isfinite(config.proportional_gain):
-            raise ValueError("Feedback proportional gain must be finite.")
         if not 0 <= config.update_interval_us <= 32767:
             raise ValueError("Feedback update interval must be 0..32767 us.")
-        if config.max_z_step_nm < 0 or config.running_average_whole < 0 or config.running_average_minus < 0:
-            raise ValueError("Feedback movement and running-average settings must be non-negative.")
-        # Convert every value before touching the target so invalid input can
-        # never leave a partially updated feedback configuration.
         primary_raw = self._feedback_value_to_raw(config.primary_channel, config.primary_threshold)
-        secondary_raw = self._feedback_value_to_raw(config.secondary_channel, config.secondary_threshold)
-        bulk_raw = tuple(self._distance_to_raw(value) for value in (
-            config.distance_to_bulk_um, config.distance_to_bulk2_um, config.distance_to_bulk3_um,
-        ))
+        # The deployed bitfile still exposes legacy advanced-feedback
+        # registers. Write fixed neutral values so stale target state cannot
+        # activate a mode that eChemTips does not support.
         writes = (
             ("FeedBackType", FEEDBACK_SIGNAL_CODES[config.primary_channel]),
             ("Feedback_Threshold", primary_raw),
             ("GreaterThan", bool(config.primary_greater_than)),
-            ("FeedBackType 2", FEEDBACK_SIGNAL_CODES[config.secondary_channel]),
-            ("Feedback_Threshold 2", secondary_raw),
-            ("GreaterThan 2", bool(config.secondary_greater_than)),
-            ("P", float(config.proportional_gain)),
-            ("Upper limit Of dZ", int(config.max_z_step_nm)),
-            ("P2AvgWhole", int(config.running_average_whole)),
-            ("P2AvgMinus", int(config.running_average_minus)),
-            ("Feedback1 on  Hold", bool(config.self_reference_on_hold)),
-            ("DistanceToBulk", bulk_raw[0]),
-            ("DistanceToBulk 2", bulk_raw[1]),
-            ("DistanceToBulk 3", bulk_raw[2]),
+            ("FeedBackType 2", FEEDBACK_SIGNAL_CODES["Current 2"]),
+            ("Feedback_Threshold 2", 0),
+            ("GreaterThan 2", True),
+            ("P", 0.0),
+            ("Upper limit Of dZ", 10),
+            ("P2AvgWhole", 1),
+            ("P2AvgMinus", 0),
+            ("Feedback1 on  Hold", False),
+            ("DistanceToBulk", 0),
+            ("DistanceToBulk 2", 0),
+            ("DistanceToBulk 3", 0),
         )
         try:
             for name, value in writes:

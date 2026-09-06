@@ -860,9 +860,6 @@ class SettingsPage(BasePage):
             command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
             hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=self.save_directory.variable.get().strip(), auto_save=self.auto_save.get(),
             display_max_points=self.display_max_points.integer(),
-            feedback2_enabled=self.app.settings.feedback2_enabled, feedback2_channel=self.app.settings.feedback2_channel, feedback2_threshold=self.app.settings.feedback2_threshold, feedback2_greater_than=self.app.settings.feedback2_greater_than, feedback_p_gain=self.app.settings.feedback_p_gain,
-            feedback_max_z_step_nm=self.app.settings.feedback_max_z_step_nm, feedback_update_interval_us=self.app.settings.feedback_update_interval_us, feedback_running_average_whole=self.app.settings.feedback_running_average_whole, feedback_running_average_minus=self.app.settings.feedback_running_average_minus, feedback_self_reference_on_hold=self.app.settings.feedback_self_reference_on_hold,
-            distance_to_bulk_um=self.app.settings.distance_to_bulk_um, distance_to_bulk2_um=self.app.settings.distance_to_bulk2_um, distance_to_bulk3_um=self.app.settings.distance_to_bulk3_um,
         )
 
     def save(self) -> None:

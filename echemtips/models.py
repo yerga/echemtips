@@ -60,19 +60,6 @@ class AppSettings:
     save_directory: str = "data"
     auto_save: bool = True
     display_max_points: int = 12_000
-    feedback2_enabled: bool = False
-    feedback2_channel: str = "Current 2"
-    feedback2_threshold: float = 0.0
-    feedback2_greater_than: bool = True
-    feedback_p_gain: float = 0.0
-    feedback_max_z_step_nm: int = 10
-    feedback_update_interval_us: int = 2
-    feedback_running_average_whole: int = 1
-    feedback_running_average_minus: int = 0
-    feedback_self_reference_on_hold: bool = False
-    distance_to_bulk_um: float = 0.0
-    distance_to_bulk2_um: float = 0.0
-    distance_to_bulk3_um: float = 0.0
 
     @property
     def effective_period_s(self) -> float:
@@ -110,26 +97,6 @@ class AppSettings:
             errors.append("FPGA watchdog margin must be between 1 and 600 seconds.")
         if not isinstance(self.display_max_points, int) or isinstance(self.display_max_points, bool) or not 500 <= self.display_max_points <= 100_000:
             errors.append("Display buffer must contain between 500 and 100,000 points.")
-        feedback_channels = {"Current 1", "Current 2"}
-        if self.feedback2_channel not in feedback_channels:
-            errors.append("Secondary feedback signal is not supported.")
-        if not _finite_number(self.feedback2_threshold):
-            errors.append("Secondary feedback threshold must be finite.")
-        if not _finite_number(self.feedback_p_gain):
-            errors.append("Feedback proportional gain must be finite.")
-        if not isinstance(self.feedback_max_z_step_nm, int) or isinstance(self.feedback_max_z_step_nm, bool) or self.feedback_max_z_step_nm < 0:
-            errors.append("Maximum feedback Z movement must be a non-negative integer in nm.")
-        if not isinstance(self.feedback_update_interval_us, int) or isinstance(self.feedback_update_interval_us, bool) or not 0 <= self.feedback_update_interval_us <= 32767:
-            errors.append("Feedback update interval must be between 0 and 32767 us.")
-        for name, value in (("Running-average whole window", self.feedback_running_average_whole),
-                            ("Running-average subtraction window", self.feedback_running_average_minus)):
-            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                errors.append(f"{name} must be a non-negative integer.")
-        for name, value in (("Bulk distance 1", self.distance_to_bulk_um),
-                            ("Bulk distance 2", self.distance_to_bulk2_um),
-                            ("Bulk distance 3", self.distance_to_bulk3_um)):
-            if not _finite_number(value) or abs(float(value)) > self.z_range_um:
-                errors.append(f"{name} must be finite and within the configured Z span.")
         if self.mode == "NI FPGA" and (not isinstance(self.resource, str) or not self.resource.strip()):
             errors.append("NI FPGA resource must not be empty.")
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
@@ -148,19 +115,7 @@ class FeedbackConfiguration:
     primary_channel: str = "Current 1"
     primary_threshold: float = 2.0
     primary_greater_than: bool = True
-    secondary_enabled: bool = False
-    secondary_channel: str = "Current 2"
-    secondary_threshold: float = 0.0
-    secondary_greater_than: bool = True
-    proportional_gain: float = 0.0
-    max_z_step_nm: int = 10
     update_interval_us: int = 2
-    running_average_whole: int = 1
-    running_average_minus: int = 0
-    self_reference_on_hold: bool = False
-    distance_to_bulk_um: float = 0.0
-    distance_to_bulk2_um: float = 0.0
-    distance_to_bulk3_um: float = 0.0
 
     @classmethod
     def from_settings(
@@ -171,14 +126,8 @@ class FeedbackConfiguration:
         primary_threshold: float = 2.0,
         primary_greater_than: bool = True,
     ) -> "FeedbackConfiguration":
-        return cls(
-            primary_channel, primary_threshold, primary_greater_than,
-            settings.feedback2_enabled, settings.feedback2_channel, settings.feedback2_threshold,
-            settings.feedback2_greater_than, settings.feedback_p_gain, settings.feedback_max_z_step_nm,
-            settings.feedback_update_interval_us, settings.feedback_running_average_whole,
-            settings.feedback_running_average_minus, settings.feedback_self_reference_on_hold,
-            settings.distance_to_bulk_um, settings.distance_to_bulk2_um, settings.distance_to_bulk3_um,
-        )
+        del settings
+        return cls(primary_channel, primary_threshold, primary_greater_than)
 
 
 class SettingsStore:

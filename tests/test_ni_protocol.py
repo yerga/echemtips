@@ -160,21 +160,19 @@ class NativeDriverTests(unittest.TestCase):
         self.assertFalse(self.session.registers["EndCurrentLine"].value)
         config = FeedbackConfiguration(
             primary_channel="Current 1", primary_threshold=2.5,
-            secondary_enabled=True, secondary_channel="Current 2", secondary_threshold=-1.5,
-            secondary_greater_than=False, proportional_gain=.25, max_z_step_nm=12,
-            update_interval_us=7, running_average_whole=16, running_average_minus=4,
-            self_reference_on_hold=True, distance_to_bulk_um=-3,
+            update_interval_us=7,
         )
         self.driver.configure_feedback(config)
         self.assertEqual(self.session.registers["Feedback_Threshold"].value, current_to_raw(2.5, 1.0))
         self.assertEqual(self.session.registers["FeedBackType 2"].value, 2)
-        self.assertEqual(self.session.registers["Feedback_Threshold 2"].value, current_to_raw(-1.5, 1.0))
-        self.assertFalse(self.session.registers["GreaterThan 2"].value)
-        self.assertEqual(self.session.registers["P"].value, .25)
-        self.assertEqual(self.session.registers["Upper limit Of dZ"].value, 12)
-        self.assertEqual(self.session.registers["P2AvgWhole"].value, 16)
-        self.assertEqual(self.session.registers["P2AvgMinus"].value, 4)
-        self.assertTrue(self.session.registers["Feedback1 on  Hold"].value)
+        self.assertEqual(self.session.registers["Feedback_Threshold 2"].value, 0)
+        self.assertTrue(self.session.registers["GreaterThan 2"].value)
+        self.assertEqual(self.session.registers["P"].value, 0.0)
+        self.assertEqual(self.session.registers["Upper limit Of dZ"].value, 10)
+        self.assertEqual(self.session.registers["P2AvgWhole"].value, 1)
+        self.assertEqual(self.session.registers["P2AvgMinus"].value, 0)
+        self.assertFalse(self.session.registers["Feedback1 on  Hold"].value)
+        self.assertEqual(self.session.registers["DistanceToBulk"].value, 0)
         self.assertEqual(self.driver._feedback_update_interval_us, 7)
 
     def test_standalone_cv_respects_ramp_at_start_and_reports_context(self) -> None:
@@ -567,12 +565,6 @@ class NativeDriverTests(unittest.TestCase):
             self.driver.start_approach_cv(ApproachCVParameters(feedback_threshold_na=11.0))
         self.assertEqual(before, {name: register.value for name, register in self.session.registers.items()})
         self.assertEqual(self.driver.positions_fifo.writes, [])
-
-    def test_unrepresentable_secondary_feedback_threshold_is_rejected(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Current 2.*ADC range"):
-            self.driver.configure_feedback(FeedbackConfiguration(
-                secondary_enabled=True, secondary_channel="Current 2", secondary_threshold=11.0,
-            ))
 
     def test_unrepresentable_ao3_program_is_rejected_before_writes(self) -> None:
         self.driver.settings.command_voltage_ratio = 20.0
