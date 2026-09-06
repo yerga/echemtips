@@ -63,6 +63,11 @@ class QtLayoutTests(unittest.TestCase):
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
+            move = window.pages["Move piezo"]
+            self.assertEqual(
+                tuple(move.axis.itemText(index) for index in range(move.axis.count())),
+                ("X", "Y", "Z"),
+            )
         finally:
             window.poll_timer.stop()
             window.close()

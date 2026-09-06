@@ -916,14 +916,14 @@ class ScanHoppingITPage(ManagedExperimentPage):
 
 class MovePiezoPage(BasePage):
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Move piezo", "Command bounded X/Y/Z moves or set an analog potential, with commanded and measured positions shown separately.")
+        super().__init__(app, "Move piezo", "Command bounded X/Y/Z piezo moves, with commanded and measured positions shown separately.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
-        controls = Card("Motion command", "Position bounds come from Settings. Potential commands are applied immediately.")
+        controls = Card("Motion command", "Position bounds come from Settings.")
         form = _vbox(controls.body)
-        form.addWidget(label("Axis", "muted")); self.axis = Choice(("X", "Y", "Z", "Voltage 1", "Voltage 2"), "Z"); form.addWidget(self.axis)
+        form.addWidget(label("Piezo axis", "muted")); self.axis = Choice(("X", "Y", "Z"), "Z"); form.addWidget(self.axis)
         self.target = Field("Target", "50", "µm"); self.speed = Field("Speed", "5", "µm/s"); form.addWidget(self.target); form.addWidget(self.speed)
-        action_row = QtWidgets.QWidget(); al = _hbox(action_row); al.addWidget(button("Move / apply", self.move, "primary")); al.addWidget(button("Stop", self.stop, "danger")); form.addWidget(action_row); form.addStretch(1)
-        self.axis.currentTextChanged.connect(self._update_units); controls.setMinimumWidth(300); controls.setMaximumWidth(380); root.addWidget(controls)
+        action_row = QtWidgets.QWidget(); al = _hbox(action_row); al.addWidget(button("Move piezo", self.move, "primary")); al.addWidget(button("Stop", self.stop, "danger")); form.addWidget(action_row); form.addStretch(1)
+        controls.setMinimumWidth(300); controls.setMaximumWidth(380); root.addWidget(controls)
         position = Card("Position readback", "Measured inputs are never presented as commanded output values."); pl = _vbox(position.body)
         panes = QtWidgets.QWidget(); pg = QtWidgets.QGridLayout(panes); pg.setContentsMargins(0, 0, 0, 0); pg.setSpacing(10)
         self.position_labels: dict[str, QtWidgets.QLabel] = {}; self.commanded_position_labels: dict[str, QtWidgets.QLabel] = {}
@@ -935,16 +935,13 @@ class MovePiezoPage(BasePage):
         pl.addWidget(panes); self.readback_source_label = label(app.backend.position_readback_label, "muted", word_wrap=True); self.status_label = label("No move in progress", "muted", word_wrap=True)
         pl.addWidget(self.readback_source_label); pl.addWidget(self.status_label); pl.addStretch(1); root.addWidget(position, 1)
 
-    def _update_units(self, *_args: object) -> None:
-        voltage = self.axis.get().startswith("Voltage"); self.target.set_unit("V" if voltage else "µm"); self.speed.set_unit("not used" if voltage else "µm/s"); self.speed.entry.setEnabled(not voltage)
-
     def move(self) -> None:
         try:
             self.app.require_connection()
             if self.app.any_experiment_active: raise BackendError("Stop the experiment before commanding a manual move.")
-            axis, target, speed = self.axis.get(), self.target.float(), self.speed.float() if self.speed.entry.isEnabled() else 1.0
+            axis, target, speed = self.axis.get(), self.target.float(), self.speed.float()
             self.app.backend.move(axis, target, speed)
-            self.status_label.setText(f"Set {axis} to {target:g} V" if axis.startswith("Voltage") else f"Moving {axis} to {target:g} µm at {speed:g} µm/s")
+            self.status_label.setText(f"Moving {axis} to {target:g} µm at {speed:g} µm/s")
             self.app.toast("Command accepted", "success")
         except (ValueError, BackendError) as exc: self.app.show_error(str(exc))
 
