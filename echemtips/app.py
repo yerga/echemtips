@@ -85,7 +85,7 @@ def _smoke_test(app: EChemTipsApp) -> None:
     if app.approach_it_experiment.state != ExperimentState.COMPLETE or not approach_it.it_plot.x_values:
         raise RuntimeError("Approach + I-t UI did not run its contact-gated potential steps")
     approach = app.pages["Approach + CV"]
-    if not all(hasattr(approach, name) for name in ("z_plot", "current_plot", "cv_plot", "stop_button")):
+    if not all(hasattr(approach, name) for name in ("z_plot", "current_plot", "cv_plot", "approach_curve", "stop_button")):
         raise RuntimeError("Approach + CV is missing a required trace or stop control")
     approach_params = ApproachCVParameters(
         start_z_um=10, end_z_um=90, approach_rate_um_s=3, feedback_threshold_na=2,

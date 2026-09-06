@@ -75,6 +75,14 @@ class QtLayoutTests(unittest.TestCase):
             self.assertEqual((approach_cv.parameters().x_um, approach_cv.parameters().y_um), (25.0, 35.0))
             self.assertEqual(window.next_waypoint_button.text(), "End waypoint")
             self.assertIn("does not confirm contact", window.next_waypoint_button.toolTip())
+            for page_name in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
+                curve = window.pages[page_name].approach_curve
+                self.assertEqual(curve.graph.getAxis("bottom").labelText, "Z position (µm)")
+            approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
+            self.assertEqual(
+                tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
+                ("Time traces", "Voltammogram", "Approach curve"),
+            )
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
