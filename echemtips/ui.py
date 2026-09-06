@@ -120,6 +120,44 @@ def _program_card(
     return card, diagram
 
 
+def _format_duration(seconds: float) -> str:
+    seconds = max(0, round(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = ([f"{hours} h"] if hours else []) + ([f"{minutes} min"] if minutes else []) + ([f"{seconds} s"] if seconds or not (hours or minutes) else [])
+    return " ".join(parts)
+
+
+def _scan_summary_card(parameter_factory, triggers: list[QtCore.QObject]) -> tuple[Card, QtWidgets.QLabel, QtWidgets.QLabel]:
+    card = Card("Calculated scan", "Derived from the exact bounds, point counts, and rates above.")
+    layout = _vbox(card.body, spacing=5)
+    spacing_label = label("Hop spacing —", "statusStrong")
+    duration_label = label("Estimated duration —", "muted", word_wrap=True)
+    layout.addWidget(spacing_label)
+    layout.addWidget(duration_label)
+
+    def refresh(*_args: object) -> None:
+        try:
+            parameters = parameter_factory()
+            dx, dy = parameters.spacing_um
+            spacing_label.setText(f"Hop spacing  X {dx:g} µm · Y {dy:g} µm")
+            duration_label.setText(
+                f"Estimated known time ≈ {_format_duration(parameters.estimated_known_duration_s())}, "
+                "plus the first approach and the initial move from the current position."
+            )
+        except (ValueError, ZeroDivisionError, OverflowError):
+            spacing_label.setText("Hop spacing —")
+            duration_label.setText("Enter valid scan parameters to calculate duration.")
+
+    for trigger in triggers:
+        if isinstance(trigger, QtWidgets.QLineEdit):
+            trigger.textChanged.connect(refresh)
+        elif isinstance(trigger, QtWidgets.QCheckBox):
+            trigger.stateChanged.connect(refresh)
+    refresh()
+    return card, spacing_label, duration_label
+
+
 def _left_scroll(widget: QtWidgets.QWidget, width: int = 390) -> QtWidgets.QScrollArea:
     area = scroll_area(widget, minimum_width=330)
     area.setMaximumWidth(max(width + 90, 440))
@@ -897,6 +935,10 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 9, 1)
         self.serpentine = Check("Serpentine rows", True); g.addWidget(self.serpentine, 10, 0, 1, 2)
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
+        summary, self.spacing_label, self.duration_label = _scan_summary_card(
+            self.parameters, [*controls.findChildren(QtWidgets.QLineEdit), self.serpentine]
+        )
+        hl.addWidget(summary)
         preview, self.program_preview = _program_card(
             "CV at each hop", "The same labelled profile runs after contact at every point.", "Potential E1 (V)",
             (self.cv_start, self.vertex1, self.vertex2, self.cv_start),
@@ -991,6 +1033,10 @@ class ScanHoppingITPage(ManagedExperimentPage):
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 10, 0)
         self.serpentine = Check("Serpentine rows", True); self.greater = Check("Trigger when greater", True); g.addWidget(self.serpentine, 10, 1); g.addWidget(self.greater, 11, 0, 1, 2)
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
+        summary, self.spacing_label, self.duration_label = _scan_summary_card(
+            self.parameters, [*controls.findChildren(QtWidgets.QLineEdit), self.serpentine]
+        )
+        hl.addWidget(summary)
         preview, self.program_preview = _program_card(
             "I–t profile at each hop", "Each level is held for the configured duration.", "Potential E1 (V)",
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,

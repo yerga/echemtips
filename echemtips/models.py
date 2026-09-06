@@ -418,6 +418,30 @@ class ScanHoppingCVParameters:
     def point_count(self) -> int:
         return self.x_points * self.y_points
 
+    @property
+    def spacing_um(self) -> tuple[float, float]:
+        return (
+            abs(self.x_end_um - self.x_start_um) / (self.x_points - 1) if self.x_points > 1 else 0.0,
+            abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
+        )
+
+    def estimated_known_duration_s(self) -> float:
+        """Estimate all deterministic time except initial positioning/approach."""
+        grid = self.grid()
+        lateral = sum(
+            math.hypot(current[2] - previous[2], current[3] - previous[3])
+            for previous, current in zip(grid, grid[1:])
+        ) / self.lateral_rate_um_s
+        z_distance = abs(self.end_z_um - self.start_z_um)
+        repeated_approaches = max(0, self.point_count - 1) * z_distance / self.approach_rate_um_s
+        retracts = self.point_count * z_distance / self.retract_rate_um_s
+        cv_per_point = self.cycles * (
+            abs(self.cv_vertex1_v - self.cv_start_v)
+            + abs(self.cv_vertex2_v - self.cv_vertex1_v)
+            + abs(self.cv_start_v - self.cv_vertex2_v)
+        ) / self.cv_scan_rate_v_s
+        return lateral + repeated_approaches + retracts + self.point_count * cv_per_point
+
     @staticmethod
     def _axis_values(start: float, end: float, count: int) -> list[float]:
         if count == 1:
@@ -514,6 +538,26 @@ class ScanHoppingITParameters:
     @property
     def point_count(self) -> int:
         return self.x_points * self.y_points
+
+    @property
+    def spacing_um(self) -> tuple[float, float]:
+        return (
+            abs(self.x_end_um - self.x_start_um) / (self.x_points - 1) if self.x_points > 1 else 0.0,
+            abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
+        )
+
+    def estimated_known_duration_s(self) -> float:
+        """Estimate all deterministic time except initial positioning/approach."""
+        grid = self.grid()
+        lateral = sum(
+            math.hypot(current[2] - previous[2], current[3] - previous[3])
+            for previous, current in zip(grid, grid[1:])
+        ) / self.lateral_rate_um_s
+        z_distance = abs(self.end_z_um - self.start_z_um)
+        repeated_approaches = max(0, self.point_count - 1) * z_distance / self.approach_rate_um_s
+        retracts = self.point_count * z_distance / self.retract_rate_um_s
+        it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
+        return lateral + repeated_approaches + retracts + self.point_count * it_per_point
 
     def grid(self) -> list[tuple[int, int, float, float]]:
         xs = ScanHoppingCVParameters._axis_values(self.x_start_um, self.x_end_um, self.x_points)

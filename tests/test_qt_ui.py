@@ -81,6 +81,10 @@ class QtLayoutTests(unittest.TestCase):
             for page_name in ("CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
                 preview = window.pages[page_name].program_preview
                 self.assertGreater(len(preview.labels), 0, page_name)
+            for page_name in ("Scan hopping + CV", "Scan hopping + I-t"):
+                scan_page = window.pages[page_name]
+                self.assertIn("X 15 µm · Y 15 µm", scan_page.spacing_label.text())
+                self.assertIn("plus the first approach", scan_page.duration_label.text())
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),

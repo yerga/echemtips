@@ -398,6 +398,25 @@ class ExperimentTests(unittest.TestCase):
         self.assertTrue(all(55 < value < 80 for value in experiment.contact_z.values()))
         backend.disconnect()
 
+    def test_scan_spacing_and_duration_are_derived_from_the_full_path(self) -> None:
+        cv = ScanHoppingCVParameters(
+            x_start_um=0, x_end_um=20, x_points=3,
+            y_start_um=0, y_end_um=10, y_points=2,
+            start_z_um=10, end_z_um=20,
+            lateral_rate_um_s=10, approach_rate_um_s=5, retract_rate_um_s=10,
+            cv_start_v=0, cv_vertex1_v=1, cv_vertex2_v=-1, cv_scan_rate_v_s=2, cycles=1,
+        )
+        self.assertEqual(cv.spacing_um, (10.0, 10.0))
+        self.assertAlmostEqual(cv.estimated_known_duration_s(), 33.0)
+        it = ScanHoppingITParameters(
+            x_start_um=0, x_end_um=10, x_points=2, y_start_um=0, y_end_um=0, y_points=1,
+            start_z_um=10, end_z_um=20, lateral_rate_um_s=10,
+            approach_rate_um_s=5, retract_rate_um_s=10,
+            initial_hold_s=1, step_hold_s=2, return_hold_s=1, cycles=1,
+        )
+        self.assertEqual(it.spacing_um, (10.0, 0.0))
+        self.assertAlmostEqual(it.estimated_known_duration_s(), 13.0)
+
     def test_scan_end_of_travel_aborts_pixel_without_cv(self) -> None:
         settings = AppSettings()
         backend = SimulationBackend(settings)
