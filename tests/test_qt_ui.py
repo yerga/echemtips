@@ -108,6 +108,18 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertAlmostEqual(scan_page.parameters().retract_distance_um, 10.0)
                 self.assertEqual(scan_page.z_plot.rolling_window_s, 60)
                 self.assertEqual(scan_page.current_plot.rolling_window_s, 60)
+                map_index = next(
+                    index for index in range(scan_page.visual_tabs.count())
+                    if scan_page.visual_tabs.tabText(index) == "Maps"
+                )
+                window.show_page(page_name)
+                scan_page.visual_tabs.setCurrentIndex(map_index)
+                self.qt_app.processEvents()
+                self.assertIs(
+                    scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner),
+                    scan_page.map_view_toolbar,
+                )
+                self.assertTrue(scan_page.map_view_toolbar.isVisible())
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
@@ -197,6 +209,10 @@ class QtLayoutTests(unittest.TestCase):
             self.assertEqual(heatmap.color_bar.getAxis("left").labelText, "Current 1 (nA)")
             self.assertEqual(heatmap.color_bar.levels(), (1.5, 2.5))
             self.assertFalse(hasattr(heatmap.view, "ui"))
+            self.assertIs(heatmap.summary.parentWidget(), heatmap.footer)
+            self.assertIs(heatmap.hover.parentWidget(), heatmap.footer)
+            self.assertGreaterEqual(heatmap.footer.geometry().top(), heatmap.view.geometry().bottom())
+            self.assertTrue(heatmap.summary.text().startswith("Range 1.5–2.5 nA"))
             heatmap.set_data({(0, 0): 1.5, (0, 1): 2.5}, 1, 2,
                              x_values=[35.0, 40.0], y_values=[12.0],
                              view_mode="circular", footprint_diameter_um=1.5)

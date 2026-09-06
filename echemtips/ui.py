@@ -212,6 +212,25 @@ def _left_scroll(widget: QtWidgets.QWidget, width: int = 390) -> QtWidgets.QScro
     return area
 
 
+def _install_map_view_selector(tabs: QtWidgets.QTabWidget, map_index: int, selector: Choice) -> QtWidgets.QWidget:
+    """Place map-only controls in the tab bar so they do not shrink the plots."""
+    toolbar = QtWidgets.QWidget()
+    layout = _hbox(toolbar, (0, 0, 8, 0), 6)
+    layout.addWidget(label("Map view", "muted"))
+    selector.setMinimumWidth(155)
+    selector.setMaximumWidth(180)
+    layout.addWidget(selector)
+    toolbar.setFixedHeight(34)
+    tabs.setCornerWidget(toolbar, QtCore.Qt.Corner.TopRightCorner)
+
+    def update_visibility(index: int) -> None:
+        toolbar.setVisible(index == map_index)
+
+    tabs.currentChanged.connect(update_visibility)
+    update_visibility(tabs.currentIndex())
+    return toolbar
+
+
 class BasePage(QtWidgets.QWidget):
     def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
         super().__init__()
@@ -1332,9 +1351,9 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
-        maps = QtWidgets.QWidget(); maps_layout = _vbox(maps); toolbar = QtWidgets.QWidget(); toolbar_layout = _hbox(toolbar); toolbar_layout.addWidget(label("Footprint view", "muted")); self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); toolbar_layout.addWidget(self.map_view); toolbar_layout.addStretch(1); maps_layout.addWidget(toolbar)
-        map_panels = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(map_panels); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
-        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential in physical stage coordinates.", self.current_map), 1); maps_layout.addWidget(map_panels, 1); self.visual_tabs.addTab(maps, "Maps")
+        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
+        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential in physical stage coordinates.", self.current_map), 1); map_index = self.visual_tabs.addTab(maps, "Maps")
+        self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); self.map_view_toolbar = _install_map_view_selector(self.visual_tabs, map_index, self.map_view)
         self.map_view.currentTextChanged.connect(self._refresh_maps)
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
 
@@ -1455,7 +1474,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
         )
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
-        right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Hopping I–t status", "Start hopping I–t")); tabs = QtWidgets.QTabWidget()
+        right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Hopping I–t status", "Start hopping I–t")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
         tl.addWidget(_plot_card("Z", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Hop I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Hop I–t elapsed (s)")
@@ -1463,9 +1482,9 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
-        maps = QtWidgets.QWidget(); maps_layout = _vbox(maps); toolbar = QtWidgets.QWidget(); toolbar_layout = _hbox(toolbar); toolbar_layout.addWidget(label("Footprint view", "muted")); self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); toolbar_layout.addWidget(self.map_view); toolbar_layout.addStretch(1); maps_layout.addWidget(toolbar)
-        map_panels = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(map_panels); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
-        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold in physical stage coordinates.", self.current_map), 1); maps_layout.addWidget(map_panels, 1); tabs.addTab(maps, "Maps")
+        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
+        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold in physical stage coordinates.", self.current_map), 1); map_index = tabs.addTab(maps, "Maps")
+        self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); self.map_view_toolbar = _install_map_view_selector(tabs, map_index, self.map_view)
         self.map_view.currentTextChanged.connect(self._refresh_maps)
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
 

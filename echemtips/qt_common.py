@@ -417,17 +417,46 @@ class Heatmap(QtWidgets.QWidget):
             pen=pg.mkPen(COLORS["text"]),
         )
         self.color_bar.setImageItem(self.image_item, insert_in=self.plot_item)
-        self.view.setMinimumHeight(230)
-        self.summary = label("Waiting for contact data", "muted")
+        # Keep a modest floor so constrained windows allocate space cleanly;
+        # a large minimum makes Qt overlap the footer when the map tab is short.
+        self.view.setMinimumHeight(140)
+        self.view.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
+        )
+        self.summary = label("Range — · waiting for data", "muted")
         self.hover = label("Hover a footprint for its position and value", "muted")
+        for readout in (self.summary, self.hover):
+            readout.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+        self.footer = QtWidgets.QFrame()
+        self.footer.setObjectName("mapFooter")
+        self.footer.setStyleSheet(
+            f"QFrame#mapFooter {{ background: {COLORS['panel']}; "
+            f"border-top: 1px solid {COLORS['border']}; }}"
+        )
+        footer_layout = QtWidgets.QStackedLayout(self.footer)
+        footer_layout.setContentsMargins(4, 4, 4, 2)
+        footer_layout.addWidget(self.summary)
+        footer_layout.addWidget(self.hover)
+        footer_layout.setCurrentWidget(self.summary)
+        self.footer_stack = footer_layout
+        self.footer.setFixedHeight(32)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
         layout.addWidget(self.view, 1)
-        layout.addWidget(self.summary)
-        layout.addWidget(self.hover)
+        layout.addWidget(self.footer)
+        self.view.installEventFilter(self)
         self.view.scene().sigMouseMoved.connect(self._show_hover_value)
         self.set_data({}, 1, 1)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if watched is self.view and event.type() == QtCore.QEvent.Type.Leave:
+            self.footer_stack.setCurrentWidget(self.summary)
+        return super().eventFilter(watched, event)
 
     def _show_hover_value(self, scene_position: QtCore.QPointF) -> None:
         if not self.plot_item.sceneBoundingRect().contains(scene_position):
@@ -440,6 +469,7 @@ class Heatmap(QtWidgets.QWidget):
             self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · no data")
         else:
             self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · {value:.5g} {self.unit}")
+        self.footer_stack.setCurrentWidget(self.hover)
 
     def set_data(
         self,
@@ -481,10 +511,10 @@ class Heatmap(QtWidgets.QWidget):
                 levels = (low - padding, high + padding)
             else:
                 levels = (low, high)
-            self.summary.setText(f"{self.quantity}: {low:.4g}–{high:.4g} {self.unit} · {finite.size}/{data.size} positions")
+            self.summary.setText(f"Range {low:.4g}–{high:.4g} {self.unit} · {finite.size}/{data.size} positions")
         else:
             levels = (0.0, 1.0)
-            self.summary.setText("Waiting for contact data")
+            self.summary.setText("Range — · waiting for data")
             self.hover.setText("Hover a footprint for its position and value")
         plot_xs, plot_ys, image = list(xs), list(ys), display
         if plot_xs[-1] < plot_xs[0]:
