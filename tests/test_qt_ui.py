@@ -78,6 +78,9 @@ class QtLayoutTests(unittest.TestCase):
             for page_name in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
                 curve = window.pages[page_name].approach_curve
                 self.assertEqual(curve.graph.getAxis("bottom").labelText, "Z position (µm)")
+            for page_name in ("CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
+                preview = window.pages[page_name].program_preview
+                self.assertGreater(len(preview.labels), 0, page_name)
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),

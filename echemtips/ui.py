@@ -44,6 +44,7 @@ from .qt_common import (
     Field,
     Heatmap,
     Plot,
+    ProgramDiagram,
     add_field,
     application_stylesheet,
     button,
@@ -90,6 +91,33 @@ def _plot_card(title: str, subtitle: str, plot: QtWidgets.QWidget) -> Card:
     layout = _vbox(card.body)
     layout.addWidget(plot, 1)
     return card
+
+
+def _program_card(
+    title: str,
+    subtitle: str,
+    y_label: str,
+    fields: tuple[Field, ...],
+    names: tuple[str, ...],
+    *,
+    stepped: bool = False,
+) -> tuple[Card, ProgramDiagram]:
+    card = Card(title, subtitle)
+    diagram = ProgramDiagram(y_label)
+    _vbox(card.body).addWidget(diagram)
+
+    def refresh(*_args: object) -> None:
+        try:
+            values = [field.float() for field in fields]
+        except ValueError:
+            diagram.set_profile([], [])
+            return
+        diagram.set_profile(values, list(names), stepped=stepped)
+
+    for field in fields:
+        field.entry.textChanged.connect(refresh)
+    refresh()
+    return card, diagram
 
 
 def _left_scroll(widget: QtWidgets.QWidget, width: int = 390) -> QtWidgets.QScrollArea:
@@ -541,6 +569,12 @@ class StandaloneCVPage(ManagedExperimentPage):
         left = QtWidgets.QWidget()
         left_layout = _vbox(left)
         left_layout.addWidget(controls)
+        preview, self.program_preview = _program_card(
+            "CV profile", "The labels match the fields above.", "Potential E1 (V)",
+            (self.start_v, self.vertex1, self.vertex2, self.start_v),
+            ("Start", "Vertex 1", "Vertex 2", "Return"),
+        )
+        left_layout.addWidget(preview)
         left_layout.addStretch(1)
         root.addWidget(_left_scroll(left, 370))
 
@@ -612,7 +646,12 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.retract = Check("Retract after approach", True)
         form.addWidget(self.greater, 5, 0)
         form.addWidget(self.retract, 5, 1)
-        left = QtWidgets.QWidget(); left_layout = _vbox(left); left_layout.addWidget(controls); left_layout.addStretch(1)
+        left = QtWidgets.QWidget(); left_layout = _vbox(left); left_layout.addWidget(controls)
+        preview, self.program_preview = _program_card(
+            "Z movement profile", "The return segment applies when retract is enabled.", "Z (µm)",
+            (self.start_z, self.end_z, self.start_z), ("Start Z", "Approach limit", "Retract"),
+        )
+        left_layout.addWidget(preview); left_layout.addStretch(1)
         root.addWidget(_left_scroll(left))
         right = QtWidgets.QWidget(); right_layout = _vbox(right)
         right_layout.addWidget(self.build_status("Approach status", "Start approach"))
@@ -690,7 +729,13 @@ class ApproachCVPage(ManagedExperimentPage):
         self.scan_rate = add_field(cg, Field("Scan rate", "0.25", "V/s"), 1, 1)
         self.cycles = add_field(cg, Field("Cycles", "2"), 2, 0)
         self.retract = Check("Retract to start Z after CV", True); cg.addWidget(self.retract, 2, 1)
-        controls_layout.addWidget(cv); controls_layout.addStretch(1)
+        controls_layout.addWidget(cv)
+        preview, self.program_preview = _program_card(
+            "CV profile", "The approach occurs at the approach potential; the CV then follows this profile.", "Potential E1 (V)",
+            (self.cv_start, self.vertex1, self.vertex2, self.cv_start),
+            ("CV start", "Vertex 1", "Vertex 2", "Return"),
+        )
+        controls_layout.addWidget(preview); controls_layout.addStretch(1)
         root.addWidget(_left_scroll(controls_host))
         right = QtWidgets.QWidget(); right_layout = _vbox(right)
         right_layout.addWidget(self.build_status("Experiment status", "Start approach + CV"))
@@ -773,7 +818,12 @@ class ApproachITPage(ManagedExperimentPage):
         self.cycles = add_field(g, Field("Cycles", "1"), 7, 1)
         self.retract = Check("Retract after I–t", True); self.greater = Check("Trigger when greater", True)
         g.addWidget(self.retract, 8, 0); g.addWidget(self.greater, 8, 1)
-        holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls); hl.addStretch(1); root.addWidget(_left_scroll(holder))
+        holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
+        preview, self.program_preview = _program_card(
+            "I–t potential profile", "Each level is held for the duration entered above.", "Potential E1 (V)",
+            (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
+        )
+        hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(holder))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Approach + I–t status", "Start approach + I–t"))
         tabs = QtWidgets.QTabWidget(); full = QtWidgets.QWidget(); fl = QtWidgets.QHBoxLayout(full)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
@@ -846,7 +896,13 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             setattr(self, name, add_field(g, Field(caption, value, unit), index // 2, index % 2))
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 9, 1)
         self.serpentine = Check("Serpentine rows", True); g.addWidget(self.serpentine, 10, 0, 1, 2)
-        holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls); hl.addStretch(1); root.addWidget(_left_scroll(holder, 410))
+        holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
+        preview, self.program_preview = _program_card(
+            "CV at each hop", "The same labelled profile runs after contact at every point.", "Potential E1 (V)",
+            (self.cv_start, self.vertex1, self.vertex2, self.cv_start),
+            ("CV start", "Vertex 1", "Vertex 2", "Return"),
+        )
+        hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(holder, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
         self.visual_tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces)
@@ -934,7 +990,12 @@ class ScanHoppingITPage(ManagedExperimentPage):
         for index, (name, caption, value, unit) in enumerate(specs): setattr(self, name, add_field(g, Field(caption, value, unit), index // 2, index % 2))
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 10, 0)
         self.serpentine = Check("Serpentine rows", True); self.greater = Check("Trigger when greater", True); g.addWidget(self.serpentine, 10, 1); g.addWidget(self.greater, 11, 0, 1, 2)
-        holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls); hl.addStretch(1); root.addWidget(_left_scroll(holder, 410))
+        holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
+        preview, self.program_preview = _program_card(
+            "I–t profile at each hop", "Each level is held for the configured duration.", "Potential E1 (V)",
+            (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
+        )
+        hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(holder, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Hopping I–t status", "Start hopping I–t")); tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=120); self.current_plot = Plot("Current vs time", "Current 1 (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=120)
         tl.addWidget(_plot_card("Z", "Rolling 120 s view; the complete scan remains recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Current", "Rolling 120 s view; the complete scan remains recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")

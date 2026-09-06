@@ -267,6 +267,54 @@ class Plot(QtWidgets.QWidget):
             self.setMinimumHeight(height)
 
 
+class ProgramDiagram(QtWidgets.QWidget):
+    """Small parameter-linked line profile used to explain a method program."""
+
+    def __init__(self, y_label: str) -> None:
+        super().__init__()
+        self.graph = pg.PlotWidget(background=COLORS["panel"])
+        self.graph.setLabel("left", y_label, color=COLORS["muted"])
+        self.graph.getAxis("left").enableAutoSIPrefix(False)
+        self.graph.showGrid(y=True, alpha=0.12)
+        self.graph.setMouseEnabled(x=False, y=False)
+        self.graph.hideButtons()
+        self.graph.setMenuEnabled(False)
+        self.graph.getViewBox().setDefaultPadding(0.15)
+        self.curve = self.graph.plot([], [], pen=pg.mkPen(COLORS["accent"], width=3), symbol="o", symbolSize=7)
+        self.labels: list[pg.TextItem] = []
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.graph)
+        self.setFixedHeight(150)
+
+    def set_profile(self, values: list[float], names: list[str], *, stepped: bool = False) -> None:
+        for item in self.labels:
+            self.graph.removeItem(item)
+        self.labels.clear()
+        if len(values) != len(names) or not values:
+            self.curve.setData([], [])
+            return
+        if stepped:
+            x: list[float] = [0.0]
+            y: list[float] = [values[0]]
+            for index, value in enumerate(values[1:], 1):
+                x.extend((float(index), float(index)))
+                y.extend((y[-1], value))
+            label_x = [float(index) for index in range(len(values))]
+        else:
+            x = [float(index) for index in range(len(values))]
+            y = values
+            label_x = x
+        self.curve.setData(x, y)
+        self.graph.getAxis("bottom").setTicks([[(position, name) for position, name in zip(label_x, names)]])
+        for position, value in zip(label_x, values):
+            item = pg.TextItem(f"{value:g}", color=COLORS["text"], anchor=(0.5, 1.35))
+            item.setPos(position, value)
+            self.graph.addItem(item)
+            self.labels.append(item)
+        self.graph.enableAutoRange()
+
+
 class Heatmap(QtWidgets.QWidget):
     """Pixel map with a compact labelled color bar and exact hover readout."""
 
