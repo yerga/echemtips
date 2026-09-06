@@ -98,6 +98,17 @@ class QtLayoutTests(unittest.TestCase):
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
                 ("Time traces", "Voltammogram", "Approach curve"),
             )
+            expected_sections = {
+                "Approach": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition"),
+                "Approach + CV": ("1 · Approach", "2 · Optional XY preposition", "3 · Cyclic voltammetry"),
+                "Approach + I-t": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition", "4 · I–t potential program"),
+                "Scan hopping + CV": ("1 · Scan area and path", "2 · Motion and contact", "3 · Cyclic voltammetry"),
+                "Scan hopping + I-t": ("1 · Scan area and path", "2 · Motion and contact", "3 · I–t potential program"),
+            }
+            for page_name, sections in expected_sections.items():
+                page_text = {item.text() for item in window.pages[page_name].findChildren(QtWidgets.QLabel)}
+                for section in sections:
+                    self.assertIn(section, page_text, f"{page_name}: {section}")
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
