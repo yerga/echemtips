@@ -63,12 +63,18 @@ class QtLayoutTests(unittest.TestCase):
                 threshold = window.pages[page_name].threshold
                 self.assertEqual(threshold.unit_label.text(), "pA")
                 self.assertAlmostEqual(float(threshold.variable.get()), 2000.0)
+                self.assertEqual(
+                    window.pages[page_name].accept_approach_button.text(),
+                    "Accept current Z as contact and continue",
+                )
             self.assertAlmostEqual(window.pages["Approach"].parameters().feedback_threshold, 2.0)
             self.assertAlmostEqual(window.pages["Approach + CV"].parameters().feedback_threshold_na, 2.0)
             approach_cv = window.pages["Approach + CV"]
             approach_cv.x_position.entry.setText("25")
             approach_cv.y_position.entry.setText("35")
             self.assertEqual((approach_cv.parameters().x_um, approach_cv.parameters().y_um), (25.0, 35.0))
+            self.assertEqual(window.next_waypoint_button.text(), "End waypoint")
+            self.assertIn("does not confirm contact", window.next_waypoint_button.toolTip())
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")

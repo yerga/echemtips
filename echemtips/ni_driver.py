@@ -86,11 +86,13 @@ class WECSPMDriver:
         self._approach_greater_than = True
         self._approach_end_z_raw: int | None = None
         self._approach_contact_observed = False
+        self._approach_manually_accepted = False
         self._scan_threshold_na = 0.0
         self._scan_feedback_channel = "Current 1"
         self._scan_greater_than = True
         self._scan_end_z_raw: int | None = None
         self._scan_contact_observed: set[int] = set()
+        self._scan_manually_accepted: set[int] = set()
         self._scan_last_approach_z: dict[int, float] = {}
         self._scan_failed_contact: int | None = None
         self._owner = ""
@@ -107,6 +109,7 @@ class WECSPMDriver:
         self._method_feedback_channel = "Current 1"
         self._method_greater_than = True
         self._method_contact_observed: set[int] = set()
+        self._method_manually_accepted: set[int] = set()
         self._method_grid: list[tuple[int, int, float, float]] = []
         self._method_point = -1
         self._method_no_contact = False
@@ -180,6 +183,7 @@ class WECSPMDriver:
             ):
                 self._write_register(name, -exponent)
             self.streamer.start(payload, timeout_ms=100)
+            self._write_register("External Pause", False)
         except Exception:
             # A timed-out FIFO write can have transferred a prefix. Never
             # allow another program to resume that uncertain queue.
@@ -527,6 +531,7 @@ class WECSPMDriver:
         self._approach_greater_than = params.greater_than
         self._approach_end_z_raw = end_z
         self._approach_contact_observed = False
+        self._approach_manually_accepted = False
 
     def _submit_approach_cv_followup(self) -> None:
         params = self._approach_params
@@ -578,6 +583,9 @@ class WECSPMDriver:
                 self._submit_approach_cv_followup()
                 return {"stage": "contact", "detail": "Contact confirmed; CV program submitted", "progress": 0.42}
             if not self._submitted and self._hardware_complete:
+                if self._approach_manually_accepted:
+                    self._submit_approach_cv_followup()
+                    return {"stage": "contact", "detail": "Operator accepted contact; CV program submitted", "progress": 0.42}
                 self._cancelled = True
                 self._cancel_detail = "End Z was reached without a confirmed contact; CV was not submitted"
                 return {"stage": "aborted", "detail": self._cancel_detail, "progress": 0.4}
@@ -640,6 +648,7 @@ class WECSPMDriver:
         self._scan_greater_than = params.greater_than
         self._scan_end_z_raw = position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar)
         self._scan_contact_observed.clear()
+        self._scan_manually_accepted.clear()
         self._scan_last_approach_z.clear()
         self._scan_failed_contact = None
         self._submit_scan_approach(0, initial=True, resume=False)
@@ -760,6 +769,11 @@ class WECSPMDriver:
                         "progress": base_progress + 0.45 / max(1, point_total),
                         "point_index": self._scan_point, "point_stage": "cv"}
             if not self._submitted and self._hardware_complete:
+                if self._scan_point in self._scan_manually_accepted:
+                    self._submit_scan_cv(self._scan_point)
+                    return {"stage": "cv", "detail": f"Point {self._scan_point + 1}: operator accepted contact; CV submitted",
+                            "progress": base_progress + 0.45 / max(1, point_total),
+                            "point_index": self._scan_point, "point_stage": "cv"}
                 self._scan_failed_contact = self._scan_point
                 self._cancelled = True
                 self._cancel_detail = f"Point {self._scan_point + 1} reached End Z without contact; CV was not submitted"
@@ -795,6 +809,7 @@ class WECSPMDriver:
         self._method_terminal = ""
         self._method_detail = ""
         self._method_contact_observed.clear()
+        self._method_manually_accepted.clear()
         self._method_grid = []
         self._method_point = -1
         self._method_no_contact = False
@@ -1006,7 +1021,7 @@ class WECSPMDriver:
                         "progress": 0.4, "point_index": self._method_point, "point_stage": "contact",
                     }
             elif not self._submitted and self._hardware_complete:
-                self._method_finish_approach(False)
+                self._method_finish_approach(self._method_point in self._method_manually_accepted)
         elif not self._submitted and self._hardware_complete:
             if self._method_name == "scan_hopping_it" and self._method_phase == "it" and not self._method_no_contact:
                 if self._method_point + 1 < len(self._method_grid):
@@ -1117,6 +1132,23 @@ class WECSPMDriver:
         self._write_register("EndCurrentLine", True)
         self._write_register("EndCurrentLine", False)
         self._execution_detail = "Requested transition to the next FPGA waypoint"
+
+    def accept_approach(self) -> None:
+        """End only an active approach and explicitly authorize its follow-up."""
+        self._check_target_health()
+        if self._approach_phase == "approach" and self._owner == "approach-cv":
+            self._approach_manually_accepted = True
+            self._approach_contact_observed = True
+        elif self._scan_phase == "approach" and self._owner == "scan-hopping-cv" and self._scan_point >= 0:
+            self._scan_manually_accepted.add(self._scan_point)
+            self._scan_contact_observed.add(self._scan_point)
+        elif self._method_phase == "approach" and self._owner in {"approach", "approach-it", "scan-hopping-it"}:
+            self._method_manually_accepted.add(self._method_point)
+            self._method_contact_observed.add(self._method_point)
+        else:
+            raise RuntimeError("No approach movement is currently active.")
+        self.end_current_waypoint()
+        self._execution_detail = "Operator accepted the current Z as contact"
 
     def _feedback_hit(self, current_na: float, threshold_na: float, greater_than: bool) -> bool:
         return current_na >= threshold_na if greater_than else current_na <= threshold_na

@@ -175,6 +175,10 @@ class InstrumentBackend(ABC):
     def end_current_waypoint(self) -> None:
         raise BackendError("Ending the current waypoint is not supported by this backend.")
 
+    def accept_approach(self) -> None:
+        """Stop the active approach waypoint and treat its current Z as contact."""
+        raise BackendError("Manual approach acceptance is not supported by this backend.")
+
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
         del config
 
@@ -532,6 +536,12 @@ class NIFPGABackend(InstrumentBackend):
         if self._driver is None or not callable(getattr(self._driver, "end_current_waypoint", None)):
             raise BackendError("This FPGA driver does not support EndCurrentLine.")
         self._driver.end_current_waypoint()
+
+    @_synchronized_io
+    def accept_approach(self) -> None:
+        if self._driver is None or not callable(getattr(self._driver, "accept_approach", None)):
+            raise BackendError("This FPGA driver does not support manual approach acceptance.")
+        self._driver.accept_approach()
 
     @_synchronized_io
     def configure_feedback(self, config: FeedbackConfiguration) -> None:

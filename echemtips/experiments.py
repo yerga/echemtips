@@ -93,6 +93,16 @@ class ApproachCVExperiment:
         self.state = ExperimentState.ABORTED
         self.detail = "Experiment stopped by operator"
 
+    def accept_approach(self, sample: Sample) -> None:
+        if self.state != ExperimentState.APPROACHING:
+            raise RuntimeError("The probe is not currently approaching.")
+        if self._hardware_sequence:
+            self.backend.accept_approach()
+            self.detail = "Operator accepted the current Z as contact"
+            return
+        self.detail = f"Operator accepted contact at Z = {sample.z_um:.3f} um"
+        self._begin_cv()
+
     def _feedback_value(self, sample: Sample) -> float:
         return {
             "Current 1": sample.current1_na,
@@ -269,6 +279,18 @@ class ScanHoppingCVExperiment:
         self.backend.stop_motion()
         self.state = ExperimentState.ABORTED
         self.detail = "Scan stopped by operator"
+
+    def accept_approach(self, sample: Sample) -> None:
+        if self.state != ExperimentState.APPROACHING:
+            raise RuntimeError("The probe is not currently approaching.")
+        if self._hardware:
+            self.backend.accept_approach()
+            self.detail = f"Point {self.point_index + 1}: operator accepted the current Z as contact"
+            return
+        self._last_approach_z = sample.z_um
+        self.contact_z[self._point_key()] = sample.z_um
+        self.contact_detected[self._point_key()] = True
+        self._begin_simulated_cv()
 
     def _point_key(self, index: int | None = None) -> tuple[int, int]:
         row, column, _x, _y = self._grid[self.point_index if index is None else index]
@@ -588,6 +610,21 @@ class ApproachExperiment:
         self.backend.stop_motion()
         self.state, self.detail = ExperimentState.ABORTED, "Approach stopped by operator"
 
+    def accept_approach(self, sample: Sample) -> None:
+        if self.state != ExperimentState.APPROACHING:
+            raise RuntimeError("The probe is not currently approaching.")
+        if self._hardware:
+            self.backend.accept_approach()
+            self.detail = "Operator accepted the current Z as contact"
+            return
+        self.backend.stop_motion()
+        self.contact_z = sample.z_um
+        if self.params.retract_after:
+            self.backend.move("Z", self.params.start_z_um, self.params.retract_rate_um_s)
+            self.state, self.detail = ExperimentState.RETRACTING, f"Operator accepted Z = {sample.z_um:.3f} um; retracting"
+        else:
+            self.state, self.detail, self.progress = ExperimentState.COMPLETE, f"Operator accepted Z = {sample.z_um:.3f} um", 1.0
+
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
         if not self.active:
             return None
@@ -681,6 +718,16 @@ class ApproachITExperiment:
     def abort(self) -> None:
         self.backend.stop_motion()
         self.state, self.detail = ExperimentState.ABORTED, "Approach + I-t stopped by operator"
+
+    def accept_approach(self, sample: Sample) -> None:
+        if self.state != ExperimentState.APPROACHING:
+            raise RuntimeError("The probe is not currently approaching.")
+        if self._hardware:
+            self.backend.accept_approach()
+            self.detail = "Operator accepted the current Z as contact"
+            return
+        self.contact_z = sample.z_um
+        self._start_it()
 
     def _start_it(self) -> None:
         potential, duration, label = self._steps[0]
@@ -792,6 +839,16 @@ class ScanHoppingITExperiment:
     def abort(self) -> None:
         self.backend.stop_motion()
         self.state, self.detail = ExperimentState.ABORTED, "Hopping I-t scan stopped by operator"
+
+    def accept_approach(self, sample: Sample) -> None:
+        if self.state != ExperimentState.APPROACHING:
+            raise RuntimeError("The probe is not currently approaching.")
+        if self._hardware:
+            self.backend.accept_approach()
+            self.detail = f"Point {self.point_index + 1}: operator accepted the current Z as contact"
+            return
+        self.contact_z[self._key(self.point_index)] = sample.z_um
+        self._start_it()
 
     def _key(self, point: int) -> tuple[int, int]:
         return self._grid[point][0], self._grid[point][1]

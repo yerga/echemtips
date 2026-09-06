@@ -348,6 +348,38 @@ class NativeDriverTests(unittest.TestCase):
         self.assertTrue(first[13] & (1 << 0))
         self.assertTrue(first[13] & (1 << 1))
 
+    def test_operator_accepted_hardware_approach_submits_followup(self) -> None:
+        self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
+        writes = self.session.fifos["Host_To_FPGA_Positions"].writes
+        before = len(writes)
+        self.driver.accept_approach()
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 2
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.driver.read_samples()
+        status = self.driver.approach_cv_status()
+        self.assertEqual(status["stage"], "contact")
+        self.assertIn("Operator accepted", status["detail"])
+        self.assertEqual(len(writes), before + 1)
+
+    def test_operator_can_accept_hardware_scan_approaches(self) -> None:
+        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
+        self.driver.accept_approach()
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.driver.read_samples()
+        self.assertEqual(self.driver.scan_hopping_cv_status()["stage"], "cv")
+
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.driver.read_samples()
+        self.driver.scan_hopping_cv_status()
+        self.driver.start_method("scan_hopping_it", ScanHoppingITParameters(x_points=1, y_points=1))
+        self.driver.accept_approach()
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.driver.read_samples()
+        self.assertEqual(self.driver.method_status()["stage"], "it")
+
     def test_approach_status_uses_recorded_line_baseline(self) -> None:
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
         self.session.registers["WaitingForWayPoints"].value = False

@@ -276,6 +276,39 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.state, ExperimentState.APPROACHING)
         backend.disconnect()
 
+    def test_operator_can_accept_current_z_during_simulated_approaches(self) -> None:
+        settings = AppSettings()
+        backend = SimulationBackend(settings)
+        backend.connect()
+        sample = Sample(1, 50, 50, 42, 0.1, 0, 0, 0)
+
+        approach_cv = ApproachCVExperiment(backend, settings)
+        approach_cv.start(ApproachCVParameters())
+        approach_cv.state = ExperimentState.APPROACHING
+        approach_cv.accept_approach(sample)
+        self.assertEqual(approach_cv.state, ExperimentState.CV)
+
+        approach_it = ApproachITExperiment(backend, settings)
+        approach_it.start(ApproachITParameters())
+        approach_it.state = ExperimentState.APPROACHING
+        approach_it.accept_approach(sample)
+        self.assertEqual(approach_it.state, ExperimentState.IT)
+
+        scan_cv = ScanHoppingCVExperiment(backend, settings)
+        scan_cv.start(ScanHoppingCVParameters(x_points=1, y_points=1))
+        scan_cv.state = ExperimentState.APPROACHING
+        scan_cv.accept_approach(sample)
+        self.assertEqual(scan_cv.state, ExperimentState.CV)
+        self.assertEqual(scan_cv.contact_z[(0, 0)], 42)
+
+        scan_it = ScanHoppingITExperiment(backend, settings)
+        scan_it.start(ScanHoppingITParameters(x_points=1, y_points=1))
+        scan_it.state = ExperimentState.APPROACHING
+        scan_it.accept_approach(sample)
+        self.assertEqual(scan_it.state, ExperimentState.IT)
+        self.assertEqual(scan_it.contact_z[(0, 0)], 42)
+        backend.disconnect()
+
     def test_approach_end_of_travel_aborts_without_cv(self) -> None:
         settings = AppSettings()
         backend = SimulationBackend(settings)

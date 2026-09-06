@@ -447,6 +447,7 @@ class WatchPositionPage(BasePage):
 class ManagedExperimentPage(BasePage):
     experiment_key = ""
     recording_name = ""
+    manual_approach = False
 
     @property
     def experiment(self):
@@ -459,6 +460,14 @@ class ManagedExperimentPage(BasePage):
         self.progress = self.status.progress
         self.start_button = self.status.start_button
         self.stop_button = self.status.stop_button
+        self.accept_approach_button: QtWidgets.QPushButton | None = None
+        if self.manual_approach:
+            self.accept_approach_button = button("Accept current Z as contact and continue", self.accept_approach)
+            self.accept_approach_button.setToolTip(
+                "Stops the current approach waypoint and deliberately starts the method's next step without waiting for the current threshold."
+            )
+            self.accept_approach_button.setEnabled(False)
+            self.status.body.layout().addWidget(self.accept_approach_button)
         return self.status
 
     def _begin(self, parameters: object) -> None:
@@ -483,12 +492,28 @@ class ManagedExperimentPage(BasePage):
         self.progress.setValue(0)
         self.app._sync_action_states()
 
+    def accept_approach(self) -> None:
+        try:
+            if not self.manual_approach or self.accept_approach_button is None:
+                raise BackendError("This method does not contain an approach step.")
+            if self.app._sample is None:
+                raise BackendError("No current position sample is available yet.")
+            self.experiment.accept_approach(self.app._sample)
+            self.accept_approach_button.setEnabled(False)
+            self.detail_label.setText("Operator accepted the current Z as contact; continuing.")
+            self.app.toast("Current Z accepted as contact", "warning")
+        except (BackendError, RuntimeError, OSError) as exc:
+            self.app.show_error(str(exc))
+
     def stop(self) -> None:
         if self.experiment.active:
             self.app.stop_experiment(self.experiment_key)
 
     def _show_update(self, update: object | None) -> None:
         self.status.update_status(update)
+        if self.accept_approach_button is not None:
+            state = update.state if update is not None else self.experiment.state
+            self.accept_approach_button.setEnabled(state == ExperimentState.APPROACHING)
 
 
 class StandaloneCVPage(ManagedExperimentPage):
@@ -560,6 +585,7 @@ class StandaloneCVPage(ManagedExperimentPage):
 class StandaloneApproachPage(ManagedExperimentPage):
     experiment_key = "approach"
     recording_name = "Approach"
+    manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Standalone approach", "Acquire an approach curve, distinguish confirmed contact from travel limit, and optionally retract.")
@@ -621,6 +647,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
 class ApproachCVPage(ManagedExperimentPage):
     experiment_key = "approach_cv"
     recording_name = "Approach then CV"
+    manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Approach then CV", "Detect contact, run a cyclic voltammogram only after confirmation, and retract safely.")
@@ -708,6 +735,7 @@ class ApproachCVPage(ManagedExperimentPage):
 class ApproachITPage(ManagedExperimentPage):
     experiment_key = "approach_it"
     recording_name = "Approach then IT"
+    manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Approach then I–t", "Detect contact, apply timed potential steps, acquire current versus time, and optionally retract.")
@@ -776,6 +804,7 @@ class ApproachITPage(ManagedExperimentPage):
 class ScanHoppingCVPage(ManagedExperimentPage):
     experiment_key = "scan_cv"
     recording_name = "Scan Hopping CV"
+    manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Scan hopping + CV", "Approach, acquire a CV, retract, and repeat over a serpentine XY grid.")
@@ -856,6 +885,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
 class ScanHoppingITPage(ManagedExperimentPage):
     experiment_key = "scan_it"
     recording_name = "Scan Hopping IT"
+    manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Scan hopping + I–t", "Approach, run timed potential steps, retract, and repeat over an XY grid.")
@@ -1084,7 +1114,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0); topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar"); topbar.setFixedHeight(70); tl = _hbox(topbar, (18, 10, 18, 10), 8)
         self.connection_dot = label("●"); self.connection_label = label(f"Disconnected · {self.backend.label}", "muted"); self.execution_label = label("Offline", "muted"); tl.addWidget(self.connection_dot); tl.addWidget(self.connection_label); tl.addWidget(self.execution_label); tl.addStretch(1)
         self.mode_badge = label(self.settings.mode.upper(), "muted"); self.mode_badge.setStyleSheet(f"background:{COLORS['panel_2']}; padding:7px 10px; border-radius:6px; font-weight:650;"); tl.addWidget(self.mode_badge)
-        self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host); self.next_waypoint_button = button("Next", self.end_current_waypoint); self.connect_button = button("Connect", self.toggle_connection, "primary")
+        self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host); self.next_waypoint_button = button("End waypoint", self.end_current_waypoint); self.next_waypoint_button.setToolTip("Low-level FPGA control only; this does not confirm contact. Use the approach page's accept-contact button to continue an approach."); self.connect_button = button("Connect", self.toggle_connection, "primary")
         for widget in (self.pause_button, self.resume_button, self.next_waypoint_button, self.connect_button): tl.addWidget(widget)
         tl.addWidget(button("EMERGENCY STOP", self.emergency_stop, "danger")); ml.addWidget(topbar)
         self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (22, 18, 22, 10)); container_layout.addWidget(self.stack); ml.addWidget(container, 1)
