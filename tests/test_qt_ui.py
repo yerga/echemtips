@@ -126,10 +126,15 @@ class QtLayoutTests(unittest.TestCase):
             self.assertIsNot(watch.current1_plot, watch.current2_plot)
             self.assertEqual(watch.current1_plot.graph.getAxis("left").labelText, "Current 1 (nA)")
             self.assertEqual(watch.current2_plot.graph.getAxis("left").labelText, "Current 2 (nA)")
+            self.assertEqual((watch.current1_plot.rolling_window_s, watch.current2_plot.rolling_window_s), (30, 30))
             monitor = window.pages["Watch position"]
             self.assertEqual(
                 tuple(plot.graph.getAxis("left").labelText for plot in (monitor.x_plot, monitor.y_plot, monitor.z_plot)),
                 ("X position (µm)", "Y position (µm)", "Z position (µm)"),
+            )
+            self.assertEqual(
+                tuple(plot.rolling_window_s for plot in (monitor.x_plot, monitor.y_plot, monitor.z_plot)),
+                (30, 30, 30),
             )
             move = window.pages["Move piezo"]
             self.assertEqual(
