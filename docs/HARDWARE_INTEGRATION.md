@@ -70,7 +70,9 @@ The final frame was traced through the `Build Array` node. Each waypoint is 14 I
 
 Packed flag bits 0–8 are used for Move X, Move Y, Move Z, Move V, Jump V, Hold, Move V2, Jump V2, and Hold Feedback 1. The deployed frame also reserves bits 9–10 for legacy picomotor commands, but eChemTips never sets them. Position and velocity helpers use `2^15`, a 40 MHz clock, and the corresponding `ExpandVelScaller` register. `ni_protocol.py` implements these conversions and `test_ni_protocol.py` verifies the frame and scaling independently of NI-RIO.
 
-The acquisition FIFO is also 14 I16 words per sample. eChemTips decodes X/Y/Z, V1/V2, Current 1/2, feedback type, line number, and the timestamp. The deployed FPGA still supplies legacy values in the remaining words, but the Python application intentionally ignores them. The last two biased I16 words are joined high-word first into the 40 MHz U32 timestamp. The native decoder unwraps timestamp rollover and exposes the result as `Sample.elapsed_s`.
+The acquisition FIFO is also 14 I16 words per sample. eChemTips decodes X/Y/Z, V1/V2, Current 1/2, feedback type, line number, and the timestamp for runtime control. The deployed FPGA still supplies legacy values in the remaining words, but the Python application intentionally ignores them. The last two biased I16 words are joined high-word first into the 40 MHz U32 timestamp. The native decoder unwraps timestamp rollover and exposes the result as `Sample.elapsed_s`.
+
+The standard recording schema deliberately differs from the complete runtime `Sample`. Every CSV stores measured time, X/Y/Z, V1/V2, Current 1/2, and line number. Only hopping scans add `scan_pixel`. The JSON sidecar declares recording schema version 2, lists the CSV columns, and stores the ordered scan grid once as pixel/row/column/target-X/target-Y records. `feedback_type`, per-sample scan row/column, and commanded X/Y/Z are not serialized. In particular, the current hardware adapter can only read one Applied-X/Y/Z snapshot after receiving a FIFO batch, so repeating that value for every sample would imply timing precision the target does not provide.
 
 ## Site driver contract
 
