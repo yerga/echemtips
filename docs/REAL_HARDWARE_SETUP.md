@@ -8,7 +8,7 @@ This Python host keeps `FPGA Target.vi` on the NI device. It implements the host
 - Current 1 and Current 2 on AI3 and AI4, with each amplifier sensitivity entered in V/nA
 - AO5–AO7 and AI5–AI7 left unused; eChemTips has no picomotor controls
 - FPGA-side feedback for the approach and FPGA-side waypoints for CV
-- Scan Hopping + CV as staged waypoint programs: XY positioning at retracted Z and a selected Current 1 or Current 2 pause-on-contact approach, followed by CV/retraction only after contact is confirmed at each pixel
+- Scan Hopping + CV as staged waypoint programs: XY positioning at retracted Z and a selected Current 1 or Current 2 pause-on-contact approach, followed by CV and a contact-relative retract only after contact is confirmed at each pixel
 
 ## Required instrument-PC software
 
@@ -53,7 +53,7 @@ The Python app validates target family, required register datatypes/access roles
 6. With actuators still disabled, verify Watch Current and Voltage 1 scaling. A known amplifier test signal is strongly recommended.
 7. Enable one piezo axis at a time. Command a small, slow move and verify direction and travel externally. Then commission Z with the probe far from the surface.
 8. Only after those checks, run Approach + CV with a conservative Z limit, slow approach, and a verified Current 1 threshold/polarity. Thresholds are entered in pA in the UI and converted to the nA protocol unit before submission.
-9. Commission Scan Hopping + CV first as a 1 x 1 scan, then 2 x 2 with a small XY range. Confirm the saved `scan_pixel`, `scan_row`, and `scan_column` columns agree with physical movement before expanding the grid. Test serpentine first; when commissioning raster, verify the additional end-of-line Z retract before allowing the longer X flyback.
+9. Commission Scan Hopping + CV first as a 1 x 1 scan, then 2 x 2 with a small XY range. **Initial approach Z** is used only to position the first hop. Confirm that each normal retract target equals the FPGA's applied contact Z moved away from the surface by **Retract distance from contact**. Confirm the saved `scan_pixel`, `scan_row`, and `scan_column` columns agree with physical movement before expanding the grid. Test serpentine first; when commissioning raster, verify that **Raster flyback extra retract** is added at the end of each line before allowing the longer X flyback.
 
 ## Commissioning limitations and stop behavior
 
@@ -64,6 +64,8 @@ Programs are no longer limited to the target FIFO's 585 complete frames. The hos
 Normal Stop asserts the target stop control, waits for `WaitingForWayPoints`, clears the stop/pause handshake, drains final acquisition data, and leaves the initialized session reusable. If that acknowledgement times out, or after an uncertain FIFO write, target fault, or Emergency Stop, disable the actuators, disconnect Python, reset/reinitialize the FPGA using NI MAX/LabVIEW, then reconnect.
 
 The experiment-local **Accept current Z as contact and continue** button is an explicit operator override for an active approach. It records the current Z as manually accepted contact and submits the gated CV or I–t continuation only after the approach FIFO is fully drained. The toolbar **End waypoint** button does not confirm contact and must not be used as a substitute. Use manual acceptance only while independently observing a safe probe state.
+
+Hopping retraction is deliberately expressed as a positive distance rather than a signed Z offset. The host determines the away-from-surface direction from the configured initial and limit Z values, reads the FPGA's `Applied Z` at confirmed contact, and compiles the continuation waypoint from that contact position. Acquired approach samples provide a guarded fallback if an applied-position readback is outside the configured approach interval.
 
 Emergency stop asserts both `External Pause` and `External Stop`, verifies their register values, and permanently latches the current Python driver instance. FPGA `Internal Stop`, an unexpected NI VI state, impossible line-counter progress, or an expired command watchdog also latches the driver. None of these software checks replaces a physical emergency stop or guarantees that analog outputs are de-energized.
 
