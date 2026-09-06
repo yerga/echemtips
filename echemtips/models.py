@@ -223,6 +223,8 @@ class ApproachCVParameters:
     cv_scan_rate_v_s: float = 0.25
     cycles: int = 2
     retract_after: bool = True
+    x_um: float | None = None
+    y_um: float | None = None
 
     @property
     def feedback_unit(self) -> str:
@@ -236,6 +238,9 @@ class ApproachCVParameters:
             errors.append("End Z is outside the configured Z range.")
         if math.isfinite(self.start_z_um) and math.isfinite(self.end_z_um) and self.start_z_um == self.end_z_um:
             errors.append("Start Z and end Z must be different.")
+        for axis, value, limit in (("X", self.x_um, settings.x_range_um), ("Y", self.y_um, settings.y_range_um)):
+            if value is not None and (not math.isfinite(value) or not 0 <= value <= limit):
+                errors.append(f"{axis} position is outside the configured range.")
         if not math.isfinite(self.approach_rate_um_s) or self.approach_rate_um_s <= 0:
             errors.append("Approach rate must be positive.")
         if self.feedback_channel not in {"Current 1", "Current 2"}:

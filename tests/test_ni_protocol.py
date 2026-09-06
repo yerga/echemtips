@@ -339,6 +339,15 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(len(writes), before + 2)
         self.assertEqual(len(writes[-1]), (1 + 3 * 2 + 1) * 14)
 
+    def test_approach_cv_optional_xy_is_in_preposition_waypoint(self) -> None:
+        params = ApproachCVParameters(x_um=25.0, y_um=75.0, cycles=1)
+        self.driver.start_approach_cv(params)
+        first = self.session.fifos["Host_To_FPGA_Positions"].writes[-1][:14]
+        self.assertEqual(first[6], position_to_raw(25.0, self.driver.settings.x_range_um, self.driver.settings.x_bipolar))
+        self.assertEqual(first[7], position_to_raw(75.0, self.driver.settings.y_range_um, self.driver.settings.y_bipolar))
+        self.assertTrue(first[13] & (1 << 0))
+        self.assertTrue(first[13] & (1 << 1))
+
     def test_approach_status_uses_recorded_line_baseline(self) -> None:
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
         self.session.registers["WaitingForWayPoints"].value = False

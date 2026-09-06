@@ -464,18 +464,30 @@ class WECSPMDriver:
         self._owner = "approach-cv"
         current = self._current_targets()
         s = self.settings
+        xy_speed = max(10.0, params.approach_rate_um_s)
+        x_speeds = [raw_position_velocity_per_tick(xy_speed, s.x_range_um, s.x_bipolar)] if params.x_um is not None else []
+        y_speeds = [raw_position_velocity_per_tick(xy_speed, s.y_range_um, s.y_bipolar)] if params.y_um is not None else []
         z_speeds = [max(10.0, params.approach_rate_um_s), params.approach_rate_um_s]
         z_raw = [raw_position_velocity_per_tick(speed, s.z_range_um, s.z_bipolar) for speed in z_speeds]
-        ex, ey, ez, ev = self._set_scalers([], [], z_raw, [])
+        ex, ey, ez, ev = self._set_scalers(x_speeds, y_speeds, z_raw, [])
+        x_velocity = scale_velocity(x_speeds[0], ex) if x_speeds else 0
+        y_velocity = scale_velocity(y_speeds[0], ey) if y_speeds else 0
         z_fast = scale_velocity(z_raw[0], ez)
         z_approach = scale_velocity(z_raw[1], ez)
+        target_x = position_to_raw(params.x_um, s.x_range_um, s.x_bipolar) if params.x_um is not None else current["X"]
+        target_y = position_to_raw(params.y_um, s.y_range_um, s.y_bipolar) if params.y_um is not None else current["Y"]
         start_z = position_to_raw(params.start_z_um, s.z_range_um, s.z_bipolar)
         end_z = position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar)
         approach_v = voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio)
 
-        common = dict(x_position=current["X"], y_position=current["Y"], v2_position=current["V2"])
+        common = dict(x_position=target_x, y_position=target_y, v2_position=current["V2"])
         waypoints = [
-            Waypoint(**common, z_position=start_z, v_position=approach_v, z_velocity=z_fast, move_z=True, move_v=True, jump_v=True),
+            Waypoint(
+                **common, z_position=start_z, v_position=approach_v,
+                x_velocity=x_velocity, y_velocity=y_velocity, z_velocity=z_fast,
+                move_x=params.x_um is not None, move_y=params.y_um is not None,
+                move_z=True, move_v=True, jump_v=True,
+            ),
             # Pause-on-contact is deliberately used instead of advance-on-contact:
             # Python validates the feedback/pause state before it ever submits CV.
             Waypoint(
@@ -495,8 +507,13 @@ class WECSPMDriver:
             primary_greater_than=params.greater_than,
         ))
         current_z = raw_to_position(current["Z"], s.z_range_um, s.z_bipolar)
+        preposition_duration = max(
+            abs(current_z - params.start_z_um) / z_speeds[0],
+            abs(raw_to_position(current["X"], s.x_range_um, s.x_bipolar) - params.x_um) / xy_speed if params.x_um is not None else 0.0,
+            abs(raw_to_position(current["Y"], s.y_range_um, s.y_bipolar) - params.y_um) / xy_speed if params.y_um is not None else 0.0,
+        )
         expected_duration = (
-            abs(current_z - params.start_z_um) / z_speeds[0]
+            preposition_duration
             + abs(params.end_z_um - params.start_z_um) / params.approach_rate_um_s
         )
         self._enqueue(waypoints, expected_duration)

@@ -78,9 +78,14 @@ class ApproachCVExperiment:
             self.progress = 0.0
             return
         self.backend.set_voltage(1, params.approach_voltage_v)
+        xy_rate = max(10.0, params.approach_rate_um_s)
+        if params.x_um is not None:
+            self.backend.move("X", params.x_um, xy_rate)
+        if params.y_um is not None:
+            self.backend.move("Y", params.y_um, xy_rate)
         self.backend.move("Z", params.start_z_um, max(10.0, params.approach_rate_um_s))
         self.state = ExperimentState.PREPOSITION
-        self.detail = f"Moving Z to {params.start_z_um:.2f} um"
+        self.detail = "Moving to the requested XY position and approach start Z"
         self.progress = 0.02
 
     def abort(self) -> None:
@@ -128,7 +133,11 @@ class ApproachCVExperiment:
         self._last_tick = now
         p = self.params
 
-        if self.state == ExperimentState.PREPOSITION and abs(sample.z_um - p.start_z_um) < 0.08:
+        at_xy = (
+            (p.x_um is None or abs(sample.x_um - p.x_um) < 0.08)
+            and (p.y_um is None or abs(sample.y_um - p.y_um) < 0.08)
+        )
+        if self.state == ExperimentState.PREPOSITION and at_xy and abs(sample.z_um - p.start_z_um) < 0.08:
             self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
             self.state = ExperimentState.APPROACHING
             self.detail = f"Watching {p.feedback_channel} for the contact threshold"

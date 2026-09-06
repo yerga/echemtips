@@ -263,6 +263,19 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.progress, 1.0)
         backend.disconnect()
 
+    def test_approach_cv_waits_for_optional_xy_preposition(self) -> None:
+        settings = AppSettings()
+        backend = SimulationBackend(settings)
+        backend.connect()
+        experiment = ApproachCVExperiment(backend, settings)
+        params = ApproachCVParameters(x_um=25, y_um=35, start_z_um=10)
+        experiment.start(params)
+        experiment.tick(Sample(0, 20, 35, 10, 0.1, 0, 0, 0))
+        self.assertEqual(experiment.state, ExperimentState.PREPOSITION)
+        experiment.tick(Sample(1, 25, 35, 10, 0.1, 0, 0, 0))
+        self.assertEqual(experiment.state, ExperimentState.APPROACHING)
+        backend.disconnect()
+
     def test_approach_end_of_travel_aborts_without_cv(self) -> None:
         settings = AppSettings()
         backend = SimulationBackend(settings)

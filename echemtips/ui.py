@@ -637,8 +637,10 @@ class ApproachCVPage(ManagedExperimentPage):
         choice_layout.addWidget(label("Feedback signal", "muted")); choice_layout.addWidget(self.feedback_channel)
         ag.addWidget(choice_frame, 2, 0)
         self.threshold = add_field(ag, Field("Contact threshold", "2000", "pA"), 2, 1)
+        self.x_position = add_field(ag, Field("Optional X position", "", "µm"), 3, 0)
+        self.y_position = add_field(ag, Field("Optional Y position", "", "µm"), 3, 1)
         self.greater_than = Check("Trigger when signal is greater than threshold", True)
-        ag.addWidget(self.greater_than, 3, 0, 1, 2)
+        ag.addWidget(self.greater_than, 4, 0, 1, 2)
         controls_layout.addWidget(approach)
         cv = Card("2 · Cyclic voltammetry", "Potential is swept start → vertex 1 → vertex 2 → start.")
         cg = _grid(cv.body)
@@ -669,6 +671,7 @@ class ApproachCVPage(ManagedExperimentPage):
             feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=self.greater_than.get(), cv_start_v=self.cv_start.float(),
             cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.scan_rate.float(),
             cycles=self.cycles.integer(), retract_after=self.retract.get(),
+            x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
         )
 
     def start(self) -> None:
