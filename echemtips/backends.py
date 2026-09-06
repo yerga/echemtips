@@ -182,6 +182,12 @@ class InstrumentBackend(ABC):
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
         del config
 
+    def set_diagnostic_circuit(self, mode: str, resistance_mohm: float | None = None) -> None:
+        """Select a simulator fixture; real hardware is rewired by the operator."""
+        if mode not in {"normal", "open", "resistor", "pipette"}:
+            raise ValueError(f"Unknown diagnostic circuit: {mode}")
+        del resistance_mohm
+
     def execution_status(self) -> ExecutionSnapshot:
         return ExecutionSnapshot("", ExecutionState.IDLE, 0, 0, 0, 0, "No FPGA program")
 
@@ -222,6 +228,10 @@ class SimulationBackend(InstrumentBackend):
         self._voltage = {1: 0.0, 2: 0.0}
         self._line_number = 0
         self._paused = False
+        self._diagnostic_mode = "normal"
+        self._diagnostic_resistance_mohm = 100.0
+        self._last_sample_voltage = 0.0
+        self._last_sample_elapsed = 0.0
 
     def surface_z_at(self, x_um: float, y_um: float) -> float:
         sx = (x_um / self.settings.x_range_um - 0.5) * math.tau
@@ -273,6 +283,18 @@ class SimulationBackend(InstrumentBackend):
         noise = self._rng.gauss(0.0, 0.035)
         current1 = 0.22 + drift + contact * (2.7 + faradaic) + capacitive + noise
         current2 = -0.15 + contact * 0.7 + self._rng.gauss(0.0, 0.025)
+        dt = elapsed - self._last_sample_elapsed
+        scan_rate = (v - self._last_sample_voltage) / dt if dt > 0 else 0.0
+        self._last_sample_voltage = v
+        self._last_sample_elapsed = elapsed
+        if self._diagnostic_mode == "open":
+            current1 = 0.018 + 0.075 * scan_rate + self._rng.gauss(0.0, 0.004)
+            current2 = -0.012 + 0.050 * scan_rate + self._rng.gauss(0.0, 0.004)
+        elif self._diagnostic_mode in {"resistor", "pipette"}:
+            resistance = self._diagnostic_resistance_mohm
+            capacitance_nf = 0.025 if self._diagnostic_mode == "resistor" else 0.12
+            current1 = 1000.0 * v / resistance + capacitance_nf * scan_rate + self._rng.gauss(0.0, 0.01)
+            current2 = 0.5 * current1 + self._rng.gauss(0.0, 0.01)
         return Sample(
             elapsed_s=elapsed,
             x_um=self._positions["X"],
@@ -327,6 +349,17 @@ class SimulationBackend(InstrumentBackend):
         self._positions.update(self._targets)
         self._speeds = {"X": 0.0, "Y": 0.0, "Z": 0.0}
         self._line_number += 1
+
+    @_synchronized_io
+    def set_diagnostic_circuit(self, mode: str, resistance_mohm: float | None = None) -> None:
+        super().set_diagnostic_circuit(mode, resistance_mohm)
+        if resistance_mohm is not None:
+            if not math.isfinite(resistance_mohm) or resistance_mohm <= 0:
+                raise ValueError("Diagnostic resistance must be positive.")
+            self._diagnostic_resistance_mohm = resistance_mohm
+        elif mode == "pipette":
+            self._diagnostic_resistance_mohm = 120.0
+        self._diagnostic_mode = mode
 
 
 class NIFPGABackend(InstrumentBackend):

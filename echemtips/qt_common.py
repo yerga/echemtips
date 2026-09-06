@@ -381,7 +381,7 @@ class ProgramDiagram(QtWidgets.QWidget):
 
 
 class Heatmap(QtWidgets.QWidget):
-    """Pixel map with a compact labelled color bar and exact hover readout."""
+    """Stage-coordinate map with square-cell or circular-footprint rendering."""
 
     def __init__(self, unit: str, quantity: str = "Value") -> None:
         super().__init__()
@@ -390,19 +390,23 @@ class Heatmap(QtWidgets.QWidget):
         self.rows = 1
         self.columns = 1
         self.values: dict[tuple[int, int], float] = {}
+        self.x_values = [0.0]
+        self.y_values = [0.0]
+        self.view_mode = "square"
+        self.footprint_diameter_um = 1.0
         self.plot_item = pg.PlotItem()
         self.view = pg.GraphicsLayoutWidget()
         self.view.setBackground(COLORS["panel"])
         self.view.addItem(self.plot_item, row=0, col=0)
         self.image_item = pg.ImageItem(axisOrder="row-major")
         self.plot_item.addItem(self.image_item)
-        self.plot_item.setLabel("bottom", "X pixel")
-        self.plot_item.setLabel("left", "Y pixel")
-        self.plot_item.getAxis("bottom").setTickSpacing(1, 1)
-        self.plot_item.getAxis("left").setTickSpacing(1, 1)
+        self.footprint_item = pg.ScatterPlotItem(pxMode=False)
+        self.plot_item.addItem(self.footprint_item)
+        self.plot_item.setLabel("bottom", "X position", units="µm")
+        self.plot_item.setLabel("left", "Y position", units="µm")
         self.plot_item.showGrid(x=True, y=True, alpha=0.12)
         self.plot_item.getViewBox().setAspectLocked(True)
-        self.plot_item.getViewBox().invertY(True)
+        self.plot_item.getViewBox().invertY(False)
         self.color_bar = pg.ColorBarItem(
             values=(0.0, 1.0),
             width=14,
@@ -415,7 +419,7 @@ class Heatmap(QtWidgets.QWidget):
         self.color_bar.setImageItem(self.image_item, insert_in=self.plot_item)
         self.view.setMinimumHeight(230)
         self.summary = label("Waiting for contact data", "muted")
-        self.hover = label("Hover a pixel for its value", "muted")
+        self.hover = label("Hover a footprint for its position and value", "muted")
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -429,19 +433,41 @@ class Heatmap(QtWidgets.QWidget):
         if not self.plot_item.sceneBoundingRect().contains(scene_position):
             return
         point = self.plot_item.getViewBox().mapSceneToView(scene_position)
-        column, row = round(point.x()), round(point.y())
+        column = min(range(self.columns), key=lambda index: abs(self.x_values[index] - point.x()))
+        row = min(range(self.rows), key=lambda index: abs(self.y_values[index] - point.y()))
         value = self.values.get((row, column))
         if value is None or not math.isfinite(value):
-            self.hover.setText(f"Pixel ({column + 1}, {row + 1}) · no data")
+            self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · no data")
         else:
-            self.hover.setText(f"Pixel ({column + 1}, {row + 1}) · {value:.5g} {self.unit}")
+            self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · {value:.5g} {self.unit}")
 
-    def set_data(self, values: dict[tuple[int, int], float], rows: int, columns: int) -> None:
+    def set_data(
+        self,
+        values: dict[tuple[int, int], float],
+        rows: int,
+        columns: int,
+        *,
+        x_values: Iterable[float] | None = None,
+        y_values: Iterable[float] | None = None,
+        view_mode: str | None = None,
+        footprint_diameter_um: float | None = None,
+    ) -> None:
         self.values = dict(values)
         self.rows = max(1, rows)
         self.columns = max(1, columns)
-        self.plot_item.getAxis("bottom").setTicks([[(index, str(index + 1)) for index in range(self.columns)]])
-        self.plot_item.getAxis("left").setTicks([[(index, str(index + 1)) for index in range(self.rows)]])
+        xs = list(x_values) if x_values is not None else [float(index) for index in range(self.columns)]
+        ys = list(y_values) if y_values is not None else [float(index) for index in range(self.rows)]
+        if len(xs) != self.columns or len(ys) != self.rows:
+            raise ValueError("Physical map coordinates must match the grid dimensions.")
+        self.x_values, self.y_values = xs, ys
+        if view_mode is not None:
+            if view_mode not in {"square", "circular"}:
+                raise ValueError("Map view must be square or circular.")
+            self.view_mode = view_mode
+        if footprint_diameter_um is not None:
+            if not math.isfinite(footprint_diameter_um) or footprint_diameter_um <= 0:
+                raise ValueError("Footprint diameter must be positive.")
+            self.footprint_diameter_um = footprint_diameter_um
         data = np.full((self.rows, self.columns), np.nan, dtype=float)
         for (row, column), value in values.items():
             if 0 <= row < self.rows and 0 <= column < self.columns and math.isfinite(value):
@@ -455,15 +481,41 @@ class Heatmap(QtWidgets.QWidget):
                 levels = (low - padding, high + padding)
             else:
                 levels = (low, high)
-            self.summary.setText(f"{self.quantity} scale: {low:.4g}–{high:.4g} {self.unit} · {finite.size}/{data.size} pixels")
+            self.summary.setText(f"{self.quantity}: {low:.4g}–{high:.4g} {self.unit} · {finite.size}/{data.size} positions")
         else:
             levels = (0.0, 1.0)
             self.summary.setText("Waiting for contact data")
-            self.hover.setText("Hover a pixel for its value")
-        self.image_item.setImage(display, autoLevels=False, levels=levels)
-        self.image_item.setRect(QtCore.QRectF(-0.5, -0.5, self.columns, self.rows))
+            self.hover.setText("Hover a footprint for its position and value")
+        plot_xs, plot_ys, image = list(xs), list(ys), display
+        if plot_xs[-1] < plot_xs[0]:
+            plot_xs.reverse(); image = np.fliplr(image)
+        if plot_ys[-1] < plot_ys[0]:
+            plot_ys.reverse(); image = np.flipud(image)
+        dx = abs(plot_xs[1] - plot_xs[0]) if len(plot_xs) > 1 else self.footprint_diameter_um
+        dy = abs(plot_ys[1] - plot_ys[0]) if len(plot_ys) > 1 else self.footprint_diameter_um
+        dx = dx or self.footprint_diameter_um; dy = dy or self.footprint_diameter_um
+        self.image_item.setImage(image, autoLevels=False, levels=levels)
+        self.image_item.setRect(QtCore.QRectF(plot_xs[0] - dx / 2, plot_ys[0] - dy / 2,
+                                             plot_xs[-1] - plot_xs[0] + dx, plot_ys[-1] - plot_ys[0] + dy))
+        color_map = pg.colormap.get("viridis")
+        span = levels[1] - levels[0]
+        spots = []
+        for (row, column), value in self.values.items():
+            if 0 <= row < self.rows and 0 <= column < self.columns and math.isfinite(value):
+                normalized = min(1.0, max(0.0, (value - levels[0]) / span)) if span else 0.5
+                spots.append({"pos": (xs[column], ys[row]), "size": self.footprint_diameter_um,
+                              "brush": pg.mkBrush(color_map.map(normalized, mode="qcolor")),
+                              "pen": pg.mkPen(COLORS["border"], width=0.7)})
+        self.footprint_item.setData(spots)
+        self.image_item.setVisible(self.view_mode == "square")
+        self.footprint_item.setVisible(self.view_mode == "circular")
         self.color_bar.setLevels(levels)
-        self.plot_item.getViewBox().setRange(xRange=(-0.5, self.columns - 0.5), yRange=(-0.5, self.rows - 0.5), padding=0.03)
+        radius_x = self.footprint_diameter_um / 2 if self.view_mode == "circular" else dx / 2
+        radius_y = self.footprint_diameter_um / 2 if self.view_mode == "circular" else dy / 2
+        self.plot_item.getViewBox().setRange(
+            xRange=(min(xs) - radius_x, max(xs) + radius_x),
+            yRange=(min(ys) - radius_y, max(ys) + radius_y), padding=0.04,
+        )
 
 
 class XYPlot(QtWidgets.QWidget):

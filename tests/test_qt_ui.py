@@ -66,6 +66,10 @@ class QtLayoutTests(unittest.TestCase):
                 threshold = window.pages[page_name].threshold
                 self.assertEqual(threshold.unit_label.text(), "pA")
                 self.assertAlmostEqual(float(threshold.variable.get()), 2000.0)
+                page = window.pages[page_name]
+                self.assertEqual(tuple(page.feedback_mode.itemText(index) for index in range(page.feedback_mode.count())),
+                                 ("Absolute current", "Change from approach baseline"))
+                self.assertAlmostEqual(page.parameters().settling_time_s, 0.5)
                 self.assertEqual(
                     window.pages[page_name].accept_approach_button.text(),
                     "Accept current Z as contact and continue",
@@ -141,6 +145,8 @@ class QtLayoutTests(unittest.TestCase):
                 tuple(move.axis.itemText(index) for index in range(move.axis.count())),
                 ("X", "Y", "Z"),
             )
+            self.assertIn("Preflight", window.pages)
+            self.assertIn("Characterize pipette", window.pages)
         finally:
             window.poll_timer.stop()
             window.close()
@@ -191,6 +197,14 @@ class QtLayoutTests(unittest.TestCase):
             self.assertEqual(heatmap.color_bar.getAxis("left").labelText, "Current 1 (nA)")
             self.assertEqual(heatmap.color_bar.levels(), (1.5, 2.5))
             self.assertFalse(hasattr(heatmap.view, "ui"))
+            heatmap.set_data({(0, 0): 1.5, (0, 1): 2.5}, 1, 2,
+                             x_values=[35.0, 40.0], y_values=[12.0],
+                             view_mode="circular", footprint_diameter_um=1.5)
+            self.assertEqual(heatmap.plot_item.getAxis("bottom").labelText, "X position")
+            self.assertEqual(heatmap.plot_item.getAxis("left").labelText, "Y position")
+            self.assertFalse(heatmap.image_item.isVisible())
+            self.assertTrue(heatmap.footprint_item.isVisible())
+            self.assertEqual(len(heatmap.footprint_item.points()), 2)
         finally:
             heatmap.close()
 

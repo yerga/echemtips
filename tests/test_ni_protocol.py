@@ -342,6 +342,25 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(len(writes), before + 2)
         self.assertEqual(len(writes[-1]), (1 + 3 * 2 + 1) * 14)
 
+    def test_baseline_contact_and_settling_are_fpga_resident(self) -> None:
+        params = ApproachCVParameters(
+            cycles=1, retract_after=False, feedback_mode="baseline_relative", settling_time_s=0.07,
+        )
+        self.driver.start_approach_cv(params)
+        approach = self.driver.positions_fifo.writes[-1][14:28]
+        self.assertEqual(approach[0], 8)
+        self.assertEqual(self.session.registers["P2AvgWhole"].value, 16)
+        self.assertEqual(self.session.registers["P2AvgMinus"].value, 4)
+        self.assertTrue(self.session.registers["Feedback1 on  Hold"].value)
+        self.session.registers["LineNumber"].value = 2
+        self.session.registers["Feedback1 Boolean"].value = True
+        self.session.registers["Internal Pause"].value = True
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.assertEqual(self.driver.approach_cv_status()["stage"], "contact")
+        contexts = self.driver._approach_history[-1][1]
+        self.assertEqual(contexts[:3], ["settling", "settling", "settling"])
+        self.assertEqual(contexts[3:], ["cv", "cv", "cv", "cv"])
+
     def test_approach_cv_optional_xy_is_in_preposition_waypoint(self) -> None:
         params = ApproachCVParameters(x_um=25.0, y_um=75.0, cycles=1)
         self.driver.start_approach_cv(params)

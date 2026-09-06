@@ -9,6 +9,7 @@ from .host import ExecutionSnapshot, ExecutionState, WaypointStreamer
 from .models import (
     AppSettings, ApproachCVParameters, ApproachITParameters, ApproachParameters,
     CVParameters, FeedbackConfiguration, Sample, ScanHoppingCVParameters, ScanHoppingITParameters,
+    hold_frame_count,
 )
 from .ni_protocol import (
     FPGA_CLOCK_HZ,
@@ -31,7 +32,7 @@ from .ni_protocol import (
 )
 from .waypoints import (
     CompiledWaypoints, PhysicalWaypoint, WaypointCompiler,
-    cyclic_voltammetry_plan, potential_step_plan,
+    cyclic_voltammetry_plan, potential_step_plan, timed_hold_plan,
 )
 
 
@@ -84,12 +85,16 @@ class WECSPMDriver:
         self._approach_threshold_na = 0.0
         self._approach_feedback_channel = "Current 1"
         self._approach_greater_than = True
+        self._approach_feedback_mode = "absolute"
+        self._approach_feedback_baseline: float | None = None
         self._approach_end_z_raw: int | None = None
         self._approach_contact_observed = False
         self._approach_manually_accepted = False
         self._scan_threshold_na = 0.0
         self._scan_feedback_channel = "Current 1"
         self._scan_greater_than = True
+        self._scan_feedback_mode = "absolute"
+        self._scan_feedback_baseline: dict[int, float] = {}
         self._scan_end_z_raw: int | None = None
         self._scan_contact_observed: set[int] = set()
         self._scan_manually_accepted: set[int] = set()
@@ -108,6 +113,8 @@ class WECSPMDriver:
         self._method_threshold = 0.0
         self._method_feedback_channel = "Current 1"
         self._method_greater_than = True
+        self._method_feedback_mode = "absolute"
+        self._method_feedback_baseline: dict[int, float] = {}
         self._method_contact_observed: set[int] = set()
         self._method_manually_accepted: set[int] = set()
         self._method_last_approach_z: dict[int, float] = {}
@@ -451,6 +458,24 @@ class WECSPMDriver:
             raise RuntimeError(self._execution_detail) from exc
         self._feedback_update_interval_us = int(config.update_interval_us)
 
+    def _configure_contact_feedback(self, channel: str, threshold: float, greater_than: bool, mode: str) -> float:
+        """Apply either direct current feedback or the target's self-referenced running average."""
+        effective_threshold = threshold if mode == "absolute" else (abs(threshold) if greater_than else -abs(threshold))
+        self.configure_feedback(FeedbackConfiguration.from_settings(
+            self.settings,
+            primary_channel=channel,
+            primary_threshold=effective_threshold,
+            primary_greater_than=greater_than,
+        ))
+        if mode == "baseline_relative":
+            # Type 8 is the deployed FPGA's running-average approach. These
+            # fixed internal values establish a short whole/subtraction
+            # window and self-reference it while the waypoint is holding.
+            self._write_register("P2AvgWhole", 16)
+            self._write_register("P2AvgMinus", 4)
+            self._write_register("Feedback1 on  Hold", True)
+        return effective_threshold
+
     def start_approach_cv(self, params: ApproachCVParameters) -> None:
         errors = params.validate(self.settings)
         if errors:
@@ -497,7 +522,9 @@ class WECSPMDriver:
             # Python validates the feedback/pause state before it ever submits CV.
             Waypoint(
                 **common,
-                line_type=FEEDBACK_ACTION_CODES["pause_on_contact"],
+                line_type=FEEDBACK_ACTION_CODES[
+                    "pause_on_running_average" if params.feedback_mode == "baseline_relative" else "pause_on_contact"
+                ],
                 z_position=end_z,
                 v_position=approach_v,
                 z_velocity=z_approach,
@@ -505,12 +532,9 @@ class WECSPMDriver:
                 move_z=True,
             ),
         ]
-        self.configure_feedback(FeedbackConfiguration.from_settings(
-            self.settings,
-            primary_channel=params.feedback_channel,
-            primary_threshold=params.feedback_threshold_na,
-            primary_greater_than=params.greater_than,
-        ))
+        effective_threshold = self._configure_contact_feedback(
+            params.feedback_channel, params.feedback_threshold_na, params.greater_than, params.feedback_mode,
+        )
         current_z = raw_to_position(current["Z"], s.z_range_um, s.z_bipolar)
         preposition_duration = max(
             abs(current_z - params.start_z_um) / z_speeds[0],
@@ -527,9 +551,11 @@ class WECSPMDriver:
         self._approach_params = params
         self._approach_phase = "approach"
         self._scan_sequence = None
-        self._approach_threshold_na = params.feedback_threshold_na
+        self._approach_threshold_na = effective_threshold
         self._approach_feedback_channel = params.feedback_channel
         self._approach_greater_than = params.greater_than
+        self._approach_feedback_mode = params.feedback_mode
+        self._approach_feedback_baseline = None
         self._approach_end_z_raw = end_z
         self._approach_contact_observed = False
         self._approach_manually_accepted = False
@@ -540,7 +566,8 @@ class WECSPMDriver:
             raise RuntimeError("Approach parameters were not retained for the CV follow-up")
         current = self._current_targets()
         z_speed = max(10.0, params.approach_rate_um_s)
-        plan = cyclic_voltammetry_plan(
+        settle_plan = timed_hold_plan(params.settling_time_s)
+        plan = settle_plan + cyclic_voltammetry_plan(
             start_v=params.cv_start_v,
             vertex1_v=params.cv_vertex1_v,
             vertex2_v=params.cv_vertex2_v,
@@ -553,11 +580,12 @@ class WECSPMDriver:
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
         retract_index = len(compiled.waypoints) - 1 if params.retract_after else None
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
-        contexts = ["cv"] * len(compiled.waypoints)
+        settle_count = len(settle_plan)
+        contexts = ["settling"] * settle_count + ["cv"] * (len(compiled.waypoints) - settle_count)
         if retract_index is not None:
             contexts[retract_index] = "retract"
         self._approach_history.append((self._program_baseline, contexts))
-        self._sequence = _Sequence(self._program_baseline, len(compiled.waypoints), 0,
+        self._sequence = _Sequence(self._program_baseline, len(compiled.waypoints), settle_count,
                                    retract_index - 1 if retract_index is not None else len(compiled.waypoints) - 1,
                                    retract_index)
         self._approach_phase = "cv"
@@ -600,6 +628,8 @@ class WECSPMDriver:
         progress = min(0.99, completed / max(1, sequence.total))
         if sequence.retract_index is not None and index >= sequence.retract_index:
             return {"stage": "retracting", "detail": "CV complete; retracting Z", "progress": progress}
+        if index < sequence.cv_first:
+            return {"stage": "settling", "detail": f"Holding contact for {self._approach_params.settling_time_s:g} s", "progress": progress}
         cycle = min((index - sequence.cv_first) // 3 + 1, max(1, (sequence.cv_last - sequence.cv_first) // 3 + 1))
         return {"stage": "cv", "detail": f"FPGA is running CV cycle {cycle}", "progress": progress}
 
@@ -629,24 +659,23 @@ class WECSPMDriver:
         # target's narrowing conversion is verified, do not rely on wrapping
         # tags to assign samples to pixels after the signed transport range.
         baseline = int(self._read_register("LineNumber"))
-        total = 1 + params.point_count * (4 + 3 * params.cycles)
+        total = 1 + params.point_count * (4 + 3 * params.cycles + hold_frame_count(params.settling_time_s))
         if baseline < 0 or baseline + total > 32767:
             raise ValueError("Scan line tags would exceed the verified I16 range. Reinitialize the target before scanning.")
         s = self.settings
-        self.configure_feedback(FeedbackConfiguration.from_settings(
-            self.settings,
-            primary_channel=params.feedback_channel,
-            primary_threshold=params.feedback_threshold_na,
-            primary_greater_than=params.greater_than,
-        ))
+        effective_threshold = self._configure_contact_feedback(
+            params.feedback_channel, params.feedback_threshold_na, params.greater_than, params.feedback_mode,
+        )
         self._sequence = None
         self._scan_params = params
         self._scan_grid = params.grid()
         self._scan_history.clear()
         self._scan_point = 0
-        self._scan_threshold_na = params.feedback_threshold_na
+        self._scan_threshold_na = effective_threshold
         self._scan_feedback_channel = params.feedback_channel
         self._scan_greater_than = params.greater_than
+        self._scan_feedback_mode = params.feedback_mode
+        self._scan_feedback_baseline.clear()
         self._scan_end_z_raw = position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar)
         self._scan_contact_observed.clear()
         self._scan_manually_accepted.clear()
@@ -686,7 +715,9 @@ class WECSPMDriver:
                      v_position=voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio),
                      x_velocity=scale_velocity(x_raw, ex), y_velocity=scale_velocity(y_raw, ey),
                      move_x=True, move_y=True, move_v=True, jump_v=True),
-            Waypoint(**common, line_type=FEEDBACK_ACTION_CODES["pause_on_contact"],
+            Waypoint(**common, line_type=FEEDBACK_ACTION_CODES[
+                         "pause_on_running_average" if params.feedback_mode == "baseline_relative" else "pause_on_contact"
+                     ],
                      z_position=position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar),
                      v_position=voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio),
                      z_velocity=scale_velocity(za_raw, ez),
@@ -718,7 +749,8 @@ class WECSPMDriver:
         low_z, high_z = sorted((params.start_z_um, params.end_z_um))
         if not low_z <= contact_z <= high_z:
             contact_z = self._scan_last_approach_z.get(point, params.end_z_um)
-        plan = cyclic_voltammetry_plan(
+        settle_plan = timed_hold_plan(params.settling_time_s)
+        plan = settle_plan + cyclic_voltammetry_plan(
             start_v=params.cv_start_v,
             vertex1_v=params.cv_vertex1_v,
             vertex2_v=params.cv_vertex2_v,
@@ -730,7 +762,12 @@ class WECSPMDriver:
         compiled = self.compiler.compile(plan, current)
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
-        descriptors = [(point, "cv")] * (len(compiled.waypoints) - 1) + [(point, "retract")]
+        settle_count = len(settle_plan)
+        descriptors = (
+            [(point, "settling")] * settle_count
+            + [(point, "cv")] * (len(compiled.waypoints) - settle_count - 1)
+            + [(point, "retract")]
+        )
         self._scan_sequence = _ScanSequence(self._program_baseline, descriptors)
         self._scan_history.append(self._scan_sequence)
         self._scan_phase = "cv"
@@ -794,7 +831,8 @@ class WECSPMDriver:
             current_line = int(self._read_register("LineNumber"))
             completed = 0
         point_index, point_stage = self.scan_context(current_line)
-        stage = "approaching" if point_stage == "approach" else "cv" if point_stage == "cv" else "retracting" if point_stage == "retract" else "preposition"
+        stage = ("approaching" if point_stage == "approach" else "settling" if point_stage == "settling"
+                 else "cv" if point_stage == "cv" else "retracting" if point_stage == "retract" else "preposition")
         phase_fraction = min(0.9, completed / max(1, len(sequence.descriptors)))
         return {
             "stage": stage,
@@ -854,9 +892,11 @@ class WECSPMDriver:
                 for _potential, duration, _label in parameters.it_steps()
             )
             if isinstance(parameters, ScanHoppingITParameters):
-                total_tags = 1 + parameters.point_count * (3 + hold_frames)
+                total_tags = 1 + parameters.point_count * (
+                    3 + hold_frames + hold_frame_count(parameters.settling_time_s)
+                )
             else:
-                total_tags = 2 + hold_frames + int(parameters.retract_after)
+                total_tags = 2 + hold_frames + hold_frame_count(parameters.settling_time_s) + int(parameters.retract_after)
             if baseline < 0 or baseline + total_tags > 32767:
                 raise ValueError(
                     "I-t line tags would exceed the verified signed-I16 acquisition range. "
@@ -881,28 +921,28 @@ class WECSPMDriver:
                 raise TypeError("scan_hopping_it requires ScanHoppingITParameters")
             self._method_grid = parameters.grid()
             self._method_point = 0
-            self._method_threshold = parameters.feedback_threshold
+            self._method_threshold = self._configure_contact_feedback(
+                parameters.feedback_channel, parameters.feedback_threshold,
+                parameters.greater_than, parameters.feedback_mode,
+            )
             self._method_feedback_channel = parameters.feedback_channel
             self._method_greater_than = parameters.greater_than
-            self.configure_feedback(FeedbackConfiguration.from_settings(
-                self.settings, primary_channel=parameters.feedback_channel,
-                primary_threshold=parameters.feedback_threshold,
-                primary_greater_than=parameters.greater_than,
-            ))
+            self._method_feedback_mode = parameters.feedback_mode
+            self._method_feedback_baseline.clear()
             self._submit_method_scan_approach(initial=True)
             return
 
         if not isinstance(parameters, (ApproachParameters, ApproachITParameters)):
             raise TypeError(f"{name} requires approach parameters")
         self._method_point = -1
-        self._method_threshold = parameters.feedback_threshold
+        self._method_threshold = self._configure_contact_feedback(
+            parameters.feedback_channel, parameters.feedback_threshold,
+            parameters.greater_than, parameters.feedback_mode,
+        )
         self._method_feedback_channel = parameters.feedback_channel
         self._method_greater_than = parameters.greater_than
-        self.configure_feedback(FeedbackConfiguration.from_settings(
-            self.settings, primary_channel=parameters.feedback_channel,
-            primary_threshold=parameters.feedback_threshold,
-            primary_greater_than=parameters.greater_than,
-        ))
+        self._method_feedback_mode = parameters.feedback_mode
+        self._method_feedback_baseline.clear()
         xy_rate = max(10.0, parameters.approach_rate_um_s)
         plan = [PhysicalWaypoint(
             x_um=parameters.x_um, y_um=parameters.y_um, z_um=parameters.start_z_um,
@@ -912,7 +952,8 @@ class WECSPMDriver:
             z_rate_um_s=parameters.retract_rate_um_s, jump_voltage1=True,
         ), PhysicalWaypoint(
             z_um=parameters.end_z_um, z_rate_um_s=parameters.approach_rate_um_s,
-            feedback_action="pause_on_contact", update_interval_us=self._feedback_update_interval_us,
+            feedback_action=("pause_on_running_average" if parameters.feedback_mode == "baseline_relative" else "pause_on_contact"),
+            update_interval_us=self._feedback_update_interval_us,
         )]
         self._submit_method_plan(plan, [(-1, "preposition"), (-1, "approach")], "approach")
 
@@ -934,15 +975,18 @@ class WECSPMDriver:
             ),
             PhysicalWaypoint(
                 z_um=params.end_z_um, z_rate_um_s=params.approach_rate_um_s,
-                feedback_action="pause_on_contact", update_interval_us=self._feedback_update_interval_us,
+                feedback_action=("pause_on_running_average" if params.feedback_mode == "baseline_relative" else "pause_on_contact"),
+                update_interval_us=self._feedback_update_interval_us,
             ),
         ))
         descriptors.extend(((self._method_point, "positioning"), (self._method_point, "approach")))
         self._submit_method_plan(plan, descriptors, "approach", resume=not initial)
 
     def _submit_method_it(self, params: ApproachITParameters | ScanHoppingITParameters, point: int) -> None:
-        plan, labels = potential_step_plan(params.it_steps())
-        descriptors = [(point, f"it:{label}") for label in labels]
+        settle_plan = timed_hold_plan(params.settling_time_s)
+        method_plan, labels = potential_step_plan(params.it_steps())
+        plan = settle_plan + method_plan
+        descriptors = [(point, "settling")] * len(settle_plan) + [(point, f"it:{label}") for label in labels]
         should_retract = params.retract_after if isinstance(params, ApproachITParameters) else True
         if should_retract:
             if isinstance(params, ScanHoppingITParameters):
@@ -980,8 +1024,14 @@ class WECSPMDriver:
             self._cancelled = False
             if self._method_name == "approach":
                 assert isinstance(params, ApproachParameters)
+                plan = timed_hold_plan(params.settling_time_s)
+                descriptors = [(point, "settling")] * len(plan)
                 if params.retract_after:
-                    self._submit_method_retract(params)
+                    plan.append(PhysicalWaypoint(z_um=params.start_z_um, z_rate_um_s=params.retract_rate_um_s))
+                    descriptors.append((point, "retract"))
+                    self._submit_method_plan(plan, descriptors, "contact_followup", resume=True)
+                elif plan:
+                    self._submit_method_plan(plan, descriptors, "contact_followup", resume=True)
                 else:
                     self._method_terminal = "complete"
                     self._method_detail = "Contact detected; probe remains at the contact position"
@@ -1062,6 +1112,8 @@ class WECSPMDriver:
         stage = "approaching" if self._method_phase == "approach" else "retracting" if self._method_phase == "retract" else self._method_phase
         if point_stage == "retract":
             stage = "retracting"
+        elif point_stage == "settling":
+            stage = "settling"
         return {
             "stage": self._method_terminal or stage,
             "detail": self._method_detail or f"{self._method_name.replace('_', ' ').title()} · {point_stage or stage}",
@@ -1194,25 +1246,32 @@ class WECSPMDriver:
         previous_scan: tuple[int, str] | None = None
         for sample in samples:
             approach_stage = self.approach_context(sample.line_number)
-            if approach_stage == "approach" and self._feedback_hit(
-                self._sample_current(sample, self._approach_feedback_channel), self._approach_threshold_na, self._approach_greater_than
-            ):
-                self._approach_contact_observed = True
+            if approach_stage == "approach":
+                current = self._sample_current(sample, self._approach_feedback_channel)
+                if self._approach_feedback_baseline is None:
+                    self._approach_feedback_baseline = current
+                signal = current if self._approach_feedback_mode == "absolute" else current - self._approach_feedback_baseline
+                if self._feedback_hit(signal, self._approach_threshold_na, self._approach_greater_than):
+                    self._approach_contact_observed = True
             point, scan_stage = self.scan_context(sample.line_number)
             if point >= 0 and scan_stage == "approach":
                 self._scan_last_approach_z[point] = sample.z_um
-                if self._feedback_hit(self._sample_current(sample, self._scan_feedback_channel), self._scan_threshold_na, self._scan_greater_than):
+                current = self._sample_current(sample, self._scan_feedback_channel)
+                baseline = self._scan_feedback_baseline.setdefault(point, current)
+                signal = current if self._scan_feedback_mode == "absolute" else current - baseline
+                if self._feedback_hit(signal, self._scan_threshold_na, self._scan_greater_than):
                     self._scan_contact_observed.add(point)
-            if previous_scan is not None and previous_scan[0] == point and previous_scan[1] == "approach" and scan_stage == "cv":
+            if previous_scan is not None and previous_scan[0] == point and previous_scan[1] == "approach" and scan_stage in {"settling", "cv"}:
                 if not self._scan_contact_confirmed(point):
                     self._scan_failed_contact = point
             previous_scan = (point, scan_stage)
             method_point, method_stage = self.method_context(sample.line_number)
             if method_stage == "approach":
                 self._method_last_approach_z[method_point] = sample.z_um
-                if self._feedback_hit(
-                    self._sample_current(sample, self._method_feedback_channel), self._method_threshold, self._method_greater_than
-                ):
+                current = self._sample_current(sample, self._method_feedback_channel)
+                baseline = self._method_feedback_baseline.setdefault(method_point, current)
+                signal = current if self._method_feedback_mode == "absolute" else current - baseline
+                if self._feedback_hit(signal, self._method_threshold, self._method_greater_than):
                     self._method_contact_observed.add(method_point)
 
     def stop_motion(self) -> None:

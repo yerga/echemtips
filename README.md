@@ -8,7 +8,8 @@ The current application includes:
 - Standalone cyclic voltammetry with separate raw and CV plots.
 - Standalone approach with contact detection, pause/stop, and optional retract.
 - Approach followed by CV or potential-step current-time acquisition, with optional X/Y prepositioning.
-- Scan hopping with CV or current-time acquisition, serpentine or raster paths, contact-height/current maps, contact-relative Z retraction, and live spacing and duration estimates.
+- Guided electrical preflight and an immersed-pipette characterization workflow with saved JSON reports.
+- Scan hopping with CV or current-time acquisition, serpentine or raster paths, physical-coordinate contact/current maps, square-cell or circular-footprint views, contact-relative Z retraction, and live spacing and duration estimates.
 - Bounded X/Y/Z piezo movement and controlled potential output.
 - Simulation and NI USB-7856R operation with a fixed, explicit channel map.
 - A separate data-analysis UI for eChemTips CSV recordings and identified legacy LabVIEW exports.
@@ -38,7 +39,7 @@ Use **Settings → Save as defaults and apply** to persist the selected backend,
 
 Recordings are streamed to uniquely named CSV and JSON metadata files in `data/`, or in the directory selected in Settings. The complete data rate is written to disk while plots retain a bounded, decimated display buffer. Standard CSV rows contain measured time, X/Y/Z, E1/E2, i1/i2, and the FPGA line number. Scan recordings additionally contain `scan_pixel`; their ordered pixel-to-row/column/XY mapping is stored once in the JSON sidecar. Per-sample feedback type, redundant row/column values, and non-time-aligned commanded-position snapshots are intentionally omitted to keep long recordings smaller.
 
-Approach thresholds are entered in pA in the operator UI. Every approach-based page includes a dedicated **Accept current Z as contact and continue** action for intentional manual acceptance; the global **End waypoint** control only advances the active FPGA waypoint and is not contact confirmation. Each approach page shows both the latest approach curve and a rolling 60-second current-versus-Z history. Long scan traces use the same 60-second display window while the recorder continues to preserve the complete acquisition.
+Approach thresholds are entered in pA in the operator UI. Contact can use a direct signed-current threshold or a baseline-relative Δi magnitude; the latter uses the FPGA's type-8 self-referenced running-average action. A selectable post-contact settling hold (including zero) runs on the FPGA before CV, I–t, or retract. Every approach-based page includes a dedicated **Accept current Z as contact and continue** action for intentional manual acceptance; the global **End waypoint** control only advances the active FPGA waypoint and is not contact confirmation. Each approach page shows both the latest approach curve and a rolling 60-second current-versus-Z history. Long scan traces use the same 60-second display window while the recorder continues to preserve the complete acquisition.
 
 For hopping scans, **Initial approach Z** is an absolute position used only before the first hop. **Retract distance from contact** is a positive distance: after each confirmed contact at Z, the next retract target is calculated away from the surface by that distance. Raster scans add **Raster flyback extra retract** at the end of each line before the longer X flyback.
 

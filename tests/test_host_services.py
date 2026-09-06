@@ -5,7 +5,7 @@ import unittest
 from echemtips.host import DisplayBuffer, WaypointStreamer
 from echemtips.models import AppSettings
 from echemtips.ni_protocol import FEEDBACK_ACTION_CODES, position_to_raw
-from echemtips.waypoints import PhysicalWaypoint, WaypointCompiler, cyclic_voltammetry_plan, potential_step_plan
+from echemtips.waypoints import PhysicalWaypoint, WaypointCompiler, cyclic_voltammetry_plan, potential_step_plan, timed_hold_plan
 
 
 class _FIFO:
@@ -18,6 +18,12 @@ class _FIFO:
 
 
 class HostServiceTests(unittest.TestCase):
+    def test_settling_hold_is_zero_optional_and_split_for_fpga_timer(self) -> None:
+        self.assertEqual(timed_hold_plan(0), [])
+        plan = timed_hold_plan(0.1)
+        self.assertEqual(sum(point.hold_us for point in plan), 100_000)
+        self.assertTrue(all(0 < point.hold_us <= 32767 for point in plan))
+
     def test_streamer_refills_only_complete_frames(self) -> None:
         fifo = _FIFO()
         streamer = WaypointStreamer(fifo, fifo_words=140, initial_waypoints=5, refill_waypoints=3)

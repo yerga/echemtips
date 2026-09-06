@@ -55,6 +55,25 @@ def _finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
+CONTACT_MODES = {"absolute", "baseline_relative"}
+
+
+def hold_frame_count(duration_s: float) -> int:
+    """Number of signed-I16 microsecond timer frames needed by the FPGA."""
+    if not math.isfinite(duration_s) or duration_s < 0:
+        return 0
+    return math.ceil(duration_s * 1_000_000 / 32767) if duration_s > 0 else 0
+
+
+def validate_contact_options(mode: str, settling_time_s: float) -> list[str]:
+    errors: list[str] = []
+    if mode not in CONTACT_MODES:
+        errors.append("Contact criterion must be absolute current or change from baseline.")
+    if not math.isfinite(settling_time_s) or settling_time_s < 0:
+        errors.append("Settling time must be finite and zero or greater.")
+    return errors
+
+
 @dataclass(slots=True)
 class AppSettings:
     mode: str = "Simulation"
@@ -217,6 +236,8 @@ class ApproachCVParameters:
     feedback_channel: str = "Current 1"
     feedback_threshold_na: float = 2.0
     greater_than: bool = True
+    feedback_mode: str = "absolute"
+    settling_time_s: float = 0.0
     cv_start_v: float = -0.2
     cv_vertex1_v: float = 0.6
     cv_vertex2_v: float = -0.4
@@ -231,7 +252,7 @@ class ApproachCVParameters:
         return "nA"
 
     def validate(self, settings: AppSettings) -> list[str]:
-        errors: list[str] = []
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         if not math.isfinite(self.start_z_um) or not 0 <= self.start_z_um <= settings.z_range_um:
             errors.append("Start Z is outside the configured Z range.")
         if not math.isfinite(self.end_z_um) or not 0 <= self.end_z_um <= settings.z_range_um:
@@ -304,6 +325,8 @@ class ApproachParameters:
     feedback_channel: str = "Current 1"
     feedback_threshold: float = 2.0
     greater_than: bool = True
+    feedback_mode: str = "absolute"
+    settling_time_s: float = 0.0
     retract_after: bool = True
     x_um: float | None = None
     y_um: float | None = None
@@ -313,7 +336,7 @@ class ApproachParameters:
         return "nA"
 
     def validate(self, settings: AppSettings) -> list[str]:
-        errors: list[str] = []
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         for name, value in (("Start Z", self.start_z_um), ("End Z", self.end_z_um)):
             if not math.isfinite(value) or not 0 <= value <= settings.z_range_um:
                 errors.append(f"{name} is outside the configured Z range.")
@@ -406,6 +429,8 @@ class ScanHoppingCVParameters:
     feedback_channel: str = "Current 1"
     feedback_threshold_na: float = 2.0
     greater_than: bool = True
+    feedback_mode: str = "absolute"
+    settling_time_s: float = 0.0
     cv_start_v: float = -0.2
     cv_vertex1_v: float = 0.6
     cv_vertex2_v: float = -0.4
@@ -415,6 +440,7 @@ class ScanHoppingCVParameters:
     serpentine: bool = True
     raster_line_retract_um: float = 5.0
     retract_distance_um: float = 10.0
+    footprint_diameter_um: float = 1.0
 
     @property
     def point_count(self) -> int:
@@ -469,7 +495,7 @@ class ScanHoppingCVParameters:
             + abs(self.cv_vertex2_v - self.cv_vertex1_v)
             + abs(self.cv_start_v - self.cv_vertex2_v)
         ) / self.cv_scan_rate_v_s
-        return lateral + repeated_approaches + retracts + self.point_count * cv_per_point
+        return lateral + repeated_approaches + retracts + self.point_count * (self.settling_time_s + cv_per_point)
 
     @staticmethod
     def _axis_values(start: float, end: float, count: int) -> list[float]:
@@ -489,7 +515,7 @@ class ScanHoppingCVParameters:
         return points
 
     def validate(self, settings: AppSettings) -> list[str]:
-        errors: list[str] = []
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         for name, low, high, limit in (
             ("X", self.x_start_um, self.x_end_um, settings.x_range_um),
             ("Y", self.y_start_um, self.y_end_um, settings.y_range_um),
@@ -506,7 +532,9 @@ class ScanHoppingCVParameters:
             errors.append("Retract distance from contact must be finite and positive.")
         if not math.isfinite(self.raster_line_retract_um) or self.raster_line_retract_um < 0:
             errors.append("Raster extra line retract must be finite and non-negative.")
-        elif math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
+        if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
+            errors.append("Meniscus footprint diameter must be finite and positive.")
+        if math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
             targets = [
                 self.retract_z_for_point(point, contact_z)
                 for point in range(self.point_count)
@@ -541,7 +569,7 @@ class ScanHoppingCVParameters:
             self.cv_start_v, self.cv_vertex1_v, self.cv_vertex2_v
         ):
             errors.append("Map potential must lie inside the CV potential range.")
-        waypoints = 1 + self.point_count * (4 + 3 * self.cycles)
+        waypoints = 1 + self.point_count * (4 + 3 * self.cycles + hold_frame_count(self.settling_time_s))
         if settings.mode == "NI FPGA" and waypoints > 32767:
             errors.append(
                 f"This scan needs {waypoints} waypoint tags; the deployed FIFO streams them, but the "
@@ -567,6 +595,8 @@ class ScanHoppingITParameters:
     feedback_channel: str = "Current 1"
     feedback_threshold: float = 2.0
     greater_than: bool = True
+    feedback_mode: str = "absolute"
+    settling_time_s: float = 0.0
     initial_potential_v: float = -0.1
     initial_hold_s: float = 0.25
     step_potential_v: float = 0.4
@@ -577,6 +607,7 @@ class ScanHoppingITParameters:
     serpentine: bool = True
     raster_line_retract_um: float = 5.0
     retract_distance_um: float = 10.0
+    footprint_diameter_um: float = 1.0
 
     @property
     def point_count(self) -> int:
@@ -622,7 +653,7 @@ class ScanHoppingITParameters:
             for point in range(self.point_count)
         )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
-        return lateral + repeated_approaches + retracts + self.point_count * it_per_point
+        return lateral + repeated_approaches + retracts + self.point_count * (self.settling_time_s + it_per_point)
 
     def grid(self) -> list[tuple[int, int, float, float]]:
         xs = ScanHoppingCVParameters._axis_values(self.x_start_um, self.x_end_um, self.x_points)
@@ -651,6 +682,7 @@ class ScanHoppingITParameters:
             approach_rate_um_s=self.approach_rate_um_s, retract_rate_um_s=self.retract_rate_um_s,
             approach_voltage_v=self.approach_voltage_v, feedback_channel=self.feedback_channel,
             feedback_threshold=self.feedback_threshold, greater_than=self.greater_than,
+            feedback_mode=self.feedback_mode, settling_time_s=self.settling_time_s,
             initial_potential_v=self.initial_potential_v, initial_hold_s=self.initial_hold_s,
             step_potential_v=self.step_potential_v, step_hold_s=self.step_hold_s,
             return_potential_v=self.return_potential_v, return_hold_s=self.return_hold_s,
@@ -671,7 +703,9 @@ class ScanHoppingITParameters:
             errors.append("Retract distance from contact must be finite and positive.")
         if not math.isfinite(self.raster_line_retract_um) or self.raster_line_retract_um < 0:
             errors.append("Raster extra line retract must be finite and non-negative.")
-        elif math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
+        if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
+            errors.append("Meniscus footprint diameter must be finite and positive.")
+        if math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
             targets = [
                 self.retract_z_for_point(point, contact_z)
                 for point in range(self.point_count)
@@ -680,7 +714,7 @@ class ScanHoppingITParameters:
             if any(not 0 <= target <= settings.z_range_um for target in targets):
                 errors.append("Contact-relative retract would move Z outside the configured range.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
-        total_tags = 1 + self.point_count * (3 + hold_frames)
+        total_tags = 1 + self.point_count * (3 + hold_frames + hold_frame_count(self.settling_time_s))
         if settings.mode == "NI FPGA" and total_tags > 32767:
             errors.append(f"This scan needs {total_tags} waypoint tags, beyond the conservative signed-I16 scan limit.")
         return errors

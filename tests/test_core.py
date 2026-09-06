@@ -9,7 +9,7 @@ from echemtips.backends import BackendError, HardwareSequenceUpdate, NIFPGABacke
 from echemtips.data import DataRecorder
 from echemtips.experiments import (
     ApproachCVExperiment, ApproachExperiment, ApproachITExperiment, CVExperiment,
-    ExperimentState, ScanHoppingCVExperiment, ScanHoppingITExperiment,
+    ExperimentState, ScanHoppingCVExperiment, ScanHoppingITExperiment, contact_threshold_hit,
 )
 from echemtips.models import (
     DEFAULT_BITFILE, AppSettings, ApproachCVParameters, ApproachITParameters,
@@ -44,6 +44,19 @@ class SettingsTests(unittest.TestCase):
         scan_errors = ScanHoppingCVParameters(feedback_threshold_na=6.0).validate(settings)
         self.assertTrue(any("ADC range" in error for error in approach_errors))
         self.assertTrue(any("ADC range" in error for error in scan_errors))
+
+    def test_contact_mode_and_settling_time_are_validated(self) -> None:
+        self.assertTrue(any("Contact criterion" in error for error in ApproachParameters(feedback_mode="unknown").validate(AppSettings())))
+        self.assertTrue(any("Settling time" in error for error in ApproachParameters(settling_time_s=-0.1).validate(AppSettings())))
+        self.assertEqual(ApproachParameters(feedback_mode="baseline_relative", settling_time_s=0).validate(AppSettings()), [])
+
+    def test_baseline_relative_contact_uses_delta_current(self) -> None:
+        first = Sample(0, 0, 0, 0, 0, 0, 5.0, 0)
+        hit, baseline = contact_threshold_hit(first, "Current 1", 0.5, True, "baseline_relative", None)
+        self.assertFalse(hit)
+        second = Sample(1, 0, 0, 0, 0, 0, 5.6, 0)
+        hit, _ = contact_threshold_hit(second, "Current 1", 0.5, True, "baseline_relative", baseline)
+        self.assertTrue(hit)
 
     def test_settings_round_trip(self) -> None:
         with TemporaryDirectory() as folder:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,14 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from .acquisition import AcquisitionDrain, AcquisitionWorker
 from .backends import BackendError, InstrumentBackend, create_backend
 from .data import DataRecorder
+from .diagnostics import (
+    pipette_radius_nm,
+    resistance_fit,
+    save_json_report,
+    signal_statistics,
+    stray_capacitance_pf,
+    suggested_baseline_threshold_pa,
+)
 from .experiments import (
     ApproachCVExperiment,
     ApproachExperiment,
@@ -56,11 +65,16 @@ from .qt_common import (
 
 
 FEEDBACK_CHANNELS = ("Current 1", "Current 2")
+CONTACT_MODE_LABELS = ("Absolute current", "Change from approach baseline")
 PA_PER_NA = 1000.0
 
 
 def _feedback_current(sample: Sample, channel: str) -> float:
     return sample.current1_na if channel == "Current 1" else sample.current2_na
+
+
+def _contact_mode(choice: Choice) -> str:
+    return "baseline_relative" if choice.get() == "Change from approach baseline" else "absolute"
 
 
 def _vbox(widget: QtWidgets.QWidget, margins: tuple[int, int, int, int] = (0, 0, 0, 0), spacing: int = 10) -> QtWidgets.QVBoxLayout:
@@ -205,6 +219,232 @@ class BasePage(QtWidgets.QWidget):
     def on_samples(self, samples: list[Sample]) -> None:
         if samples:
             self.on_sample(samples[-1])
+
+
+class DiagnosticWorkflowPage(BasePage):
+    """Guided, non-recording diagnostic capture with a dedicated CV runner."""
+
+    def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
+        super().__init__(app, title, description)
+        self.is_busy = False
+        self._capture_kind = ""
+        self._samples: list[Sample] = []
+        self._capture_start: float | None = None
+        self._duration_s = 0.0
+        self._cv_runner = CVExperiment(app.backend, app.settings)
+        self.report: dict[str, Any] = {"workflow": title, "results": []}
+
+    def _ready(self) -> None:
+        self.app.require_connection()
+        if self.app.any_experiment_active or self.app.recorder.active:
+            raise RuntimeError("Stop the active experiment or recording before starting diagnostics.")
+
+    def _begin_timed(self, kind: str, duration_s: float, potential_v: float, circuit: str, resistance_mohm: float | None = None) -> None:
+        self._ready()
+        if not math.isfinite(duration_s) or duration_s <= 0:
+            raise ValueError("Capture duration must be greater than zero.")
+        self.app.backend.set_diagnostic_circuit(circuit, resistance_mohm)
+        self.app.backend.set_voltage(1, potential_v)
+        self._capture_kind, self._duration_s = kind, duration_s
+        self._samples, self._capture_start, self.is_busy = [], None, True
+        self.trace_plot.clear(); self.response_plot.clear(); self._set_busy(True)
+
+    def _begin_sweep(self, kind: str, start_v: float, end_v: float, rate_v_s: float, circuit: str, resistance_mohm: float | None = None) -> None:
+        self._ready()
+        self.app.backend.set_diagnostic_circuit(circuit, resistance_mohm)
+        self._cv_runner = CVExperiment(self.app.backend, self.app.settings)
+        self._cv_runner.start(CVParameters(start_v=start_v, vertex1_v=end_v, vertex2_v=start_v, scan_rate_v_s=rate_v_s, cycles=1))
+        self._capture_kind, self._samples, self._capture_start, self.is_busy = kind, [], None, True
+        self.trace_plot.clear(); self.response_plot.clear(); self._set_busy(True)
+
+    def _set_busy(self, busy: bool) -> None:
+        for action in self.action_buttons:
+            action.setEnabled(not busy and self.app.backend.connected)
+        self.stop_button.setEnabled(busy)
+        self.save_button.setEnabled(not busy and bool(self.report["results"]))
+        self.app._sync_action_states()
+
+    def sync_actions(self, connected: bool, another_busy: bool) -> None:
+        for action in self.action_buttons:
+            action.setEnabled(connected and not self.is_busy and not another_busy and not self.app.recorder.active)
+        self.stop_button.setEnabled(self.is_busy)
+        self.save_button.setEnabled(not self.is_busy and bool(self.report["results"]))
+
+    def stop(self) -> None:
+        if not self.is_busy:
+            return
+        if self._cv_runner.active:
+            self._cv_runner.abort()
+        self.app.backend.set_diagnostic_circuit("normal")
+        self.is_busy = False
+        self.status_label.setText("Stopped by operator")
+        self._set_busy(False)
+
+    def _complete(self) -> None:
+        try:
+            result = self.analyze_capture(self._capture_kind, self._samples)
+            self.report["results"].append(result)
+            self.results.setPlainText(self.format_report())
+            self.status_label.setText(f"Complete · {len(self._samples):,} samples")
+        except ValueError as exc:
+            self.status_label.setText(f"Could not calculate result: {exc}")
+        finally:
+            self.app.backend.set_diagnostic_circuit("normal")
+            self.is_busy = False
+            self._set_busy(False)
+
+    def on_samples(self, samples: list[Sample]) -> None:
+        if not self.is_busy:
+            return
+        if samples:
+            if self._capture_start is None:
+                self._capture_start = samples[0].elapsed_s
+            self._samples.extend(samples)
+            channel = self.channel.get()
+            for sample in samples:
+                elapsed = sample.elapsed_s - self._capture_start
+                current = _feedback_current(sample, channel)
+                self.trace_plot.append(elapsed, current, redraw=False)
+                self.response_plot.append(sample.voltage1_v, current, redraw=False)
+            self.trace_plot.redraw(); self.response_plot.redraw()
+        if self._cv_runner.active:
+            self._cv_runner.tick_samples(samples)
+            self.status_label.setText(self._cv_runner.detail)
+            if not self._cv_runner.active:
+                self._complete()
+        elif self._capture_start is not None and samples and samples[-1].elapsed_s - self._capture_start >= self._duration_s:
+            self._complete()
+
+    def save_report(self) -> None:
+        try:
+            payload = {**self.report, "settings": asdict(self.app.settings)}
+            path = save_json_report(self.app.settings.save_directory, self.report_prefix, payload)
+            self.app.toast(f"Saved {path.name}", "success")
+        except OSError as exc:
+            self.app.show_error(str(exc))
+
+    def analyze_capture(self, kind: str, samples: list[Sample]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def format_report(self) -> str:
+        raise NotImplementedError
+
+
+class PreflightPage(DiagnosticWorkflowPage):
+    report_prefix = "guided_preflight"
+
+    def __init__(self, app: "EChemTipsApp") -> None:
+        super().__init__(app, "Guided preflight", "Verify noise, wiring, response, and current scaling before an experiment. Follow the fixture instruction shown for each step.")
+        root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
+        controls = QtWidgets.QWidget(); left = _vbox(controls)
+        setup = Card("Test configuration", "On real hardware, prepare the stated circuit before pressing a step button. Simulation changes fixture automatically.")
+        g = _grid(setup.body)
+        channel_box = QtWidgets.QWidget(); cl = _vbox(channel_box, spacing=5); cl.addWidget(label("Current input", "muted")); self.channel = Choice(FEEDBACK_CHANNELS, "Current 1"); cl.addWidget(self.channel); g.addWidget(channel_box, 0, 0)
+        self.duration = add_field(g, Field("Noise duration", "5", "s"), 0, 1)
+        self.resistor = add_field(g, Field("Known resistance", "100", "MΩ"), 1, 0)
+        self.sweep_start = add_field(g, Field("Sweep start", "-0.5", "V"), 2, 0); self.sweep_end = add_field(g, Field("Sweep end", "0.5", "V"), 2, 1)
+        self.sweep_rate = add_field(g, Field("Sweep rate", "0.2", "V/s"), 3, 0)
+        left.addWidget(setup)
+        steps = Card("Guided checks", "Run in order. The suggested Δi threshold is a conservative starting value, not an automatic safety guarantee.")
+        sl = _vbox(steps.body)
+        self.noise_button = button("1 · Measure zero-current noise", self.run_noise, "primary"); self.noise_button.setToolTip("Real device: hold E1 at 0 V with the normal input wiring and no electrochemical event.")
+        self.open_button = button("2 · Measure open-input capacitance", self.run_open); self.open_button.setToolTip("Real device: disconnect the amplifier signal input before running the triangular sweep.")
+        self.resistor_button = button("3 · Verify with known resistor", self.run_resistor); self.resistor_button.setToolTip("Real device: connect the stated precision resistor in the current path.")
+        for widget in (self.noise_button, self.open_button, self.resistor_button): sl.addWidget(widget)
+        actions = QtWidgets.QWidget(); al = _hbox(actions); self.stop_button = button("Stop test", self.stop, "danger"); self.save_button = button("Save report", self.save_report); al.addWidget(self.stop_button); al.addWidget(self.save_button); sl.addWidget(actions)
+        self.action_buttons = [self.noise_button, self.open_button, self.resistor_button]
+        left.addWidget(steps); left.addStretch(1); root.addWidget(_left_scroll(controls))
+        right = QtWidgets.QWidget(); rl = _vbox(right); self.status_label = label("Connect, prepare the first fixture, then begin.", "statusStrong"); rl.addWidget(self.status_label)
+        plots = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.trace_plot = Plot("Diagnostic current vs time", "Current (nA)", (COLORS["blue"],), app.settings.display_max_points)
+        self.response_plot = Plot("Current vs potential E1", "Current (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
+        plots.addWidget(_plot_card("Live current", "Full-rate acquisition; display is decimated by the common plot buffer.", self.trace_plot)); plots.addWidget(_plot_card("Electrical response", "Used for capacitance and resistance checks.", self.response_plot)); plots.setSizes([280, 280]); rl.addWidget(plots, 1)
+        self.results = QtWidgets.QPlainTextEdit(); self.results.setReadOnly(True); self.results.setPlaceholderText("Calculated checks will appear here."); self.results.setMaximumHeight(150); rl.addWidget(self.results); root.addWidget(right, 1)
+        self._set_busy(False)
+
+    def run_noise(self) -> None:
+        try: self._begin_timed("noise", self.duration.float(), 0.0, "normal"); self.status_label.setText("Step 1/3 · measuring baseline noise at E1 = 0 V")
+        except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
+
+    def run_open(self) -> None:
+        try: self._begin_sweep("open", self.sweep_start.float(), self.sweep_end.float(), self.sweep_rate.float(), "open"); self.status_label.setText("Step 2/3 · open-input triangular sweep")
+        except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
+
+    def run_resistor(self) -> None:
+        try: self._begin_sweep("resistor", self.sweep_start.float(), self.sweep_end.float(), self.sweep_rate.float(), "resistor", self.resistor.float()); self.status_label.setText("Step 3/3 · known-resistor response")
+        except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
+
+    def analyze_capture(self, kind: str, samples: list[Sample]) -> dict[str, Any]:
+        channel = self.channel.get()
+        if kind == "noise":
+            stats = signal_statistics(samples, channel)
+            return {"test": kind, "statistics": asdict(stats), "suggested_delta_i_threshold_pa": suggested_baseline_threshold_pa(stats)}
+        if kind == "open":
+            return {"test": kind, "stray_capacitance_pf": stray_capacitance_pf(samples, channel), "statistics": asdict(signal_statistics(samples, channel))}
+        fit, measured = resistance_fit(samples, channel); expected = self.resistor.float()
+        return {"test": kind, "expected_resistance_mohm": expected, "measured_resistance_mohm": measured, "error_percent": 100 * (measured - expected) / expected, "fit": asdict(fit)}
+
+    def format_report(self) -> str:
+        lines = []
+        for result in self.report["results"]:
+            if result["test"] == "noise": lines.append(f"Noise · RMS {result['statistics']['rms_noise_pa']:.2f} pA · suggested Δi threshold {result['suggested_delta_i_threshold_pa']:.1f} pA")
+            elif result["test"] == "open": lines.append(f"Open input · estimated stray capacitance {result['stray_capacitance_pf']:.2f} pF")
+            else: lines.append(f"Known resistor · measured {result['measured_resistance_mohm']:.3g} MΩ · error {result['error_percent']:+.2f}% · R² {result['fit']['r_squared']:.5f}")
+        return "\n".join(lines)
+
+
+class PipetteCharacterizationPage(DiagnosticWorkflowPage):
+    report_prefix = "pipette_characterization"
+
+    def __init__(self, app: "EChemTipsApp") -> None:
+        super().__init__(app, "Characterize pipette", "Document pipette stability and estimate resistance and aperture radius before scanning.")
+        root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
+        controls = QtWidgets.QWidget(); left = _vbox(controls)
+        setup = Card("Pipette and electrolyte", "The radius estimate uses a conical-pipette approximation and should be reported as an estimate.")
+        g = _grid(setup.body)
+        self.pipette_id = add_field(g, Field("Pipette ID", "pipette-001"), 0, 0)
+        channel_box = QtWidgets.QWidget(); cl = _vbox(channel_box, spacing=5); cl.addWidget(label("Current input", "muted")); self.channel = Choice(FEEDBACK_CHANNELS, "Current 1"); cl.addWidget(self.channel); g.addWidget(channel_box, 0, 1)
+        self.conductivity = add_field(g, Field("Conductivity", "1.0", "S/m"), 1, 0); self.half_angle = add_field(g, Field("Pipette half-angle", "10", "°"), 1, 1)
+        self.stability_potential = add_field(g, Field("Stability potential E1", "0.1", "V"), 2, 0); self.duration = add_field(g, Field("Stability duration", "10", "s"), 2, 1)
+        self.sweep_start = add_field(g, Field("I–E sweep start", "-0.2", "V"), 3, 0); self.sweep_end = add_field(g, Field("I–E sweep end", "0.2", "V"), 3, 1); self.sweep_rate = add_field(g, Field("I–E sweep rate", "0.1", "V/s"), 4, 0)
+        left.addWidget(setup)
+        steps = Card("Characterization", "Real device: immerse the pipette in the characterization electrolyte with the normal amplifier connection.")
+        sl = _vbox(steps.body)
+        self.stability_button = button("1 · Measure current stability", self.run_stability, "primary"); self.sweep_button = button("2 · Measure I–E response", self.run_sweep)
+        sl.addWidget(self.stability_button); sl.addWidget(self.sweep_button)
+        actions = QtWidgets.QWidget(); al = _hbox(actions); self.stop_button = button("Stop test", self.stop, "danger"); self.save_button = button("Save pipette profile", self.save_report); al.addWidget(self.stop_button); al.addWidget(self.save_button); sl.addWidget(actions)
+        self.action_buttons = [self.stability_button, self.sweep_button]
+        left.addWidget(steps); left.addStretch(1); root.addWidget(_left_scroll(controls))
+        right = QtWidgets.QWidget(); rl = _vbox(right); self.status_label = label("Connect and prepare the immersed pipette.", "statusStrong"); rl.addWidget(self.status_label)
+        plots = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.trace_plot = Plot("Pipette current vs time", "Current (nA)", (COLORS["blue"],), app.settings.display_max_points)
+        self.response_plot = Plot("Pipette current vs potential E1", "Current (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
+        plots.addWidget(_plot_card("Stability", "Check drift and current noise before scanning.", self.trace_plot)); plots.addWidget(_plot_card("I–E response", "Linear slope gives resistance; conductivity and cone angle give estimated aperture radius.", self.response_plot)); plots.setSizes([280, 280]); rl.addWidget(plots, 1)
+        self.results = QtWidgets.QPlainTextEdit(); self.results.setReadOnly(True); self.results.setPlaceholderText("Characterization results will appear here."); self.results.setMaximumHeight(150); rl.addWidget(self.results); root.addWidget(right, 1)
+        self.report["pipette_id"] = self.pipette_id.entry.text(); self._set_busy(False)
+
+    def run_stability(self) -> None:
+        try: self._begin_timed("stability", self.duration.float(), self.stability_potential.float(), "pipette"); self.status_label.setText("Measuring immersed-pipette stability")
+        except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
+
+    def run_sweep(self) -> None:
+        try: self._begin_sweep("pipette_sweep", self.sweep_start.float(), self.sweep_end.float(), self.sweep_rate.float(), "pipette"); self.status_label.setText("Measuring pipette I–E response")
+        except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
+
+    def analyze_capture(self, kind: str, samples: list[Sample]) -> dict[str, Any]:
+        self.report["pipette_id"] = self.pipette_id.entry.text().strip() or "unnamed"
+        channel = self.channel.get()
+        if kind == "stability": return {"test": kind, "potential_v": self.stability_potential.float(), "statistics": asdict(signal_statistics(samples, channel))}
+        fit, resistance = resistance_fit(samples, channel)
+        radius = pipette_radius_nm(resistance, self.conductivity.float(), self.half_angle.float())
+        return {"test": kind, "resistance_mohm": resistance, "estimated_radius_nm": radius, "conductivity_s_m": self.conductivity.float(), "half_angle_deg": self.half_angle.float(), "fit": asdict(fit)}
+
+    def format_report(self) -> str:
+        lines = [f"Pipette · {self.report['pipette_id']}"]
+        for result in self.report["results"]:
+            if result["test"] == "stability": lines.append(f"Stability · mean {result['statistics']['mean_na']:.4g} nA · RMS {result['statistics']['rms_noise_pa']:.2f} pA · drift {result['statistics']['drift_pa_s']:+.3f} pA/s")
+            else: lines.append(f"I–E · {result['resistance_mohm']:.3g} MΩ · estimated radius {result['estimated_radius_nm']:.1f} nm · R² {result['fit']['r_squared']:.5f}")
+        return "\n".join(lines)
 
 
 class StatusCard(Card):
@@ -748,6 +988,11 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.threshold = add_field(form, Field("Contact threshold", "2000", "pA"), 1, 0)
         self.greater = Check("Trigger when greater", True)
         form.addWidget(self.greater, 1, 1)
+        mode_box = QtWidgets.QWidget(); mode_layout = _vbox(mode_box, spacing=5)
+        mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode)
+        form.addWidget(mode_box, 2, 0)
+        self.settling_time = add_field(form, Field("Settle after contact", "0.5", "s"), 2, 1)
+        form.addWidget(label("Baseline-relative mode compares Δi with a self-referenced baseline at approach start; enter the threshold magnitude. Zero settling proceeds immediately.", "muted"), 3, 0, 1, 2)
         left_layout.addWidget(contact)
 
         position = Card("3 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
@@ -776,9 +1021,12 @@ class StandaloneApproachPage(ManagedExperimentPage):
 
     def parameters(self) -> ApproachParameters:
         return ApproachParameters(
-            self.start_z.float(), self.end_z.float(), self.approach_rate.float(), self.retract_rate.float(),
-            self.potential.float(), self.feedback_channel.get(), self.threshold.float() / PA_PER_NA, self.greater.get(), self.retract.get(),
-            self.x_position.optional_float(), self.y_position.optional_float(),
+            start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
+            retract_rate_um_s=self.retract_rate.float(), approach_voltage_v=self.potential.float(),
+            feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA,
+            greater_than=self.greater.get(), feedback_mode=_contact_mode(self.feedback_mode),
+            settling_time_s=self.settling_time.float(), retract_after=self.retract.get(),
+            x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
         )
 
     def start(self) -> None:
@@ -827,8 +1075,13 @@ class ApproachCVPage(ManagedExperimentPage):
         choice_layout.addWidget(label("Feedback current", "muted")); choice_layout.addWidget(self.feedback_channel)
         ag.addWidget(choice_frame, 2, 0)
         self.threshold = add_field(ag, Field("Contact threshold", "2000", "pA"), 2, 1)
+        mode_box = QtWidgets.QWidget(); mode_layout = _vbox(mode_box, spacing=5)
+        mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode)
+        ag.addWidget(mode_box, 3, 0)
+        self.settling_time = add_field(ag, Field("Settle after contact", "0.5", "s"), 3, 1)
         self.greater_than = Check("Trigger when signal is greater than threshold", True)
-        ag.addWidget(self.greater_than, 3, 0, 1, 2)
+        ag.addWidget(self.greater_than, 4, 0, 1, 2)
+        ag.addWidget(label("Baseline-relative mode compares Δi with a self-referenced baseline at approach start; enter the threshold magnitude. Zero settling proceeds immediately.", "muted"), 5, 0, 1, 2)
         controls_layout.addWidget(approach)
         position = Card("2 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
         pg = _grid(position.body)
@@ -871,7 +1124,8 @@ class ApproachCVPage(ManagedExperimentPage):
         return ApproachCVParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
-            feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=self.greater_than.get(), cv_start_v=self.cv_start.float(),
+            feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=self.greater_than.get(),
+            feedback_mode=_contact_mode(self.feedback_mode), settling_time_s=self.settling_time.float(), cv_start_v=self.cv_start.float(),
             cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.scan_rate.float(),
             cycles=self.cycles.integer(), retract_after=self.retract.get(),
             x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
@@ -933,6 +1187,9 @@ class ApproachITPage(ManagedExperimentPage):
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 0, 1)
         self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 1, 0)
         self.greater = Check("Trigger when greater", True); g.addWidget(self.greater, 1, 1)
+        mode_box = QtWidgets.QWidget(); mode_layout = _vbox(mode_box, spacing=5); mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode); g.addWidget(mode_box, 2, 0)
+        self.settling_time = add_field(g, Field("Settle after contact", "0.5", "s"), 2, 1)
+        g.addWidget(label("Baseline-relative mode compares Δi with a self-referenced baseline at approach start; enter the threshold magnitude. Zero settling proceeds immediately.", "muted"), 3, 0, 1, 2)
         hl.addWidget(contact)
         position = Card("3 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
         g = _grid(position.body)
@@ -968,6 +1225,7 @@ class ApproachITPage(ManagedExperimentPage):
         return ApproachITParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
+            feedback_mode=_contact_mode(self.feedback_mode), settling_time_s=self.settling_time.float(),
             retract_after=self.retract.get(), x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(), initial_potential_v=self.initial_v.float(),
             initial_hold_s=self.initial_t.float(), step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(),
             return_hold_s=self.return_t.float(), cycles=self.cycles.integer(),
@@ -1020,6 +1278,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
         self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
+        self.footprint = add_field(g, Field("Meniscus footprint diameter", "1", "µm"), 4, 0)
         hl.addWidget(area)
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
@@ -1029,6 +1288,9 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
         self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
+        mode_box = QtWidgets.QWidget(); mode_layout = _vbox(mode_box, spacing=5); mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode); g.addWidget(mode_box, 5, 0)
+        self.settling_time = add_field(g, Field("Settle after every contact", "0.5", "s"), 5, 1)
+        self.greater = Check("Trigger when signal is greater than threshold", True); g.addWidget(self.greater, 6, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · Cyclic voltammetry", "Select the per-hop potential E1 waveform and current-map sampling potential.")
         g = _grid(electrochemistry.body)
@@ -1058,17 +1320,29 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
-        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
-        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential.", self.current_map), 1); self.visual_tabs.addTab(maps, "Maps")
+        maps = QtWidgets.QWidget(); maps_layout = _vbox(maps); toolbar = QtWidgets.QWidget(); toolbar_layout = _hbox(toolbar); toolbar_layout.addWidget(label("Footprint view", "muted")); self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); toolbar_layout.addWidget(self.map_view); toolbar_layout.addStretch(1); maps_layout.addWidget(toolbar)
+        map_panels = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(map_panels); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
+        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential in physical stage coordinates.", self.current_map), 1); maps_layout.addWidget(map_panels, 1); self.visual_tabs.addTab(maps, "Maps")
+        self.map_view.currentTextChanged.connect(self._refresh_maps)
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingCVParameters:
         return ScanHoppingCVParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA, cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
-            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA,
+            greater_than=self.greater.get(), feedback_mode=_contact_mode(self.feedback_mode), settling_time_s=self.settling_time.float(),
+            cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
+            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.footprint.float(),
         )
+
+    def _refresh_maps(self, *_args: object) -> None:
+        params = self.parameters()
+        xs = params._axis_values(params.x_start_um, params.x_end_um, params.x_points)
+        ys = params._axis_values(params.y_start_um, params.y_end_um, params.y_points)
+        mode = "circular" if self.map_view.get() == "Circular footprints" else "square"
+        self.z_map.set_data(self.experiment.contact_z, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
+        self.current_map.set_data(self.experiment.current_at_potential, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
 
     def _sync_scan_pattern(self, *_args: object) -> None:
         self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
@@ -1077,7 +1351,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve, self.approach_history): plot.clear()
-            self.cv_pixel_label.setText("Waiting for a CV"); self.z_map.set_data({}, params.y_points, params.x_points); self.current_map.set_data({}, params.y_points, params.x_points)
+            self.cv_pixel_label.setText("Waiting for a CV"); self._refresh_maps()
             self._cv_point = -1; self._begin(params); self.app.toast(f"Scan started · {params.point_count} hops", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
@@ -1118,7 +1392,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
         if samples: self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
         if cv_changed: self.cv_plot.redraw()
-        params = experiment.params; self.z_map.set_data(experiment.contact_z, params.y_points, params.x_points); self.current_map.set_data(experiment.current_at_potential, params.y_points, params.x_points)
+        self._refresh_maps()
         self._show_update(update)
 
 
@@ -1138,6 +1412,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
         self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
+        self.footprint = add_field(g, Field("Meniscus footprint diameter", "1", "µm"), 4, 0)
         hl.addWidget(area)
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
@@ -1147,7 +1422,9 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
         self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
-        self.greater = Check("Trigger when greater", True); g.addWidget(self.greater, 5, 0, 1, 2)
+        mode_box = QtWidgets.QWidget(); mode_layout = _vbox(mode_box, spacing=5); mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode); g.addWidget(mode_box, 5, 0)
+        self.settling_time = add_field(g, Field("Settle after every contact", "0.5", "s"), 5, 1)
+        self.greater = Check("Trigger when signal is greater than threshold", True); g.addWidget(self.greater, 6, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · I–t potential program", "Potential E1 follows initial → pulse → return at every hop.")
         g = _grid(electrochemistry.body)
@@ -1174,17 +1451,28 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
-        maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
-        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold.", self.current_map), 1); tabs.addTab(maps, "Maps")
+        maps = QtWidgets.QWidget(); maps_layout = _vbox(maps); toolbar = QtWidgets.QWidget(); toolbar_layout = _hbox(toolbar); toolbar_layout.addWidget(label("Footprint view", "muted")); self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); toolbar_layout.addWidget(self.map_view); toolbar_layout.addStretch(1); maps_layout.addWidget(toolbar)
+        map_panels = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(map_panels); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
+        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold in physical stage coordinates.", self.current_map), 1); maps_layout.addWidget(map_panels, 1); tabs.addTab(maps, "Maps")
+        self.map_view.currentTextChanged.connect(self._refresh_maps)
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingITParameters:
         return ScanHoppingITParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
-            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
+            feedback_mode=_contact_mode(self.feedback_mode), settling_time_s=self.settling_time.float(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
+            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.footprint.float(),
         )
+
+    def _refresh_maps(self, *_args: object) -> None:
+        params = self.parameters()
+        xs = ScanHoppingCVParameters._axis_values(params.x_start_um, params.x_end_um, params.x_points)
+        ys = ScanHoppingCVParameters._axis_values(params.y_start_um, params.y_end_um, params.y_points)
+        mode = "circular" if self.map_view.get() == "Circular footprints" else "square"
+        self.z_map.set_data(self.experiment.contact_z, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
+        self.current_map.set_data(self.experiment.current_at_pulse, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
 
     def _sync_scan_pattern(self, *_args: object) -> None:
         self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
@@ -1193,7 +1481,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.clear()
-            self.z_map.set_data({}, params.y_points, params.x_points); self.current_map.set_data({}, params.y_points, params.x_points); self._it_point, self._it_t0 = -1, None
+            self._refresh_maps(); self._it_point, self._it_t0 = -1, None
             self._begin(params); self.app.toast("Hopping I–t scan started", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
@@ -1223,7 +1511,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
                 self.voltage_plot.append(elapsed, sample.voltage1_v, redraw=False); self.it_plot.append(elapsed, sample.current1_na, redraw=False)
         if samples:
             for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.redraw()
-        params = experiment.params; self.z_map.set_data(experiment.contact_z, params.y_points, params.x_points); self.current_map.set_data(experiment.current_at_pulse, params.y_points, params.x_points)
+        self._refresh_maps()
         self._show_update(update)
 
 
@@ -1365,7 +1653,7 @@ class SettingsPage(BasePage):
 
 
 class EChemTipsApp(QtWidgets.QMainWindow):
-    PAGE_NAMES = ("Watch current", "Watch position", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
+    PAGE_NAMES = ("Watch current", "Watch position", "Preflight", "Characterize pipette", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
 
     def __init__(self) -> None:
         super().__init__(); configure_pyqtgraph(); self.setWindowTitle("eChemTips — Scanning Electrochemistry"); self.resize(1440, 900); self.setMinimumSize(1080, 680)
@@ -1385,10 +1673,11 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         brand_row = QtWidgets.QWidget(); br = _hbox(brand_row); mark = label("e", "brand"); mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); mark.setFixedSize(36, 36); mark.setStyleSheet(f"background:{COLORS['accent']}; border-radius:8px; color:white;")
         brand = label("eChemTips", "brand"); br.addWidget(mark); br.addWidget(brand); br.addStretch(1); side.addWidget(brand_row); side.addWidget(label("SCANNING ELECTROCHEMISTRY", "sidebarMuted")); side.addSpacing(18)
         self.nav_buttons: dict[str, QtWidgets.QPushButton] = {}; group = QtWidgets.QButtonGroup(self); group.setExclusive(True)
-        glyphs = ("◉", "⌁", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
+        glyphs = ("◉", "⌁", "✓", "◇", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
         for index, (name, glyph) in enumerate(zip(self.PAGE_NAMES, glyphs), 1):
             nav = button(f"{glyph}   {name}", lambda checked=False, page=name: self.show_page(page)); nav.setProperty("role", "nav"); nav.setCheckable(True); group.addButton(nav); side.addWidget(nav); self.nav_buttons[name] = nav
-            shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
+            if index <= 9:
+                shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
         side.addStretch(1); side.addWidget(label("FPGA logic preserved", "sidebarMuted")); side.addWidget(label("PySide6 · PyQtGraph", "sidebarMuted")); layout.addWidget(sidebar)
         main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0); topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar"); topbar.setFixedHeight(70); tl = _hbox(topbar, (18, 10, 18, 10), 8)
         self.connection_dot = label("●"); self.connection_label = label(f"Disconnected · {self.backend.label}", "muted"); self.execution_label = label("Offline", "muted"); tl.addWidget(self.connection_dot); tl.addWidget(self.connection_label); tl.addWidget(self.execution_label); tl.addStretch(1)
@@ -1402,7 +1691,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.statusBar().setSizeGripEnabled(False)
 
     def _build_pages(self) -> None:
-        self.pages: dict[str, BasePage] = {"Watch current": WatchPage(self), "Watch position": WatchPositionPage(self), "CV": StandaloneCVPage(self), "Approach": StandaloneApproachPage(self), "Approach + CV": ApproachCVPage(self), "Approach + I-t": ApproachITPage(self), "Scan hopping + CV": ScanHoppingCVPage(self), "Scan hopping + I-t": ScanHoppingITPage(self), "Move piezo": MovePiezoPage(self), "Settings": SettingsPage(self)}
+        self.pages: dict[str, BasePage] = {"Watch current": WatchPage(self), "Watch position": WatchPositionPage(self), "Preflight": PreflightPage(self), "Characterize pipette": PipetteCharacterizationPage(self), "CV": StandaloneCVPage(self), "Approach": StandaloneApproachPage(self), "Approach + CV": ApproachCVPage(self), "Approach + I-t": ApproachITPage(self), "Scan hopping + CV": ScanHoppingCVPage(self), "Scan hopping + I-t": ScanHoppingITPage(self), "Move piezo": MovePiezoPage(self), "Settings": SettingsPage(self)}
         for page in self.pages.values(): self.stack.addWidget(page)
 
     def show_page(self, name: str) -> None:
@@ -1425,7 +1714,12 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         except (BackendError, RuntimeError, OSError) as exc: self.show_error(str(exc))
 
     @property
-    def any_experiment_active(self) -> bool: return any(experiment.active for experiment in EChemTipsApp._experiments_for(self).values())
+    def any_experiment_active(self) -> bool:
+        experiments_active = any(experiment.active for experiment in EChemTipsApp._experiments_for(self).values())
+        diagnostics_active = hasattr(self, "pages") and any(
+            getattr(self.pages.get(name), "is_busy", False) for name in ("Preflight", "Characterize pipette")
+        )
+        return experiments_active or diagnostics_active
 
     @staticmethod
     def _experiments_for(app: object) -> dict[str, object]:
@@ -1443,6 +1737,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     def toggle_connection(self) -> None:
         if self.backend.connected:
+            for page_name in ("Preflight", "Characterize pipette"):
+                page = self.pages.get(page_name)
+                if isinstance(page, DiagnosticWorkflowPage) and page.is_busy: page.stop()
             for key, experiment in self.experiments.items():
                 if experiment.active: self.stop_experiment(key)
             self.flush_acquisition()
@@ -1477,6 +1774,10 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             watch.live_button.setEnabled(connected and not self.any_experiment_active)
         for page_name, key in {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it"}.items():
             page = self.pages[page_name]; page.start_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); page.stop_button.setEnabled(self.experiments[key].active)
+        diagnostic_busy = any(getattr(self.pages.get(name), "is_busy", False) for name in ("Preflight", "Characterize pipette"))
+        for name in ("Preflight", "Characterize pipette"):
+            page = self.pages[name]
+            if isinstance(page, DiagnosticWorkflowPage): page.sync_actions(connected, diagnostic_busy and not page.is_busy)
 
     def apply_settings(self, settings: AppSettings) -> None:
         if self.any_experiment_active: raise ValueError("Stop the experiment before changing instrument settings.")
@@ -1485,6 +1786,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if self.recorder.active: self.finish_recording(self.active_parameters)
         if was_connected: self._stop_acquisition(); self.backend.disconnect()
         self.store.save(settings); self.settings = settings; self.backend = create_backend(settings, self.driver_module); self._make_experiments()
+        for page_name in ("Preflight", "Characterize pipette"):
+            page = self.pages.get(page_name)
+            if isinstance(page, DiagnosticWorkflowPage): page._cv_runner = CVExperiment(self.backend, self.settings)
         for plot in self.findChildren(Plot): plot.max_points = max(250, settings.display_max_points); plot.buffer.max_points = plot.max_points; plot.buffer.compact(); plot.redraw()
         self.mode_badge.setText(settings.mode.upper()); self._set_connection_ui(False)
         if was_connected: self.toast("Settings applied; reconnect to use the new backend", "warning")

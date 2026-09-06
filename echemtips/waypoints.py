@@ -110,6 +110,19 @@ def potential_step_plan(
     return plan, labels
 
 
+def timed_hold_plan(duration_s: float) -> list[PhysicalWaypoint]:
+    """Return exact FPGA-timed hold chunks; zero seconds intentionally emits nothing."""
+    if not math.isfinite(duration_s) or duration_s < 0:
+        raise ValueError("Hold duration must be finite and zero or greater.")
+    remaining_us = round(duration_s * 1_000_000)
+    plan: list[PhysicalWaypoint] = []
+    while remaining_us > 0:
+        chunk_us = min(32767, remaining_us)
+        plan.append(PhysicalWaypoint(hold=True, hold_us=chunk_us))
+        remaining_us -= chunk_us
+    return plan
+
+
 class WaypointCompiler:
     """Shared physical-unit equivalent of ScaleWayPoints/FindVelScaleFactor."""
 

@@ -16,6 +16,7 @@ class ExperimentState(str, Enum):
     PREPOSITION = "Moving to start"
     APPROACHING = "Approaching surface"
     CONTACT = "Contact detected"
+    SETTLING = "Settling at contact"
     CV = "Running CV"
     IT = "Running I-t"
     RETRACTING = "Retracting"
@@ -28,6 +29,30 @@ class ExperimentUpdate:
     state: ExperimentState
     detail: str
     progress: float
+
+
+def feedback_value(sample: Sample, channel: str) -> float:
+    return {
+        "Current 1": sample.current1_na,
+        "Current 2": sample.current2_na,
+    }[channel]
+
+
+def contact_threshold_hit(
+    sample: Sample,
+    channel: str,
+    threshold: float,
+    greater_than: bool,
+    mode: str,
+    baseline: float | None,
+) -> tuple[bool, float]:
+    """Evaluate the host-side mirror of the FPGA contact criterion."""
+    raw = feedback_value(sample, channel)
+    if baseline is None:
+        baseline = raw
+    signal = raw if mode == "absolute" else raw - baseline
+    comparison_threshold = threshold if mode == "absolute" else (abs(threshold) if greater_than else -abs(threshold))
+    return (signal >= comparison_threshold if greater_than else signal <= comparison_threshold), baseline
 
 
 class ApproachCVExperiment:
@@ -44,6 +69,8 @@ class ApproachCVExperiment:
         self._segment_index = 0
         self._hardware_sequence = False
         self._no_contact_after_retract = False
+        self._feedback_baseline: float | None = None
+        self._settle_deadline = 0.0
 
     @property
     def active(self) -> bool:
@@ -51,6 +78,7 @@ class ApproachCVExperiment:
             ExperimentState.PREPOSITION,
             ExperimentState.APPROACHING,
             ExperimentState.CONTACT,
+            ExperimentState.SETTLING,
             ExperimentState.CV,
             ExperimentState.RETRACTING,
         }
@@ -71,6 +99,7 @@ class ApproachCVExperiment:
         self._segment_index = 0
         self._hardware_sequence = self.backend.hardware_approach_cv_required
         self._no_contact_after_retract = False
+        self._feedback_baseline = None
         if self._hardware_sequence:
             self.backend.start_hardware_approach_cv(params)
             self.state = ExperimentState.APPROACHING
@@ -101,13 +130,7 @@ class ApproachCVExperiment:
             self.detail = "Operator accepted the current Z as contact"
             return
         self.detail = f"Operator accepted contact at Z = {sample.z_um:.3f} um"
-        self._begin_cv()
-
-    def _feedback_value(self, sample: Sample) -> float:
-        return {
-            "Current 1": sample.current1_na,
-            "Current 2": sample.current2_na,
-        }[self.params.feedback_channel]
+        self._begin_settling()
 
     def _begin_cv(self) -> None:
         p = self.params
@@ -121,6 +144,15 @@ class ApproachCVExperiment:
         self.state = ExperimentState.CV
         self.detail = f"CV cycle 1 of {p.cycles}"
 
+    def _begin_settling(self) -> None:
+        self.backend.stop_motion()
+        if self.params.settling_time_s <= 0:
+            self._begin_cv()
+            return
+        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self.state = ExperimentState.SETTLING
+        self.detail = f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
+
     def tick(self, sample: Sample) -> ExperimentUpdate:
         if self._hardware_sequence and self.active:
             update = self.backend.hardware_approach_cv_status()
@@ -128,6 +160,7 @@ class ApproachCVExperiment:
                 "preposition": ExperimentState.PREPOSITION,
                 "approaching": ExperimentState.APPROACHING,
                 "contact": ExperimentState.CONTACT,
+                "settling": ExperimentState.SETTLING,
                 "cv": ExperimentState.CV,
                 "retracting": ExperimentState.RETRACTING,
                 "complete": ExperimentState.COMPLETE,
@@ -150,18 +183,21 @@ class ApproachCVExperiment:
         if self.state == ExperimentState.PREPOSITION and at_xy and abs(sample.z_um - p.start_z_um) < 0.08:
             self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
             self.state = ExperimentState.APPROACHING
+            self._feedback_baseline = None
             self.detail = f"Watching {p.feedback_channel} for the contact threshold"
 
         if self.state == ExperimentState.APPROACHING:
-            value = self._feedback_value(sample)
-            hit = value >= p.feedback_threshold_na if p.greater_than else value <= p.feedback_threshold_na
+            hit, self._feedback_baseline = contact_threshold_hit(
+                sample, p.feedback_channel, p.feedback_threshold_na, p.greater_than,
+                p.feedback_mode, self._feedback_baseline,
+            )
             travel = abs(p.end_z_um - p.start_z_um) or 1.0
             self.progress = min(0.42, 0.05 + 0.35 * abs(sample.z_um - p.start_z_um) / travel)
             endpoint = abs(sample.z_um - p.end_z_um) < 0.08
             if hit:
                 self.state = ExperimentState.CONTACT
                 self.detail = f"Feedback threshold reached at Z = {sample.z_um:.3f} um"
-                self._begin_cv()
+                self._begin_settling()
                 # This contact sample was acquired at the approach potential.
                 # The next sample is the first one measured at the CV start.
                 return ExperimentUpdate(self.state, self.detail, self.progress)
@@ -172,6 +208,10 @@ class ApproachCVExperiment:
                 self.state = ExperimentState.RETRACTING
                 self.detail = "End Z reached without contact; retracting without running CV"
                 self.progress = 0.9
+
+        if self.state == ExperimentState.SETTLING and now >= self._settle_deadline:
+            self._begin_cv()
+            return ExperimentUpdate(self.state, self.detail, self.progress)
 
         if self.state == ExperimentState.CV and self._segments:
             target = self._segments[self._segment_index]
@@ -238,6 +278,8 @@ class ScanHoppingCVExperiment:
         self._no_contact_after_retract = False
         self._z_position_target = self.params.start_z_um
         self._retract_target_z = self.params.start_z_um
+        self._feedback_baseline: float | None = None
+        self._settle_deadline = 0.0
         self._hardware_contact_seen: set[int] = set()
 
     @property
@@ -246,6 +288,7 @@ class ScanHoppingCVExperiment:
             ExperimentState.PREPOSITION,
             ExperimentState.APPROACHING,
             ExperimentState.CONTACT,
+            ExperimentState.SETTLING,
             ExperimentState.CV,
             ExperimentState.RETRACTING,
         }
@@ -271,6 +314,7 @@ class ScanHoppingCVExperiment:
         self._z_position_target = params.start_z_um
         self._retract_target_z = params.start_z_um
         self._hardware_contact_seen.clear()
+        self._feedback_baseline = None
         self._hardware = self.backend.hardware_approach_cv_required
         if self._hardware:
             self.backend.start_hardware_scan_hopping_cv(params)
@@ -294,7 +338,7 @@ class ScanHoppingCVExperiment:
         self._last_approach_z = sample.z_um
         self.contact_z[self._point_key()] = sample.z_um
         self.contact_detected[self._point_key()] = True
-        self._begin_simulated_cv()
+        self._begin_simulated_settling()
 
     def _point_key(self, index: int | None = None) -> tuple[int, int]:
         row, column, _x, _y = self._grid[self.point_index if index is None else index]
@@ -318,6 +362,7 @@ class ScanHoppingCVExperiment:
         self._positioning_z = True
         self._current_candidate = None
         self._last_approach_z = None
+        self._feedback_baseline = None
         self.approach_trace.clear()
         self.state = ExperimentState.PREPOSITION
         self.detail = f"Point {self.point_index + 1}/{p.point_count} · positioning ({row + 1}, {column + 1})"
@@ -333,6 +378,18 @@ class ScanHoppingCVExperiment:
         self._segment_index = 0
         self.state = ExperimentState.CV
         self.detail = f"Point {self.point_index + 1}/{p.point_count} · CV"
+
+    def _begin_simulated_settling(self) -> None:
+        self.backend.stop_motion()
+        if self.params.settling_time_s <= 0:
+            self._begin_simulated_cv()
+            return
+        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self.state = ExperimentState.SETTLING
+        self.detail = (
+            f"Point {self.point_index + 1}/{self.params.point_count} · "
+            f"settling {self.params.settling_time_s:g} s"
+        )
 
     def _track_current(self, sample: Sample, point: int) -> None:
         error = abs(sample.voltage1_v - self.params.map_potential_v)
@@ -370,14 +427,16 @@ class ScanHoppingCVExperiment:
         if self.state == ExperimentState.APPROACHING:
             self.approach_trace.append((sample.elapsed_s, sample.z_um, sample.current1_na))
             self._last_approach_z = sample.z_um
-            value = feedback_value(sample, p.feedback_channel)
-            hit = value >= p.feedback_threshold_na if p.greater_than else value <= p.feedback_threshold_na
+            hit, self._feedback_baseline = contact_threshold_hit(
+                sample, p.feedback_channel, p.feedback_threshold_na, p.greater_than,
+                p.feedback_mode, self._feedback_baseline,
+            )
             endpoint = abs(sample.z_um - p.end_z_um) < tolerance
             if hit:
                 key = (row, column)
                 self.contact_z[key] = sample.z_um
                 self.contact_detected[key] = True
-                self._begin_simulated_cv()
+                self._begin_simulated_settling()
                 # Do not advance the sweep using a sample that was acquired at
                 # the approach potential. The next sample is at cv_start_v.
                 return
@@ -388,6 +447,11 @@ class ScanHoppingCVExperiment:
                 self._no_contact_after_retract = True
                 self.state = ExperimentState.RETRACTING
                 self.detail = f"Point {self.point_index + 1}/{p.point_count} · no contact; retracting and aborting scan"
+        if self.state == ExperimentState.SETTLING:
+            if time.monotonic() < self._settle_deadline:
+                return
+            self._begin_simulated_cv()
+            return
         if self.state == ExperimentState.CV:
             self._track_current(sample, self.point_index)
             now = time.monotonic()
@@ -436,16 +500,19 @@ class ScanHoppingCVExperiment:
             self._finish_point_metrics(self._hardware_point)
             self._current_candidate = None
             self._last_approach_z = None
+            self._feedback_baseline = None
             self.approach_trace.clear()
             self._hardware_point = point
         if stage == "approach":
             self._last_approach_z = sample.z_um
             self.approach_trace.append((sample.elapsed_s, sample.z_um, sample.current1_na))
-            value = feedback_value(sample, self.params.feedback_channel)
-            hit = value >= self.params.feedback_threshold_na if self.params.greater_than else value <= self.params.feedback_threshold_na
+            hit, self._feedback_baseline = contact_threshold_hit(
+                sample, self.params.feedback_channel, self.params.feedback_threshold_na,
+                self.params.greater_than, self.params.feedback_mode, self._feedback_baseline,
+            )
             if hit:
                 self._hardware_contact_seen.add(point)
-        elif stage == "cv":
+        elif stage in {"settling", "cv"}:
             early_stop = self._last_approach_z is not None and abs(self._last_approach_z - self.params.end_z_um) >= 0.08
             if self._hardware_stage == "approach" and self._last_approach_z is not None and (
                 point in self._hardware_contact_seen or early_stop
@@ -453,7 +520,8 @@ class ScanHoppingCVExperiment:
                 key = self._point_key(point)
                 self.contact_z[key] = self._last_approach_z
                 self.contact_detected[key] = True
-            self._track_current(sample, point)
+            if stage == "cv":
+                self._track_current(sample, point)
         elif stage == "retract":
             self._finish_point_metrics(point)
         self._hardware_stage = stage
@@ -469,6 +537,7 @@ class ScanHoppingCVExperiment:
             state_by_stage = {
                 "preposition": ExperimentState.PREPOSITION,
                 "approaching": ExperimentState.APPROACHING,
+                "settling": ExperimentState.SETTLING,
                 "cv": ExperimentState.CV,
                 "retracting": ExperimentState.RETRACTING,
                 "complete": ExperimentState.COMPLETE,
@@ -484,13 +553,6 @@ class ScanHoppingCVExperiment:
                 if self.active:
                     self._tick_simulated(sample)
         return ExperimentUpdate(self.state, self.detail, self.progress)
-
-
-def feedback_value(sample: Sample, channel: str) -> float:
-    return {
-        "Current 1": sample.current1_na,
-        "Current 2": sample.current2_na,
-    }[channel]
 
 
 class CVExperiment:
@@ -589,16 +651,20 @@ class ApproachExperiment:
         self.contact_z: float | None = None
         self._hardware = False
         self._no_contact = False
+        self._feedback_baseline: float | None = None
+        self._settle_deadline = 0.0
 
     @property
     def active(self) -> bool:
-        return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT, ExperimentState.RETRACTING}
+        return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT,
+                              ExperimentState.SETTLING, ExperimentState.RETRACTING}
 
     def start(self, params: ApproachParameters) -> None:
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
         self.params, self.contact_z, self._no_contact = params, None, False
+        self._feedback_baseline = None
         self._hardware = self.backend.hardware_approach_cv_required
         if self._hardware:
             if not self.backend.hardware_program_available("approach"):
@@ -628,11 +694,21 @@ class ApproachExperiment:
             return
         self.backend.stop_motion()
         self.contact_z = sample.z_um
+        self._begin_settling()
+
+    def _finish_contact(self) -> None:
         if self.params.retract_after:
             self.backend.move("Z", self.params.start_z_um, self.params.retract_rate_um_s)
-            self.state, self.detail = ExperimentState.RETRACTING, f"Operator accepted Z = {sample.z_um:.3f} um; retracting"
+            self.state, self.detail = ExperimentState.RETRACTING, f"Contact at Z = {self.contact_z:.3f} um; retracting"
         else:
-            self.state, self.detail, self.progress = ExperimentState.COMPLETE, f"Operator accepted Z = {sample.z_um:.3f} um", 1.0
+            self.state, self.detail, self.progress = ExperimentState.COMPLETE, f"Contact at Z = {self.contact_z:.3f} um", 1.0
+
+    def _begin_settling(self) -> None:
+        if self.params.settling_time_s <= 0:
+            self._finish_contact()
+            return
+        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self.state, self.detail = ExperimentState.SETTLING, f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
         if not self.active:
@@ -640,7 +716,8 @@ class ApproachExperiment:
         if self._hardware:
             update = self.backend.hardware_program_status()
             mapping = {"preposition": ExperimentState.PREPOSITION, "approaching": ExperimentState.APPROACHING,
-                       "contact": ExperimentState.CONTACT, "retracting": ExperimentState.RETRACTING,
+                       "contact": ExperimentState.CONTACT, "settling": ExperimentState.SETTLING,
+                       "retracting": ExperimentState.RETRACTING,
                        "complete": ExperimentState.COMPLETE, "aborted": ExperimentState.ABORTED}
             self.state = mapping.get(update.stage, self.state)
             self.detail, self.progress = update.detail, update.progress
@@ -655,17 +732,17 @@ class ApproachExperiment:
             if self.state == ExperimentState.PREPOSITION and positioned:
                 self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
                 self.state, self.detail = ExperimentState.APPROACHING, f"Watching {p.feedback_channel} for contact"
+                self._feedback_baseline = None
             if self.state == ExperimentState.APPROACHING:
-                hit = feedback_value(sample, p.feedback_channel) >= p.feedback_threshold if p.greater_than else feedback_value(sample, p.feedback_channel) <= p.feedback_threshold
+                hit, self._feedback_baseline = contact_threshold_hit(
+                    sample, p.feedback_channel, p.feedback_threshold, p.greater_than,
+                    p.feedback_mode, self._feedback_baseline,
+                )
                 self.progress = min(.9, abs(sample.z_um - p.start_z_um) / max(.001, abs(p.end_z_um - p.start_z_um)))
                 if hit:
                     self.backend.stop_motion()
                     self.contact_z = sample.z_um
-                    if p.retract_after:
-                        self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
-                        self.state, self.detail = ExperimentState.RETRACTING, f"Contact at {sample.z_um:.3f} um; retracting"
-                    else:
-                        self.state, self.detail, self.progress = ExperimentState.COMPLETE, f"Contact at {sample.z_um:.3f} um", 1.0
+                    self._begin_settling()
                 elif abs(sample.z_um - p.end_z_um) < .08:
                     self.backend.stop_motion()
                     self._no_contact = True
@@ -674,6 +751,8 @@ class ApproachExperiment:
                         self.state, self.detail = ExperimentState.RETRACTING, "End Z reached without contact; retracting"
                     else:
                         self.state, self.detail = ExperimentState.ABORTED, "End Z reached without contact"
+            if self.state == ExperimentState.SETTLING and time.monotonic() >= self._settle_deadline:
+                self._finish_contact()
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - p.start_z_um) < .08:
                 self.state = ExperimentState.ABORTED if self._no_contact else ExperimentState.COMPLETE
                 self.detail = "No contact; retract complete" if self._no_contact else "Approach and retract complete"
@@ -695,11 +774,13 @@ class ApproachITExperiment:
         self._step_deadline = 0.0
         self.it_label = ""
         self._no_contact = False
+        self._feedback_baseline: float | None = None
+        self._settle_deadline = 0.0
 
     @property
     def active(self) -> bool:
         return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT,
-                              ExperimentState.IT, ExperimentState.RETRACTING}
+                              ExperimentState.SETTLING, ExperimentState.IT, ExperimentState.RETRACTING}
 
     def start(self, params: ApproachITParameters) -> None:
         errors = params.validate(self.settings)
@@ -709,6 +790,7 @@ class ApproachITExperiment:
         self._hardware = self.backend.hardware_approach_cv_required
         self._steps = params.it_steps()
         self._step_index, self.it_label, self.progress = 0, "", 0.0
+        self._feedback_baseline = None
         if self._hardware:
             if not self.backend.hardware_program_available("approach_it"):
                 raise RuntimeError("This FPGA driver does not expose Approach then I-t.")
@@ -736,7 +818,15 @@ class ApproachITExperiment:
             self.detail = "Operator accepted the current Z as contact"
             return
         self.contact_z = sample.z_um
-        self._start_it()
+        self._begin_settling()
+
+    def _begin_settling(self) -> None:
+        self.backend.stop_motion()
+        if self.params.settling_time_s <= 0:
+            self._start_it()
+            return
+        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self.state, self.detail = ExperimentState.SETTLING, f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def _start_it(self) -> None:
         potential, duration, label = self._steps[0]
@@ -751,7 +841,8 @@ class ApproachITExperiment:
         if self._hardware:
             update = self.backend.hardware_program_status()
             mapping = {"preposition": ExperimentState.PREPOSITION, "approaching": ExperimentState.APPROACHING,
-                       "contact": ExperimentState.CONTACT, "it": ExperimentState.IT, "retracting": ExperimentState.RETRACTING,
+                       "contact": ExperimentState.CONTACT, "settling": ExperimentState.SETTLING,
+                       "it": ExperimentState.IT, "retracting": ExperimentState.RETRACTING,
                        "complete": ExperimentState.COMPLETE, "aborted": ExperimentState.ABORTED}
             self.state = mapping.get(update.stage, self.state)
             self.detail, self.progress, self.it_label = update.detail, update.progress, update.point_stage.removeprefix("it:")
@@ -766,13 +857,16 @@ class ApproachITExperiment:
             if self.state == ExperimentState.PREPOSITION and positioned:
                 self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
                 self.state, self.detail = ExperimentState.APPROACHING, f"Watching {p.feedback_channel} for contact"
+                self._feedback_baseline = None
             if self.state == ExperimentState.APPROACHING:
-                value = feedback_value(sample, p.feedback_channel)
-                hit = value >= p.feedback_threshold if p.greater_than else value <= p.feedback_threshold
+                hit, self._feedback_baseline = contact_threshold_hit(
+                    sample, p.feedback_channel, p.feedback_threshold, p.greater_than,
+                    p.feedback_mode, self._feedback_baseline,
+                )
                 if hit:
                     self.backend.stop_motion()
                     self.contact_z = sample.z_um
-                    self._start_it()
+                    self._begin_settling()
                 elif abs(sample.z_um - p.end_z_um) < .08:
                     self.backend.stop_motion()
                     self._no_contact = True
@@ -781,6 +875,8 @@ class ApproachITExperiment:
                         self.state, self.detail = ExperimentState.RETRACTING, "End Z reached without contact; retracting"
                     else:
                         self.state, self.detail = ExperimentState.ABORTED, "End Z reached without contact; I-t not run"
+            if self.state == ExperimentState.SETTLING and time.monotonic() >= self._settle_deadline:
+                self._start_it()
             if self.state == ExperimentState.IT and time.monotonic() >= self._step_deadline:
                 self._step_index += 1
                 if self._step_index >= len(self._steps):
@@ -824,11 +920,13 @@ class ScanHoppingITExperiment:
         self._last_approach_z: dict[int, float] = {}
         self._z_position_target = self.params.start_z_um
         self._retract_target_z = self.params.start_z_um
+        self._feedback_baseline: float | None = None
+        self._settle_deadline = 0.0
 
     @property
     def active(self) -> bool:
         return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT,
-                              ExperimentState.IT, ExperimentState.RETRACTING}
+                              ExperimentState.SETTLING, ExperimentState.IT, ExperimentState.RETRACTING}
 
     def start(self, params: ScanHoppingITParameters) -> None:
         errors = params.validate(self.settings)
@@ -841,6 +939,7 @@ class ScanHoppingITExperiment:
         self._retract_target_z = params.start_z_um
         self._hardware = self.backend.hardware_approach_cv_required
         self._steps = params.it_steps()
+        self._feedback_baseline = None
         if self._hardware:
             if not self.backend.hardware_program_available("scan_hopping_it"):
                 raise RuntimeError("This FPGA driver does not expose Scan Hopping + I-t.")
@@ -861,7 +960,7 @@ class ScanHoppingITExperiment:
             self.detail = f"Point {self.point_index + 1}: operator accepted the current Z as contact"
             return
         self.contact_z[self._key(self.point_index)] = sample.z_um
-        self._start_it()
+        self._begin_settling()
 
     def _key(self, point: int) -> tuple[int, int]:
         return self._grid[point][0], self._grid[point][1]
@@ -877,6 +976,7 @@ class ScanHoppingITExperiment:
         self.backend.set_voltage(1, p.approach_voltage_v)
         self.backend.move("Z", self._z_position_target, p.retract_rate_um_s)
         self._positioning_z = True
+        self._feedback_baseline = None
         self.state, self.detail = ExperimentState.PREPOSITION, f"Point {self.point_index + 1}/{p.point_count} · positioning"
 
     def _start_it(self) -> None:
@@ -885,6 +985,17 @@ class ScanHoppingITExperiment:
         self._step_index, self.it_label = 0, label
         self._step_deadline = time.monotonic() + duration
         self.state, self.detail = ExperimentState.IT, f"Point {self.point_index + 1}/{self.params.point_count} · I-t {label}"
+
+    def _begin_settling(self) -> None:
+        self.backend.stop_motion()
+        if self.params.settling_time_s <= 0:
+            self._start_it()
+            return
+        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self.state, self.detail = (
+            ExperimentState.SETTLING,
+            f"Point {self.point_index + 1}/{self.params.point_count} · settling {self.params.settling_time_s:g} s",
+        )
 
     def _finish_pulse_map(self, point: int) -> None:
         values = self._pulse_samples.get(point, [])
@@ -902,7 +1013,7 @@ class ScanHoppingITExperiment:
             hit = value >= self.params.feedback_threshold if self.params.greater_than else value <= self.params.feedback_threshold
             if hit:
                 self.contact_z.setdefault(self._key(point), sample.z_um)
-        elif stage.startswith("it:"):
+        elif stage == "settling" or stage.startswith("it:"):
             # The FPGA may have observed the threshold between host samples.
             # Entering the I-t program itself proves that contact was confirmed.
             if point in self._last_approach_z:
@@ -922,7 +1033,8 @@ class ScanHoppingITExperiment:
                 self._ingest_hardware(sample)
             update = self.backend.hardware_program_status()
             mapping = {"preposition": ExperimentState.PREPOSITION, "approaching": ExperimentState.APPROACHING,
-                       "contact": ExperimentState.CONTACT, "it": ExperimentState.IT, "retracting": ExperimentState.RETRACTING,
+                       "contact": ExperimentState.CONTACT, "settling": ExperimentState.SETTLING,
+                       "it": ExperimentState.IT, "retracting": ExperimentState.RETRACTING,
                        "complete": ExperimentState.COMPLETE, "aborted": ExperimentState.ABORTED}
             self.state = mapping.get(update.stage, self.state)
             self.point_index, self.detail, self.progress = update.point_index, update.detail, update.progress
@@ -945,15 +1057,21 @@ class ScanHoppingITExperiment:
                 self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
                 self.state, self.detail = ExperimentState.APPROACHING, f"Point {self.point_index + 1}/{p.point_count} · approaching"
             if self.state == ExperimentState.APPROACHING:
-                value = feedback_value(sample, p.feedback_channel)
-                hit = value >= p.feedback_threshold if p.greater_than else value <= p.feedback_threshold
+                hit, self._feedback_baseline = contact_threshold_hit(
+                    sample, p.feedback_channel, p.feedback_threshold, p.greater_than,
+                    p.feedback_mode, self._feedback_baseline,
+                )
                 if hit:
                     self.contact_z[self._key(self.point_index)] = sample.z_um
-                    self._start_it()
+                    self._begin_settling()
                 elif abs(sample.z_um - p.end_z_um) < .08:
                     self.backend.stop_motion(); self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
                     self.state, self.detail = ExperimentState.RETRACTING, "End Z reached without contact; aborting after retract"
                     self.it_label = "no-contact"
+            if self.state == ExperimentState.SETTLING:
+                if time.monotonic() < self._settle_deadline:
+                    continue
+                self._start_it()
             if self.state == ExperimentState.IT:
                 if self.it_label == "pulse":
                     self._pulse_samples.setdefault(self.point_index, []).append(sample.current1_na)
