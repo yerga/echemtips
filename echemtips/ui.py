@@ -26,8 +26,6 @@ from .experiments import (
     ScanHoppingITExperiment,
 )
 from .models import (
-    HARDWARE_PROFILE,
-    INSTRUMENT_PROFILES,
     AppSettings,
     ApproachCVParameters,
     ApproachITParameters,
@@ -822,8 +820,6 @@ class SettingsPage(BasePage):
         left = QtWidgets.QWidget(); right = QtWidgets.QWidget(); ll = _vbox(left); rl = _vbox(right); columns.addWidget(left, 1); columns.addWidget(right, 1)
         connection = Card("Connection", "Simulation needs no driver. NI FPGA uses a separately supplied compiled target."); cl = _vbox(connection.body)
         cl.addWidget(label("Backend", "muted")); self.mode = Choice(("Simulation", "NI FPGA"), app.settings.mode); cl.addWidget(self.mode)
-        cl.addWidget(label("Instrument profile", "muted")); self.profile = Choice(tuple(INSTRUMENT_PROFILES), app.settings.instrument_profile); cl.addWidget(self.profile)
-        self.capability_label = label("", "muted", word_wrap=True); cl.addWidget(self.capability_label)
         self.resource = Field("NI resource", app.settings.resource); cl.addWidget(self.resource)
         cl.addWidget(label("FPGA hardware", "muted")); self.transport = Choice(("USB R Series", "PCIe/PXI R Series", "Auto"), app.settings.hardware_transport); cl.addWidget(self.transport)
         cl.addWidget(label("Compiled bitfile", "muted")); bitrow = QtWidgets.QWidget(); br = _hbox(bitrow); self.bitfile = QtWidgets.QLineEdit(app.settings.bitfile); br.addWidget(self.bitfile, 1); br.addWidget(button("Browse…", self.browse_bitfile)); cl.addWidget(bitrow); ll.addWidget(connection)
@@ -831,16 +827,7 @@ class SettingsPage(BasePage):
         self.sample_time = add_field(ag, Field("Sample time", str(app.settings.sample_time_us), "µs"), 0, 0); self.samples_per_point = add_field(ag, Field("Samples per point", str(app.settings.samples_per_point)), 0, 1)
         self.ready_timeout = add_field(ag, Field("FPGA ready timeout", str(app.settings.hardware_ready_timeout_s), "s"), 1, 0); self.watchdog_margin = add_field(ag, Field("Command watchdog margin", str(app.settings.hardware_watchdog_margin_s), "s"), 1, 1)
         self.period_label = label("", "statusStrong"); ag.addWidget(self.period_label, 2, 0, 1, 2); ll.addWidget(acquisition)
-        lockin = Card("External lock-in", "SR830 analog-output scaling for amplitude and phase inputs."); lg = _grid(lockin.body, 3)
-        self.lockin_sensitivity = add_field(lg, Field("Sensitivity", str(app.settings.lockin_sensitivity_na), "nA"), 0, 0); self.lockin_expand = add_field(lg, Field("Expand", str(app.settings.lockin_expand)), 0, 1); self.lockin_offset = add_field(lg, Field("Offset", str(app.settings.lockin_offset_pct), "%"), 0, 2); ll.addWidget(lockin)
-        feedback = Card("Advanced FPGA feedback", "Host configuration only; deterministic execution remains on the FPGA target."); fg = _grid(feedback.body)
-        self.feedback2_enabled = Check("Enable compatible secondary feedback", app.settings.feedback2_enabled); fg.addWidget(self.feedback2_enabled, 0, 0, 1, 2)
-        signal = QtWidgets.QWidget(); sl = _vbox(signal, spacing=5); sl.addWidget(label("Secondary signal", "muted")); self.feedback2_channel = Choice(FEEDBACK_CHANNELS, app.settings.feedback2_channel); sl.addWidget(self.feedback2_channel); fg.addWidget(signal, 1, 0)
-        self.feedback2_threshold = add_field(fg, Field("Secondary threshold", str(app.settings.feedback2_threshold)), 1, 1); self.feedback2_greater = Check("Secondary triggers when greater", app.settings.feedback2_greater_than); fg.addWidget(self.feedback2_greater, 2, 0, 1, 2)
-        self.feedback_p = add_field(fg, Field("Proportional gain P", str(app.settings.feedback_p_gain)), 3, 0); self.feedback_max_z = add_field(fg, Field("Maximum Z update", str(app.settings.feedback_max_z_step_nm), "nm"), 3, 1)
-        self.feedback_update = add_field(fg, Field("Z update interval", str(app.settings.feedback_update_interval_us), "µs"), 4, 0); self.feedback_avg_whole = add_field(fg, Field("Running-average whole", str(app.settings.feedback_running_average_whole)), 4, 1)
-        self.feedback_avg_minus = add_field(fg, Field("Running-average subtract", str(app.settings.feedback_running_average_minus)), 5, 0); self.feedback_self_reference = Check("Self-reference while holding", app.settings.feedback_self_reference_on_hold); fg.addWidget(self.feedback_self_reference, 5, 1)
-        self.bulk1 = add_field(fg, Field("Bulk retract distance 1", str(app.settings.distance_to_bulk_um), "µm"), 6, 0); self.bulk2 = add_field(fg, Field("Bulk retract distance 2", str(app.settings.distance_to_bulk2_um), "µm"), 6, 1); self.bulk3 = add_field(fg, Field("Bulk retract distance 3", str(app.settings.distance_to_bulk3_um), "µm"), 7, 0); ll.addWidget(feedback); ll.addStretch(1)
+        ll.addStretch(1)
         piezos = Card("Piezo ranges", "Match the calibrated positioner and controller."); pg = _grid(piezos.body, 3)
         self.x_range = add_field(pg, Field("X maximum", str(app.settings.x_range_um), "µm"), 0, 0); self.y_range = add_field(pg, Field("Y maximum", str(app.settings.y_range_um), "µm"), 0, 1); self.z_range = add_field(pg, Field("Z maximum", str(app.settings.z_range_um), "µm"), 0, 2)
         self.x_bipolar = Check("X: −10 to +10 V", app.settings.x_bipolar); self.y_bipolar = Check("Y: −10 to +10 V", app.settings.y_bipolar); self.z_bipolar = Check("Z: −10 to +10 V", app.settings.z_bipolar)
@@ -851,25 +838,23 @@ class SettingsPage(BasePage):
         self.read_current4 = Check("Read Current 4 on AI1 instead of Y position input", app.settings.read_current4_instead_y); amp.addWidget(self.read_current4, 2, 0, 1, 2); rl.addWidget(amplifier)
         saving = Card("Saving"); sv = _vbox(saving.body); self.save_directory = Field("Data folder", app.settings.save_directory); self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save); self.command_ratio = Field("AO3 command potential ratio", str(app.settings.command_voltage_ratio))
         sv.addWidget(self.save_directory); sv.addWidget(self.auto_save); sv.addWidget(self.command_ratio); rl.addWidget(saving)
-        calibration = Card("Calibration provenance", "Saved with every recording so numerical scaling remains traceable."); cv = _vbox(calibration.body)
-        self.calibration_source = Field("Calibration source / certificate", app.settings.calibration_source); self.calibration_date = Field("Calibration date", app.settings.calibration_date); self.calibration_operator = Field("Operator", app.settings.calibration_operator); self.calibration_notes = Field("Notes", app.settings.calibration_notes); self.display_max_points = Field("Display buffer", str(app.settings.display_max_points), "points/plot")
-        for field in (self.calibration_source, self.calibration_date, self.calibration_operator, self.calibration_notes, self.display_max_points): cv.addWidget(field)
-        rl.addWidget(calibration); rl.addStretch(1)
+        display = Card("Display", "Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
+        self.display_max_points = Field("Display buffer", str(app.settings.display_max_points), "points/plot"); dv.addWidget(self.display_max_points); rl.addWidget(display); rl.addStretch(1)
         actions = QtWidgets.QWidget(); al = _hbox(actions); al.addWidget(button("Save and apply settings", self.save, "primary")); al.addWidget(label("Changing backend settings disconnects the current device.", "muted", word_wrap=True), 1)
         full = QtWidgets.QWidget(); full_layout = _vbox(full); full_layout.addWidget(content); full_layout.addWidget(actions); self.viewport = scroll_area(full); body_layout = _vbox(self.body); body_layout.addWidget(self.viewport)
-        self.sample_time.entry.textChanged.connect(self._refresh_period); self.samples_per_point.entry.textChanged.connect(self._refresh_period); self.mode.currentTextChanged.connect(self._mode_changed); self.profile.currentTextChanged.connect(self._sync_profile)
-        self._refresh_period(); self._sync_profile()
+        self.sample_time.entry.textChanged.connect(self._refresh_period); self.samples_per_point.entry.textChanged.connect(self._refresh_period); self.mode.currentTextChanged.connect(self._sync_mode)
+        self._refresh_period(); self._sync_mode()
 
     def _refresh_period(self, *_args: object) -> None:
         try: self.period_label.setText(f"Effective data interval  {self.sample_time.integer() * (self.samples_per_point.integer() + 1) / 1000:.3f} ms")
         except ValueError: self.period_label.setText("Effective data interval  —")
 
-    def _mode_changed(self, *_args: object) -> None: self.profile.set(HARDWARE_PROFILE if self.mode.get() == "NI FPGA" else "Simulation")
-
-    def _sync_profile(self, *_args: object) -> None:
-        self.capability_label.setText(INSTRUMENT_PROFILES.get(self.profile.get(), "Unknown profile")); hardware = self.profile.get() == HARDWARE_PROFILE
-        for field in (self.resource, self.ready_timeout, self.watchdog_margin, self.feedback2_threshold, self.feedback_p, self.feedback_max_z, self.feedback_update, self.feedback_avg_whole, self.feedback_avg_minus, self.bulk1, self.bulk2, self.bulk3): field.entry.setEnabled(hardware)
-        self.feedback2_channel.setEnabled(hardware); self.feedback2_enabled.setEnabled(hardware); self.feedback2_greater.setEnabled(hardware)
+    def _sync_mode(self, *_args: object) -> None:
+        hardware = self.mode.get() == "NI FPGA"
+        for field in (self.resource, self.ready_timeout, self.watchdog_margin):
+            field.entry.setEnabled(hardware)
+        self.transport.setEnabled(hardware)
+        self.bitfile.setEnabled(hardware)
 
     def browse_bitfile(self) -> None:
         chosen, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose NI FPGA bitfile", str(Path(self.bitfile.text()).expanduser().parent), "LabVIEW FPGA bitfile (*.lvbitx);;All files (*)")
@@ -877,15 +862,15 @@ class SettingsPage(BasePage):
 
     def values(self) -> AppSettings:
         return AppSettings(
-            mode=self.mode.get(), instrument_profile=self.profile.get(), resource=self.resource.variable.get().strip(), bitfile=self.bitfile.text().strip(), hardware_transport=self.transport.get(),
+            mode=self.mode.get(), resource=self.resource.variable.get().strip(), bitfile=self.bitfile.text().strip(), hardware_transport=self.transport.get(),
             x_range_um=self.x_range.float(), y_range_um=self.y_range.float(), z_range_um=self.z_range.float(), x_bipolar=self.x_bipolar.get(), y_bipolar=self.y_bipolar.get(), z_bipolar=self.z_bipolar.get(),
             command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), current3_v_per_na=self.sensitivity3.float(), current4_v_per_na=self.sensitivity4.float(), read_current4_instead_y=self.read_current4.get(),
-            lockin_sensitivity_na=self.lockin_sensitivity.float(), lockin_expand=self.lockin_expand.float(), lockin_offset_pct=self.lockin_offset.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
-            hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=self.save_directory.variable.get().strip(), auto_save=self.auto_save.get(), calibration_source=self.calibration_source.variable.get().strip(),
-            calibration_date=self.calibration_date.variable.get().strip(), calibration_operator=self.calibration_operator.variable.get().strip(), calibration_notes=self.calibration_notes.variable.get().strip(), display_max_points=self.display_max_points.integer(),
-            feedback2_enabled=self.feedback2_enabled.get(), feedback2_channel=self.feedback2_channel.get(), feedback2_threshold=self.feedback2_threshold.float(), feedback2_greater_than=self.feedback2_greater.get(), feedback_p_gain=self.feedback_p.float(),
-            feedback_max_z_step_nm=self.feedback_max_z.integer(), feedback_update_interval_us=self.feedback_update.integer(), feedback_running_average_whole=self.feedback_avg_whole.integer(), feedback_running_average_minus=self.feedback_avg_minus.integer(), feedback_self_reference_on_hold=self.feedback_self_reference.get(),
-            distance_to_bulk_um=self.bulk1.float(), distance_to_bulk2_um=self.bulk2.float(), distance_to_bulk3_um=self.bulk3.float(),
+            lockin_sensitivity_na=self.app.settings.lockin_sensitivity_na, lockin_expand=self.app.settings.lockin_expand, lockin_offset_pct=self.app.settings.lockin_offset_pct, sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
+            hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=self.save_directory.variable.get().strip(), auto_save=self.auto_save.get(),
+            display_max_points=self.display_max_points.integer(),
+            feedback2_enabled=self.app.settings.feedback2_enabled, feedback2_channel=self.app.settings.feedback2_channel, feedback2_threshold=self.app.settings.feedback2_threshold, feedback2_greater_than=self.app.settings.feedback2_greater_than, feedback_p_gain=self.app.settings.feedback_p_gain,
+            feedback_max_z_step_nm=self.app.settings.feedback_max_z_step_nm, feedback_update_interval_us=self.app.settings.feedback_update_interval_us, feedback_running_average_whole=self.app.settings.feedback_running_average_whole, feedback_running_average_minus=self.app.settings.feedback_running_average_minus, feedback_self_reference_on_hold=self.app.settings.feedback_self_reference_on_hold,
+            distance_to_bulk_um=self.app.settings.distance_to_bulk_um, distance_to_bulk2_um=self.app.settings.distance_to_bulk2_um, distance_to_bulk3_um=self.app.settings.distance_to_bulk3_um,
         )
 
     def save(self) -> None:

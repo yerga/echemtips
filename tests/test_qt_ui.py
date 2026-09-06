@@ -38,6 +38,13 @@ class QtLayoutTests(unittest.TestCase):
                 settings.viewport.horizontalScrollBarPolicy(),
                 QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
             )
+            settings_text = " ".join(
+                item.text() for item in settings.findChildren(QtWidgets.QLabel)
+            )
+            self.assertNotIn("Instrument profile", settings_text)
+            self.assertNotIn("External lock-in", settings_text)
+            self.assertNotIn("Advanced FPGA feedback", settings_text)
+            self.assertNotIn("Calibration provenance", settings_text)
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
