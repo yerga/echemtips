@@ -34,6 +34,8 @@ echemtips
 
 Select **Simulation**, connect, and choose an experiment. The simulated surface is around 68% of the configured Z range, allowing approach-based methods and hopping scans to complete without hardware.
 
+Use **Settings → Save as defaults and apply** to persist the selected backend, piezo ranges, bitfile, data folder, Current 1/2 sensitivities, command-voltage ratio, and acquisition options. Defaults are stored in the operating system's per-user application-settings folder and load regardless of the directory used to start eChemTips.
+
 Recordings are streamed to uniquely named CSV and JSON metadata files in `data/`, or in the directory selected in Settings. The complete data rate is written to disk while plots retain a bounded, decimated display buffer.
 
 ## Analyze data
@@ -71,7 +73,7 @@ The commissioned profile is an NI USB-7856R with:
 
 Before enabling actuators, follow [the real-hardware commissioning guide](docs/REAL_HARDWARE_SETUP.md). Verify the bitfile target, register/FIFO contract, wiring, polarity, scaling, travel, current-amplifier sensitivity, and physical interlocks on the specific instrument.
 
-The host supports reusable execution ownership, state reporting, safe cancellation, FIFO streaming/refilling beyond the target's initial FIFO capacity, pause/resume, complete-frame acquisition, display-only decimation, waypoint compilation, and advanced FPGA feedback configuration. See the [hardware integration](docs/HARDWARE_INTEGRATION.md) and [shared host services](docs/SHARED_HOST_SERVICES.md) documentation.
+The host supports reusable execution ownership, state reporting, safe cancellation, FIFO streaming/refilling beyond the target's initial FIFO capacity, pause/resume, complete-frame acquisition, display-only decimation, waypoint compilation, and Current 1/2 contact feedback. See the [hardware integration](docs/HARDWARE_INTEGRATION.md) and [shared host services](docs/SHARED_HOST_SERVICES.md) documentation.
 
 An advanced custom host adapter can be selected with `ECHEMTIPS_DRIVER_MODULE`. For backward compatibility, `WECSPM_DRIVER_MODULE` is also recognized when the new variable is unset.
 

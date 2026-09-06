@@ -49,6 +49,10 @@ class QtLayoutTests(unittest.TestCase):
             self.assertIn("5:1", settings.command_ratio_help.toolTip())
             settings.command_ratio.entry.setText("5")
             self.assertIn("±2 V", settings.command_ratio_summary.text())
+            self.assertEqual(settings.save_defaults_button.text(), "Save as defaults and apply")
+            self.assertIn(str(window.store.path), settings.settings_path_label.text())
+            settings.save_directory.variable.set("relative-data")
+            self.assertTrue(QtCore.QFileInfo(settings.values().save_directory).isAbsolute())
             for page_name in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
                 selector = window.pages[page_name].feedback_channel
                 self.assertEqual(

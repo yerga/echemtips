@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 from typing import Any
 
 
@@ -34,6 +35,22 @@ def _default_bitfile() -> str:
 
 
 DEFAULT_BITFILE = _default_bitfile()
+
+
+def default_settings_path() -> Path:
+    """Return one user-level settings path independent of the launch folder."""
+    configured = os.environ.get("ECHEMTIPS_SETTINGS_PATH")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    elif os.name == "nt":
+        root = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return root / "eChemTips" / "settings.json"
+
+
 def _finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
@@ -131,14 +148,24 @@ class FeedbackConfiguration:
 
 
 class SettingsStore:
-    def __init__(self, path: Path | str = ".echemtips/settings.json") -> None:
-        self.path = Path(path)
+    def __init__(self, path: Path | str | None = None) -> None:
+        self.path = Path(path).expanduser() if path is not None else default_settings_path()
+
+    def _read_path(self) -> Path | None:
+        if self.path.exists():
+            return self.path
+        if self.path == default_settings_path():
+            legacy = Path(__file__).resolve().parent.parent / ".echemtips" / "settings.json"
+            if legacy.exists():
+                return legacy
+        return None
 
     def load(self) -> AppSettings:
-        if not self.path.exists():
+        source = self._read_path()
+        if source is None:
             return AppSettings()
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            raw = json.loads(source.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 saved_bitfile = raw.get("bitfile")
                 if isinstance(saved_bitfile, str) and Path(saved_bitfile).name in LEGACY_BITFILE_NAMES:
@@ -153,7 +180,9 @@ class SettingsStore:
         if errors:
             raise ValueError("\n".join(errors))
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(asdict(settings), indent=2) + "\n", encoding="utf-8")
+        temporary = self.path.with_name(f".{self.path.name}.tmp")
+        temporary.write_text(json.dumps(asdict(settings), indent=2) + "\n", encoding="utf-8")
+        temporary.replace(self.path)
 
 
 @dataclass(slots=True)

@@ -14,7 +14,7 @@ from echemtips.experiments import (
 from echemtips.models import (
     DEFAULT_BITFILE, AppSettings, ApproachCVParameters, ApproachITParameters,
     ApproachParameters, CVParameters, Sample, ScanHoppingCVParameters,
-    ScanHoppingITParameters, SettingsStore,
+    ScanHoppingITParameters, SettingsStore, default_settings_path,
 )
 
 
@@ -23,6 +23,12 @@ class SettingsTests(unittest.TestCase):
         settings = AppSettings()
         self.assertEqual(settings.validate(), [])
         self.assertAlmostEqual(settings.effective_period_s, 0.001028)
+
+    def test_default_settings_path_is_user_level_and_absolute(self) -> None:
+        path = default_settings_path()
+        self.assertTrue(path.is_absolute())
+        self.assertEqual(path.name, "settings.json")
+        self.assertEqual(path.parent.name, "eChemTips")
 
     def test_samples_per_point_must_be_power_of_two(self) -> None:
         settings = AppSettings(samples_per_point=250)

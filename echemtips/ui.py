@@ -839,11 +839,14 @@ class SettingsPage(BasePage):
         self.command_ratio_help = QtWidgets.QToolButton(); self.command_ratio_help.setText("ⓘ"); self.command_ratio_help.setToolTip(ratio_help_text); self.command_ratio_help.setWhatsThis(ratio_help_text); self.command_ratio_help.setAccessibleName("Command voltage ratio help"); self.command_ratio_help.setFixedSize(32, 32); ratio_layout.addWidget(self.command_ratio_help, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         amp.addWidget(ratio_row, 1, 0, 1, 2)
         self.command_ratio_summary = label("", "muted", word_wrap=True); amp.addWidget(self.command_ratio_summary, 2, 0, 1, 2); rl.addWidget(amplifier)
-        saving = Card("Saving"); sv = _vbox(saving.body); self.save_directory = Field("Data folder", app.settings.save_directory); self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save)
-        sv.addWidget(self.save_directory); sv.addWidget(self.auto_save); rl.addWidget(saving)
+        saving = Card("Saving", "Choose a permanent folder for full-rate experiment files."); sv = _vbox(saving.body)
+        data_row = QtWidgets.QWidget(); data_layout = _hbox(data_row); self.save_directory = Field("Data folder", app.settings.save_directory); data_layout.addWidget(self.save_directory, 1); data_layout.addWidget(button("Browse…", self.browse_data_folder), 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save)
+        sv.addWidget(data_row); sv.addWidget(self.auto_save); rl.addWidget(saving)
         display = Card("Display", "Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
         self.display_max_points = Field("Display buffer", str(app.settings.display_max_points), "points/plot"); dv.addWidget(self.display_max_points); rl.addWidget(display); rl.addStretch(1)
-        actions = QtWidgets.QWidget(); al = _hbox(actions); al.addWidget(button("Save and apply settings", self.save, "primary")); al.addWidget(label("Changing backend settings disconnects the current device.", "muted", word_wrap=True), 1)
+        actions = QtWidgets.QWidget(); al = _hbox(actions); self.save_defaults_button = button("Save as defaults and apply", self.save, "primary"); al.addWidget(self.save_defaults_button)
+        self.settings_path_label = label(f"Loaded automatically at startup from {app.store.path}", "muted", word_wrap=True); al.addWidget(self.settings_path_label, 1)
         full = QtWidgets.QWidget(); full_layout = _vbox(full); full_layout.addWidget(content); full_layout.addWidget(actions); self.viewport = scroll_area(full); body_layout = _vbox(self.body); body_layout.addWidget(self.viewport)
         self.sample_time.entry.textChanged.connect(self._refresh_period); self.samples_per_point.entry.textChanged.connect(self._refresh_period); self.command_ratio.entry.textChanged.connect(self._refresh_command_ratio); self.mode.currentTextChanged.connect(self._sync_mode)
         self._refresh_period(); self._refresh_command_ratio(); self._sync_mode()
@@ -875,12 +878,21 @@ class SettingsPage(BasePage):
         chosen, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose NI FPGA bitfile", str(Path(self.bitfile.text()).expanduser().parent), "LabVIEW FPGA bitfile (*.lvbitx);;All files (*)")
         if chosen: self.bitfile.setText(str(Path(chosen).resolve()))
 
+    def browse_data_folder(self) -> None:
+        current = Path(self.save_directory.variable.get().strip() or ".").expanduser()
+        chosen = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose eChemTips data folder", str(current))
+        if chosen:
+            self.save_directory.variable.set(Path(chosen).resolve())
+
     def values(self) -> AppSettings:
+        data_folder = Path(self.save_directory.variable.get().strip()).expanduser()
+        if not data_folder.is_absolute():
+            data_folder = data_folder.resolve()
         return AppSettings(
             mode=self.mode.get(), resource=self.resource.variable.get().strip(), bitfile=self.bitfile.text().strip(), hardware_transport=self.transport.get(),
             x_range_um=self.x_range.float(), y_range_um=self.y_range.float(), z_range_um=self.z_range.float(), x_bipolar=self.x_bipolar.get(), y_bipolar=self.y_bipolar.get(), z_bipolar=self.z_bipolar.get(),
             command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
-            hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=self.save_directory.variable.get().strip(), auto_save=self.auto_save.get(),
+            hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=str(data_folder), auto_save=self.auto_save.get(),
             display_max_points=self.display_max_points.integer(),
         )
 
@@ -888,7 +900,7 @@ class SettingsPage(BasePage):
         try:
             settings = self.values(); errors = settings.validate()
             if errors: raise ValueError("\n".join(errors))
-            self.app.apply_settings(settings); self.app.toast("Settings saved and applied", "success")
+            self.app.apply_settings(settings); self.app.toast("Defaults saved and applied; they will load at next startup", "success")
         except ValueError as exc: self.app.show_error(str(exc))
 
 

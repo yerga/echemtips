@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, RAW_SIGNALS, extract_cv_cycles
+from .models import SettingsStore
 from .qt_common import COLORS, Card, XYPlot, button, label
 
 
@@ -32,14 +33,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
 
     @staticmethod
     def _default_data_folder() -> Path:
-        settings_path = Path(".echemtips/settings.json")
-        if settings_path.exists():
-            try:
-                raw = json.loads(settings_path.read_text(encoding="utf-8"))
-                return Path(raw.get("save_directory", "data")).expanduser().resolve()
-            except (OSError, ValueError, TypeError):
-                pass
-        return Path("data").resolve()
+        return Path(SettingsStore().load().save_directory).expanduser().resolve()
 
     def _build_ui(self) -> None:
         root = QtWidgets.QWidget()
