@@ -1,12 +1,14 @@
 # eChemTips real-hardware setup
 
-This Python host keeps `FPGA Target.vi` on the NI device. It implements the host side of the exact WEC-SPM FIFOs: 14 signed-I16 words per motion waypoint and 14 signed-I16 words per acquired sample. The first commissioned profile uses:
+This Python host keeps `FPGA Target.vi` on the NI device. It implements the host side of the exact WEC-SPM FIFOs: 14 signed-I16 words per motion waypoint and 14 signed-I16 words per acquired sample. The fixed initial hardware configuration uses:
 
-- Current 1 on AI3, with the amplifier sensitivity entered in V/nA
-- Voltage 1 on AO3, with the WEC-SPM command-voltage ratio
 - X, Y, and Z piezo outputs on AO0, AO1, and AO2
+- X, Y, and Z measured positions on AI0, AI1, and AI2
+- Voltage 1 and Voltage 2 on AO3 and AO4; the command-voltage ratio applies to Voltage 1
+- Current 1 and Current 2 on AI3 and AI4, with each amplifier sensitivity entered in V/nA
+- AO5–AO7 and AI5–AI7 left unused; eChemTips has no picomotor controls
 - FPGA-side feedback for the approach and FPGA-side waypoints for CV
-- Scan Hopping + CV as staged waypoint programs: XY positioning at retracted Z and a Current 1 pause-on-contact approach, followed by CV/retraction only after contact is confirmed at each pixel
+- Scan Hopping + CV as staged waypoint programs: XY positioning at retracted Z and a selected Current 1 or Current 2 pause-on-contact approach, followed by CV/retraction only after contact is confirmed at each pixel
 
 ## Required instrument-PC software
 

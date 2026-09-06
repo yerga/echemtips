@@ -67,8 +67,11 @@ python run_hardware_check.py --bitfile "/path/to/target.lvbitx" --connect --reso
 The commissioned profile is an NI USB-7856R with:
 
 - AO0, AO1, AO2: X, Y, Z piezo commands
-- AO3: Voltage 1
-- AI3: Current 1 amplifier output
+- AO3, AO4: Voltage 1 and Voltage 2
+- AO5, AO6, AO7: reserved and unused (no picomotor control)
+- AI0, AI1, AI2: measured X, Y, Z piezo positions
+- AI3, AI4: Current 1 and Current 2 amplifier outputs
+- AI5, AI6, AI7: unused
 - FPGA-side approach feedback and waypoint execution
 
 Before enabling actuators, follow [the real-hardware commissioning guide](docs/REAL_HARDWARE_SETUP.md). Verify the bitfile target, register/FIFO contract, wiring, polarity, scaling, travel, current-amplifier sensitivity, and physical interlocks on the specific instrument.
