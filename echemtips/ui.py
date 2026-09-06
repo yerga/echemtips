@@ -551,6 +551,7 @@ class ManagedExperimentPage(BasePage):
         watch = self.app.pages.get("Watch current")
         if isinstance(watch, WatchPage):
             watch.set_live_view(False)
+        self._elapsed_origin_s: float | None = None
         self.app.recorder.start(self.recording_name, self.app.settings, parameters)
         try:
             self.experiment.start(parameters)
@@ -563,6 +564,14 @@ class ManagedExperimentPage(BasePage):
         self.detail_label.setText("Preparing the FPGA/simulation sequence.")
         self.progress.setValue(0)
         self.app._sync_action_states()
+
+    def elapsed_from_start(self, sample: Sample) -> float:
+        """Return a display timestamp local to the current experiment."""
+        origin = getattr(self, "_elapsed_origin_s", None)
+        if origin is None:
+            origin = sample.elapsed_s
+            self._elapsed_origin_s = origin
+        return max(0.0, sample.elapsed_s - origin)
 
     def accept_approach(self) -> None:
         try:
@@ -981,8 +990,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
         self.visual_tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces)
-        self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=120); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=120)
-        tl.addWidget(_plot_card("Z position", "Rolling 120 s view; the complete scan remains recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 120 s view; the complete scan remains recorded.", self.current_plot), 1); self.visual_tabs.addTab(traces, "Experiment traces")
+        self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
+        tl.addWidget(_plot_card("Z position", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); self.visual_tabs.addTab(traces, "Experiment traces")
         cv_page = QtWidgets.QWidget(); cvl = _vbox(cv_page); self.cv_pixel_label = label("Waiting for a CV", "muted")
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
         cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Cyclic voltammogram", "Only CV samples from the latest hop.", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV at hop")
@@ -1027,7 +1036,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         cv_changed = False
         for sample in samples:
             current = _feedback_current(sample, experiment.params.feedback_channel)
-            self.z_plot.append(sample.elapsed_s, sample.z_um, redraw=False); self.current_plot.append(sample.elapsed_s, current, redraw=False)
+            elapsed = self.elapsed_from_start(sample)
+            self.z_plot.append(elapsed, sample.z_um, redraw=False); self.current_plot.append(elapsed, current, redraw=False)
             if hardware:
                 point_index, stage = self.app.backend.hardware_scan_context(sample.line_number)
             else:
@@ -1092,8 +1102,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
         )
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Hopping I–t status", "Start hopping I–t")); tabs = QtWidgets.QTabWidget()
-        traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=120); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=120)
-        tl.addWidget(_plot_card("Z", "Rolling 120 s view; the complete scan remains recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 120 s view; the complete scan remains recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
+        traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
+        tl.addWidget(_plot_card("Z", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Hop I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Hop I–t elapsed (s)")
         il.addWidget(_plot_card("Potential E1", "Timed steps at the latest hop.", self.voltage_plot), 1); il.addWidget(_plot_card("Current 1", "I–t response at the latest hop.", self.it_plot), 1); tabs.addTab(it, "I–t at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
@@ -1127,7 +1137,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
         update = experiment.tick_samples(samples) if experiment._hardware else None
         for sample in samples:
             current = _feedback_current(sample, experiment.params.feedback_channel)
-            self.z_plot.append(sample.elapsed_s, sample.z_um, redraw=False); self.current_plot.append(sample.elapsed_s, current, redraw=False)
+            elapsed = self.elapsed_from_start(sample)
+            self.z_plot.append(elapsed, sample.z_um, redraw=False); self.current_plot.append(elapsed, current, redraw=False)
             state_before = experiment.state
             if experiment._hardware: point, stage = self.app.backend.hardware_program_context(sample.line_number)
             else:

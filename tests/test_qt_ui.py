@@ -95,6 +95,8 @@ class QtLayoutTests(unittest.TestCase):
                 scan_page.scan_pattern.setCurrentText("Raster")
                 self.assertTrue(scan_page.line_retract.entry.isEnabled())
                 self.assertFalse(scan_page.parameters().serpentine)
+                self.assertEqual(scan_page.z_plot.rolling_window_s, 60)
+                self.assertEqual(scan_page.current_plot.rolling_window_s, 60)
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
@@ -183,6 +185,21 @@ class QtLayoutTests(unittest.TestCase):
             self.assertLessEqual(len(plot.x_values), 121)
         finally:
             plot.close()
+
+    def test_scan_trace_elapsed_time_restarts_with_each_scan(self) -> None:
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        page = window.pages["Scan hopping + CV"]
+        try:
+            page._elapsed_origin_s = None
+            first = Sample(712.5, 35, 35, 55, 0.1, 0, 1, 0)
+            second = Sample(713.0, 35, 35, 56, 0.1, 0, 1.1, 0)
+            self.assertEqual(page.elapsed_from_start(first), 0.0)
+            self.assertEqual(page.elapsed_from_start(second), 0.5)
+            page._elapsed_origin_s = None
+            self.assertEqual(page.elapsed_from_start(Sample(900, 35, 35, 55, 0.1, 0, 1, 0)), 0.0)
+        finally:
+            window.close()
 
     def test_watch_current_only_plots_during_an_explicit_live_session(self) -> None:
         window = EChemTipsApp()

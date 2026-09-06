@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict, fields, is_dataclass
+from dataclasses import asdict, fields, is_dataclass, replace
 from datetime import datetime
 import json
 import os
@@ -48,6 +48,7 @@ class DataRecorder:
         self._metadata: dict[str, Any] = {}
         self._sample_count = 0
         self._writes_since_sync = 0
+        self._elapsed_origin_s: float | None = None
 
     @property
     def active(self) -> bool:
@@ -78,6 +79,7 @@ class DataRecorder:
         self._parameters = parameters
         self._sample_count = 0
         self._writes_since_sync = 0
+        self._elapsed_origin_s = None
         self._csv_stream = None
         self._csv_writer = None
         self._csv_path = None
@@ -120,14 +122,19 @@ class DataRecorder:
     def append(self, sample: Sample) -> None:
         if not self.active:
             return
+        if self._elapsed_origin_s is None:
+            self._elapsed_origin_s = sample.elapsed_s
+            if self._metadata:
+                self._metadata["source_elapsed_origin_s"] = self._elapsed_origin_s
+        recorded = replace(sample, elapsed_s=max(0.0, sample.elapsed_s - self._elapsed_origin_s))
         if self._csv_writer is None:
-            self.samples.append(sample)
+            self.samples.append(recorded)
             return
         try:
             if len(self.samples) >= self._recent_sample_limit:
                 self.samples.pop(0)
-            self.samples.append(sample)
-            self._csv_writer.writerow(sample.as_row())
+            self.samples.append(recorded)
+            self._csv_writer.writerow(recorded.as_row())
             self._sample_count += 1
             self._metadata["sample_count"] = self._sample_count
             stream = self._csv_stream

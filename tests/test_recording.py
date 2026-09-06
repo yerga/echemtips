@@ -106,6 +106,20 @@ class StreamingRecordingTests(unittest.TestCase):
             assert output is not None
             self.assertEqual(json.loads(output.with_suffix(".json").read_text())["sample_count"], 10)
 
+    def test_each_recording_uses_its_own_elapsed_time_origin(self) -> None:
+        with TemporaryDirectory() as folder:
+            recorder = DataRecorder()
+            recorder.start("Scan Hopping CV", self.settings(folder))
+            recorder.append(sample(600))
+            recorder.append(sample(603))
+            output = recorder.finish()
+            assert output is not None
+            with output.open(newline="", encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([float(row["elapsed_s"]) for row in rows], [0.0, 3.0])
+            metadata = json.loads(output.with_suffix(".json").read_text())
+            self.assertEqual(metadata["source_elapsed_origin_s"], 600.0)
+
     def test_csv_and_metadata_round_trip(self) -> None:
         with TemporaryDirectory() as folder:
             settings = self.settings(folder)
