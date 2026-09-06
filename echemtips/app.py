@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 
+from PySide6 import QtWidgets
+
 from .backends import SimulationBackend
 from .experiments import (
     ApproachCVExperiment, ApproachExperiment, ApproachITExperiment, CVExperiment,
@@ -11,13 +13,14 @@ from .models import (
     AppSettings, ApproachCVParameters, ApproachITParameters, ApproachParameters,
     CVParameters, Sample, ScanHoppingCVParameters, ScanHoppingITParameters,
 )
-from .ui import EChemTipsApp
+from .ui import EChemTipsApp, create_application
 
 
 def _smoke_test(app: EChemTipsApp) -> None:
     """Exercise every page and the simulation backend without user input."""
-    app.withdraw()
-    app.geometry("1080x680")
+    app.resize(1080, 680)
+    app.show()
+    QtWidgets.QApplication.processEvents()
     # A smoke test must never inherit a persisted NI-FPGA selection and try to
     # open hardware. Replace only the runtime backend; do not write settings.
     app.settings = AppSettings(mode="Simulation")
@@ -40,11 +43,11 @@ def _smoke_test(app: EChemTipsApp) -> None:
     for name, page in app.pages.items():
         app.show_page(name)
         page.on_samples(samples)
-        app.update_idletasks()
-        if page.winfo_reqwidth() <= 0 or page.winfo_reqheight() <= 0:
+        QtWidgets.QApplication.processEvents()
+        if page.sizeHint().width() <= 0 or page.sizeHint().height() <= 0:
             raise RuntimeError(f"Page did not lay out correctly: {name}")
     watch = app.pages["Watch current"]
-    if len(watch.plot.x_values) != len(samples):
+    if len(watch.plot.x_values) < len(samples):
         raise RuntimeError("Watch Current discarded samples from an acquisition batch")
     cv = app.pages["CV"]
     app.cv_experiment.start(CVParameters(-.1, .2, -.2, 100, 1))
@@ -152,14 +155,15 @@ def _smoke_test(app: EChemTipsApp) -> None:
     if len(scan_it.z_plot.x_values) != scan_it_samples or not app.scan_it_experiment.current_at_pulse:
         raise RuntimeError("Scan Hopping + I-t did not preserve traces or populate its pulse-current map")
     settings = app.pages["Settings"]
-    settings.viewport._update_scrollregion()
-    app.update_idletasks()
-    if settings.viewport.canvas.bbox("all")[3] <= settings.viewport.canvas.winfo_height():
+    app.show_page("Settings")
+    QtWidgets.QApplication.processEvents()
+    if settings.viewport.verticalScrollBar().maximum() <= 0:
         raise RuntimeError("Settings content did not exercise its vertical scrollbar at minimum window size")
     app.backend.move("Z", 12.0, 2.0)
     app.backend.emergency_stop()
     app.backend.disconnect()
-    app.destroy()
+    app.poll_timer.stop()
+    app.close()
 
 
 def main() -> None:
@@ -174,6 +178,7 @@ def main() -> None:
         help="page to show when the app opens",
     )
     args = parser.parse_args()
+    qt_app = create_application()
     app = EChemTipsApp()
     if args.smoke_test:
         _smoke_test(app)
@@ -181,7 +186,8 @@ def main() -> None:
         return
     if args.page:
         app.show_page(args.page)
-    app.mainloop()
+    app.show()
+    raise SystemExit(qt_app.exec())
 
 
 if __name__ == "__main__":

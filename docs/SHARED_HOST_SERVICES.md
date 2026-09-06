@@ -16,7 +16,7 @@ This audit covers the reusable functionality formerly spread across `FPGA Host.v
 | Live controls | Backend `pause`, `resume`, `end_current_waypoint`, `set_live_potential` | Generic resume cannot clear an FPGA-owned internal feedback pause. ChangeOnFly writes are range checked and pulsed through the deployed registers. |
 | Feedback configuration | `FeedbackConfiguration`, `WECSPMDriver.configure_feedback` | Primary/secondary signal and threshold, polarity, P gain, maximum Z step, update interval, running-average terms, self-reference hold, and three bulk distances. Execution remains on FPGA. |
 | Instrument profiles/provenance | `AppSettings`, Settings UI, `BackendCapabilities` | Explicit Simulation and USB-7856R profiles, capability-gated controls, advanced settings, calibration source/date/operator/notes, and separate measured/commanded position labels. |
-| Full-rate recording and viewing | `AcquisitionWorker`, `DataRecorder`, `DisplayBuffer`, `Plot` | Acquisition is independent of Tk polling; backlog/errors are surfaced; final samples are barrier-drained; persistent files keep every sample while displays are decimated independently. |
+| Full-rate recording and viewing | `AcquisitionWorker`, `DataRecorder`, `DisplayBuffer`, `Plot` | Acquisition is independent of Qt rendering; backlog/errors are surfaced; final samples are barrier-drained; persistent files keep every sample while PyQtGraph displays are decimated independently. |
 
 ## Verified boundary
 

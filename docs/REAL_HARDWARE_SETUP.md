@@ -13,7 +13,7 @@ This Python host keeps `FPGA Target.vi` on the NI device. It implements the host
 Use a Windows computer supported by the installed NI-RIO release and the exact USB R Series model. Install:
 
 1. The NI-RIO driver and NI MAX.
-2. Python 3.10 or newer with Tk support.
+2. Python 3.10 or newer; PySide6 and PyQtGraph are installed with eChemTips.
 3. This project and the NI FPGA Python API:
 
    ```powershell

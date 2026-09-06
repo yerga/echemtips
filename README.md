@@ -15,9 +15,11 @@ The current application includes:
 
 The simulator requires no laboratory hardware. Real-device support uses the existing compiled FPGA target; eChemTips does not replace FPGA-side feedback or timing logic.
 
+The supported UI on `main` uses PySide6 and PyQtGraph. The final pre-migration Tkinter implementation is preserved in the `tk-legacy` branch and the immutable `tk-v0.1` tag.
+
 ## Run the simulator
 
-Python 3.10 or newer with Tk support is required.
+Python 3.10 or newer is required. Installing eChemTips installs its PySide6 and PyQtGraph UI dependencies.
 
 ```bash
 python run_echemtips.py
@@ -97,13 +99,13 @@ The suite covers settings, simulation dynamics, experiment state machines, recor
 
 ## Architecture
 
-- `echemtips/ui.py`: operator interface and rendering
+- `echemtips/ui.py`, `qt_common.py`: PySide6 operator interface and PyQtGraph rendering
 - `echemtips/experiments.py`: device-independent experiment state machines
 - `echemtips/backends.py`: simulator and NI-FPGA backend boundary
 - `echemtips/host.py`, `waypoints.py`: shared host services and waypoint compiler
 - `echemtips/ni_driver.py`, `ni_protocol.py`: deployed FPGA host protocol
 - `echemtips/acquisition.py`, `data.py`: full-rate acquisition and persistence
-- `echemtips/analysis.py`, `legacy_data.py`: analysis UI and validated legacy import
+- `echemtips/analysis.py`, `analysis_window.py`, `legacy_data.py`: Qt analysis UI and validated legacy import
 
 The historical LabVIEW project, compiled FPGA binaries, local settings, and experimental data are intentionally excluded from this repository.
 

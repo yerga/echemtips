@@ -8,13 +8,16 @@ version = "0.1.0"
 description = "Open Python control and analysis interface for scanning electrochemistry"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "numpy>=1.26",
+    "PySide6>=6.8,<7",
+    "pyqtgraph>=0.13.7,<0.15",
+]
 license = "MIT"
 authors = [{name = "yerga"}]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Topic :: Scientific/Engineering",

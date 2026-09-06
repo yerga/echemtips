@@ -28,4 +28,4 @@ When the recording lacks CV program metadata, the analysis UI lets the user supp
 
 ## Verification scope
 
-Automated checks cover simulation, streaming persistence, sample ordering, legacy-format fixtures, and FPGA register/FIFO behavior using a fake session. Tk smoke tests exercise the control and analysis interfaces. These checks do not establish physical USB-7856R behavior; instrument commissioning remains necessary on the connected computer as described in `REAL_HARDWARE_SETUP.md`.
+Automated checks cover simulation, streaming persistence, sample ordering, legacy-format fixtures, and FPGA register/FIFO behavior using a fake session. Offscreen Qt smoke tests exercise the PySide6 control and analysis interfaces. These checks do not establish physical USB-7856R behavior; instrument commissioning remains necessary on the connected computer as described in `REAL_HARDWARE_SETUP.md`.

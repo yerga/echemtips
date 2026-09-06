@@ -20,7 +20,7 @@ class AcquisitionDrain:
 
 
 class AcquisitionWorker:
-    """Continuously acquire batches without blocking Tk rendering.
+    """Continuously acquire batches without blocking UI rendering.
 
     No samples are discarded. If the bounded backlog is exceeded, the batch
     that crossed the limit is retained, acquisition stops, and the UI receives

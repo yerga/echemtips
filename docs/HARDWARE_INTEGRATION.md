@@ -120,7 +120,7 @@ The native implementation deliberately separates method logic from common host b
 - `host.py` owns execution state snapshots, complete-frame FIFO streaming/refilling, and the bounded display buffer.
 - `waypoints.py` compiles physical-unit X/Y/Z/V1/V2 plans, concurrent axis movement, ramps, jumps, holds, relative Z moves, feedback actions, and all deployed flag bits.
 - `ni_driver.py` owns exactly one active program, applies the compiled scalers, services refills, verifies line-count/waiting-state completion, drains final acquisition data, and exposes pause, resume, end-current-line, ChangeOnFly potential, and feedback configuration operations.
-- `acquisition.py` continuously drains the hardware outside Tk rendering. The recorder receives every sample; plots receive separately decimated buffers that preserve the experiment's first and last points.
+- `acquisition.py` continuously drains the hardware outside Qt rendering. The recorder receives every sample; PyQtGraph plots receive separately decimated buffers that preserve the experiment's first and last points.
 
 The advanced feedback settings write both threshold channels, comparison polarity, proportional gain, maximum Z update, running-average terms, self-reference-on-hold, and all three bulk-retraction distances. Waypoint update intervals are compiled into each frame. These are host configuration operations only: feedback decisions and Z updates remain FPGA-resident.
 
