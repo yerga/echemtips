@@ -44,7 +44,6 @@ class HardwareSequenceUpdate:
 
 @dataclass(frozen=True, slots=True)
 class BackendCapabilities:
-    profile: str
     pause_resume: bool
     end_current_waypoint: bool
     live_potential: bool
@@ -92,7 +91,7 @@ class InstrumentBackend(ABC):
     @property
     def capabilities(self) -> BackendCapabilities:
         return BackendCapabilities(
-            self.settings.instrument_profile, True, True, True, False, False, True,
+            True, True, True, False, False, True,
             self.full_rate_data_available,
         )
 
@@ -387,7 +386,6 @@ class NIFPGABackend(InstrumentBackend):
         driver = self._driver
         supports = lambda name: driver is not None and callable(getattr(driver, name, None))
         return BackendCapabilities(
-            self.settings.instrument_profile,
             supports("pause") and supports("resume"),
             supports("end_current_waypoint"),
             True,

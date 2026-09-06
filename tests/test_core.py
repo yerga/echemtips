@@ -28,7 +28,7 @@ class SettingsTests(unittest.TestCase):
         settings = AppSettings(samples_per_point=250)
         self.assertTrue(any("power of two" in error for error in settings.validate()))
 
-    def test_nonfinite_hardware_calibration_is_rejected(self) -> None:
+    def test_nonfinite_hardware_range_is_rejected(self) -> None:
         settings = AppSettings(mode="NI FPGA", z_range_um=float("nan"))
         self.assertTrue(any("Z range" in error for error in settings.validate()))
 

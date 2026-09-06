@@ -10,7 +10,6 @@ from typing import Any
 
 TARGET_BITFILE_NAME = "wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx"
 LEGACY_BITFILE_NAMES = {"FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx"}
-HARDWARE_PROFILE = "USB-7856R (WEC-SPM FPGA)"
 
 
 def _default_bitfile() -> str:
@@ -35,12 +34,6 @@ def _default_bitfile() -> str:
 
 
 DEFAULT_BITFILE = _default_bitfile()
-INSTRUMENT_PROFILES = {
-    "Simulation": "Deterministic virtual eChemTips instrument with all software controls",
-    HARDWARE_PROFILE: "Deployed USB-7856R target; AO0/1/2 XYZ, AO3 V1, AI3 Current 1",
-}
-
-
 def _finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
@@ -48,7 +41,6 @@ def _finite_number(value: object) -> bool:
 @dataclass(slots=True)
 class AppSettings:
     mode: str = "Simulation"
-    instrument_profile: str = "Simulation"
     resource: str = "RIO0"
     bitfile: str = DEFAULT_BITFILE
     hardware_transport: str = "USB R Series"
@@ -67,10 +59,6 @@ class AppSettings:
     hardware_watchdog_margin_s: float = 30.0
     save_directory: str = "data"
     auto_save: bool = True
-    calibration_source: str = "Unspecified"
-    calibration_date: str = ""
-    calibration_operator: str = ""
-    calibration_notes: str = ""
     display_max_points: int = 12_000
     feedback2_enabled: bool = False
     feedback2_channel: str = "Current 2"
@@ -86,14 +74,6 @@ class AppSettings:
     distance_to_bulk2_um: float = 0.0
     distance_to_bulk3_um: float = 0.0
 
-    def __post_init__(self) -> None:
-        # Preserve compatibility with callers that historically selected only
-        # the backend mode while still persisting an explicit profile.
-        if self.mode == "NI FPGA" and self.instrument_profile == "Simulation":
-            self.instrument_profile = HARDWARE_PROFILE
-        elif self.instrument_profile == "USB-7856R WEC-SPM":
-            self.instrument_profile = HARDWARE_PROFILE
-
     @property
     def effective_period_s(self) -> float:
         return self.sample_time_us * (self.samples_per_point + 1) / 1_000_000.0
@@ -102,12 +82,6 @@ class AppSettings:
         errors: list[str] = []
         if not isinstance(self.mode, str) or self.mode not in {"Simulation", "NI FPGA"}:
             errors.append("Connection mode must be Simulation or NI FPGA.")
-        if self.instrument_profile not in INSTRUMENT_PROFILES:
-            errors.append("Instrument profile is not supported.")
-        if self.mode == "Simulation" and self.instrument_profile != "Simulation":
-            errors.append("Simulation mode requires the Simulation instrument profile.")
-        if self.mode == "NI FPGA" and self.instrument_profile != HARDWARE_PROFILE:
-            errors.append("NI FPGA mode requires the USB-7856R WEC-SPM target profile.")
         if not isinstance(self.hardware_transport, str) or self.hardware_transport not in {"Auto", "USB R Series", "PCIe/PXI R Series"}:
             errors.append("Hardware transport must be Auto, USB R Series, or PCIe/PXI R Series.")
         for name, value in (
@@ -156,10 +130,6 @@ class AppSettings:
                             ("Bulk distance 3", self.distance_to_bulk3_um)):
             if not _finite_number(value) or abs(float(value)) > self.z_range_um:
                 errors.append(f"{name} must be finite and within the configured Z span.")
-        if not all(isinstance(value, str) for value in (
-            self.calibration_source, self.calibration_date, self.calibration_operator, self.calibration_notes
-        )):
-            errors.append("Calibration provenance fields must be text.")
         if self.mode == "NI FPGA" and (not isinstance(self.resource, str) or not self.resource.strip()):
             errors.append("NI FPGA resource must not be empty.")
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
@@ -170,8 +140,6 @@ class AppSettings:
     def from_dict(cls, raw: dict[str, Any]) -> "AppSettings":
         allowed = cls.__dataclass_fields__.keys()
         values = {key: value for key, value in raw.items() if key in allowed}
-        if "instrument_profile" not in values:
-            values["instrument_profile"] = HARDWARE_PROFILE if values.get("mode") == "NI FPGA" else "Simulation"
         return cls(**values)
 
 
