@@ -308,7 +308,7 @@ class ScanHoppingCVExperiment:
         row, column, x, y = self._grid[self.point_index]
         p = self.params
         self.backend.set_voltage(1, p.approach_voltage_v)
-        self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
+        self.backend.move("Z", p.approach_start_z_for_point(self.point_index), p.retract_rate_um_s)
         self._positioning_z = True
         self._current_candidate = None
         self._last_approach_z = None
@@ -349,14 +349,14 @@ class ScanHoppingCVExperiment:
         row, column, x, y = self._grid[self.point_index]
         tolerance = 0.08
         if self.state == ExperimentState.PREPOSITION and self._positioning_z:
-            if abs(sample.z_um - p.start_z_um) >= tolerance:
+            if abs(sample.z_um - p.approach_start_z_for_point(self.point_index)) >= tolerance:
                 return
             self.backend.move("X", x, p.lateral_rate_um_s)
             self.backend.move("Y", y, p.lateral_rate_um_s)
             self._positioning_z = False
         if self.state == ExperimentState.PREPOSITION and all(
             abs(actual - target) < tolerance
-            for actual, target in ((sample.x_um, x), (sample.y_um, y), (sample.z_um, p.start_z_um))
+            for actual, target in ((sample.x_um, x), (sample.y_um, y), (sample.z_um, p.approach_start_z_for_point(self.point_index)))
         ):
             self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
             self.state = ExperimentState.APPROACHING
@@ -395,7 +395,7 @@ class ScanHoppingCVExperiment:
                 self._segment_index += 1
                 if self._segment_index >= len(self._segments):
                     self._finish_point_metrics(self.point_index)
-                    self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
+                    self.backend.move("Z", p.retract_z_for_point(self.point_index), p.retract_rate_um_s)
                     self.state = ExperimentState.RETRACTING
                     self.detail = f"Point {self.point_index + 1}/{p.point_count} · retracting"
                 else:
@@ -403,7 +403,8 @@ class ScanHoppingCVExperiment:
             else:
                 self._cv_voltage += step if delta > 0 else -step
                 self.backend.set_voltage(1, self._cv_voltage)
-        if self.state == ExperimentState.RETRACTING and abs(sample.z_um - p.start_z_um) < tolerance:
+        retract_target = p.start_z_um if self._no_contact_after_retract else p.retract_z_for_point(self.point_index)
+        if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < tolerance:
             if self._no_contact_after_retract:
                 self.state = ExperimentState.ABORTED
                 self.detail = f"Scan stopped at point {self.point_index + 1}: End Z reached without contact"
@@ -860,7 +861,7 @@ class ScanHoppingITExperiment:
     def _start_point(self) -> None:
         p = self.params
         self.backend.set_voltage(1, p.approach_voltage_v)
-        self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
+        self.backend.move("Z", p.approach_start_z_for_point(self.point_index), p.retract_rate_um_s)
         self._positioning_z = True
         self.state, self.detail = ExperimentState.PREPOSITION, f"Point {self.point_index + 1}/{p.point_count} · positioning"
 
@@ -921,7 +922,7 @@ class ScanHoppingITExperiment:
         for sample in samples:
             self._tag(sample, self.point_index)
             _row, _column, x, y = self._grid[self.point_index]
-            if self.state == ExperimentState.PREPOSITION and self._positioning_z and abs(sample.z_um - p.start_z_um) < .08:
+            if self.state == ExperimentState.PREPOSITION and self._positioning_z and abs(sample.z_um - p.approach_start_z_for_point(self.point_index)) < .08:
                 self.backend.move("X", x, p.lateral_rate_um_s); self.backend.move("Y", y, p.lateral_rate_um_s)
                 self._positioning_z = False
             if self.state == ExperimentState.PREPOSITION and not self._positioning_z and all(
@@ -946,13 +947,14 @@ class ScanHoppingITExperiment:
                     self._step_index += 1
                     if self._step_index >= len(self._steps):
                         self._finish_pulse_map(self.point_index)
-                        self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
+                        self.backend.move("Z", p.retract_z_for_point(self.point_index), p.retract_rate_um_s)
                         self.state, self.detail = ExperimentState.RETRACTING, f"Point {self.point_index + 1}/{p.point_count} · retracting"
                     else:
                         potential, duration, label = self._steps[self._step_index]
                         self.backend.set_voltage(1, potential); self.it_label = label
                         self._step_deadline = time.monotonic() + duration
-            if self.state == ExperimentState.RETRACTING and abs(sample.z_um - p.start_z_um) < .08:
+            retract_target = p.start_z_um if self.it_label == "no-contact" else p.retract_z_for_point(self.point_index)
+            if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < .08:
                 if self.it_label == "no-contact":
                     self.state, self.detail = ExperimentState.ABORTED, f"No contact at point {self.point_index + 1}; I-t not run"
                 else:

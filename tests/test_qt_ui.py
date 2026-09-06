@@ -85,6 +85,14 @@ class QtLayoutTests(unittest.TestCase):
                 scan_page = window.pages[page_name]
                 self.assertIn("X 15 µm · Y 15 µm", scan_page.spacing_label.text())
                 self.assertIn("plus the first approach", scan_page.duration_label.text())
+                self.assertEqual(
+                    tuple(scan_page.scan_pattern.itemText(index) for index in range(scan_page.scan_pattern.count())),
+                    ("Serpentine", "Raster"),
+                )
+                self.assertFalse(scan_page.line_retract.entry.isEnabled())
+                scan_page.scan_pattern.setCurrentText("Raster")
+                self.assertTrue(scan_page.line_retract.entry.isEnabled())
+                self.assertFalse(scan_page.parameters().serpentine)
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),

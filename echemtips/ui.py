@@ -154,6 +154,8 @@ def _scan_summary_card(parameter_factory, triggers: list[QtCore.QObject]) -> tup
             trigger.textChanged.connect(refresh)
         elif isinstance(trigger, QtWidgets.QCheckBox):
             trigger.stateChanged.connect(refresh)
+        elif isinstance(trigger, QtWidgets.QComboBox):
+            trigger.currentTextChanged.connect(refresh)
     refresh()
     return card, spacing_label, duration_label
 
@@ -933,10 +935,12 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         for index, (name, caption, value, unit) in enumerate(specs):
             setattr(self, name, add_field(g, Field(caption, value, unit), index // 2, index % 2))
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 9, 1)
-        self.serpentine = Check("Serpentine rows", True); g.addWidget(self.serpentine, 10, 0, 1, 2)
+        pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 10, 0)
+        self.line_retract = add_field(g, Field("Raster extra line retract", "5", "µm"), 10, 1)
+        self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls.findChildren(QtWidgets.QLineEdit), self.serpentine]
+            self.parameters, [*controls.findChildren(QtWidgets.QLineEdit), self.scan_pattern]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
@@ -964,8 +968,11 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA, cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
-            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.serpentine.get(),
+            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(),
         )
+
+    def _sync_scan_pattern(self, *_args: object) -> None:
+        self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
 
     def start(self) -> None:
         try:
@@ -1031,10 +1038,13 @@ class ScanHoppingITPage(ManagedExperimentPage):
         )
         for index, (name, caption, value, unit) in enumerate(specs): setattr(self, name, add_field(g, Field(caption, value, unit), index // 2, index % 2))
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 10, 0)
-        self.serpentine = Check("Serpentine rows", True); self.greater = Check("Trigger when greater", True); g.addWidget(self.serpentine, 10, 1); g.addWidget(self.greater, 11, 0, 1, 2)
+        pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 10, 1)
+        self.line_retract = add_field(g, Field("Raster extra line retract", "5", "µm"), 11, 0)
+        self.greater = Check("Trigger when greater", True); g.addWidget(self.greater, 11, 1)
+        self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls)
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls.findChildren(QtWidgets.QLineEdit), self.serpentine]
+            self.parameters, [*controls.findChildren(QtWidgets.QLineEdit), self.scan_pattern]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
@@ -1058,8 +1068,11 @@ class ScanHoppingITPage(ManagedExperimentPage):
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
-            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.serpentine.get(),
+            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(),
         )
+
+    def _sync_scan_pattern(self, *_args: object) -> None:
+        self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
 
     def start(self) -> None:
         try:

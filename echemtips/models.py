@@ -413,6 +413,7 @@ class ScanHoppingCVParameters:
     cycles: int = 1
     map_potential_v: float = 0.2
     serpentine: bool = True
+    raster_line_retract_um: float = 5.0
 
     @property
     def point_count(self) -> int:
@@ -425,6 +426,21 @@ class ScanHoppingCVParameters:
             abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
         )
 
+    def retract_z_for_point(self, point: int) -> float:
+        grid = self.grid()
+        ends_raster_line = (
+            not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
+        )
+        if not ends_raster_line:
+            return self.start_z_um
+        direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
+        return self.start_z_um + direction * self.raster_line_retract_um
+
+    def approach_start_z_for_point(self, point: int) -> float:
+        if point <= 0:
+            return self.start_z_um
+        return self.retract_z_for_point(point - 1)
+
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
         grid = self.grid()
@@ -432,9 +448,14 @@ class ScanHoppingCVParameters:
             math.hypot(current[2] - previous[2], current[3] - previous[3])
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
-        z_distance = abs(self.end_z_um - self.start_z_um)
-        repeated_approaches = max(0, self.point_count - 1) * z_distance / self.approach_rate_um_s
-        retracts = self.point_count * z_distance / self.retract_rate_um_s
+        repeated_approaches = sum(
+            abs(self.end_z_um - self.approach_start_z_for_point(point)) / self.approach_rate_um_s
+            for point in range(1, self.point_count)
+        )
+        retracts = sum(
+            abs(self.end_z_um - self.retract_z_for_point(point)) / self.retract_rate_um_s
+            for point in range(self.point_count)
+        )
         cv_per_point = self.cycles * (
             abs(self.cv_vertex1_v - self.cv_start_v)
             + abs(self.cv_vertex2_v - self.cv_vertex1_v)
@@ -473,6 +494,12 @@ class ScanHoppingCVParameters:
             errors.append("Z approach bounds are outside the configured Z range.")
         if self.start_z_um == self.end_z_um:
             errors.append("Start Z and end Z must be different.")
+        if not math.isfinite(self.raster_line_retract_um) or self.raster_line_retract_um < 0:
+            errors.append("Raster extra line retract must be finite and non-negative.")
+        elif not self.serpentine:
+            targets = [self.retract_z_for_point(point) for point in range(self.point_count)]
+            if any(not 0 <= target <= settings.z_range_um for target in targets):
+                errors.append("Raster extra line retract would move Z outside the configured range.")
         for name, value in (
             ("Lateral rate", self.lateral_rate_um_s),
             ("Approach rate", self.approach_rate_um_s),
@@ -534,6 +561,7 @@ class ScanHoppingITParameters:
     return_hold_s: float = 0.25
     cycles: int = 1
     serpentine: bool = True
+    raster_line_retract_um: float = 5.0
 
     @property
     def point_count(self) -> int:
@@ -546,6 +574,21 @@ class ScanHoppingITParameters:
             abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
         )
 
+    def retract_z_for_point(self, point: int) -> float:
+        grid = self.grid()
+        ends_raster_line = (
+            not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
+        )
+        if not ends_raster_line:
+            return self.start_z_um
+        direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
+        return self.start_z_um + direction * self.raster_line_retract_um
+
+    def approach_start_z_for_point(self, point: int) -> float:
+        if point <= 0:
+            return self.start_z_um
+        return self.retract_z_for_point(point - 1)
+
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
         grid = self.grid()
@@ -553,9 +596,14 @@ class ScanHoppingITParameters:
             math.hypot(current[2] - previous[2], current[3] - previous[3])
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
-        z_distance = abs(self.end_z_um - self.start_z_um)
-        repeated_approaches = max(0, self.point_count - 1) * z_distance / self.approach_rate_um_s
-        retracts = self.point_count * z_distance / self.retract_rate_um_s
+        repeated_approaches = sum(
+            abs(self.end_z_um - self.approach_start_z_for_point(point)) / self.approach_rate_um_s
+            for point in range(1, self.point_count)
+        )
+        retracts = sum(
+            abs(self.end_z_um - self.retract_z_for_point(point)) / self.retract_rate_um_s
+            for point in range(self.point_count)
+        )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
         return lateral + repeated_approaches + retracts + self.point_count * it_per_point
 
@@ -602,6 +650,12 @@ class ScanHoppingITParameters:
             errors.append("X and Y point counts must each be between 1 and 64.")
         if not math.isfinite(self.lateral_rate_um_s) or self.lateral_rate_um_s <= 0:
             errors.append("Lateral rate must be positive.")
+        if not math.isfinite(self.raster_line_retract_um) or self.raster_line_retract_um < 0:
+            errors.append("Raster extra line retract must be finite and non-negative.")
+        elif not self.serpentine:
+            targets = [self.retract_z_for_point(point) for point in range(self.point_count)]
+            if any(not 0 <= target <= settings.z_range_um for target in targets):
+                errors.append("Raster extra line retract would move Z outside the configured range.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
         total_tags = 1 + self.point_count * (3 + hold_frames)
         if settings.mode == "NI FPGA" and total_tags > 32767:

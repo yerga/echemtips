@@ -696,7 +696,7 @@ class WECSPMDriver:
         current_y = raw_to_position(current["Y"], s.y_range_um, s.y_bipolar)
         current_z = raw_to_position(current["Z"], s.z_range_um, s.z_bipolar)
         expected = max(abs(x_um - current_x), abs(y_um - current_y)) / params.lateral_rate_um_s
-        expected += abs(params.end_z_um - params.start_z_um) / params.approach_rate_um_s
+        expected += abs(params.end_z_um - params.approach_start_z_for_point(point)) / params.approach_rate_um_s
         if initial:
             expected += abs(current_z - params.start_z_um) / params.retract_rate_um_s
         self._enqueue(waypoints, expected)
@@ -719,7 +719,7 @@ class WECSPMDriver:
             vertex2_v=params.cv_vertex2_v,
             scan_rate_v_s=params.cv_scan_rate_v_s,
             cycles=params.cycles,
-            retract_z_um=params.start_z_um,
+            retract_z_um=params.retract_z_for_point(point),
             retract_rate_um_s=params.retract_rate_um_s,
         )
         compiled = self.compiler.compile(plan, current)
@@ -939,7 +939,8 @@ class WECSPMDriver:
         descriptors = [(point, f"it:{label}") for label in labels]
         should_retract = params.retract_after if isinstance(params, ApproachITParameters) else True
         if should_retract:
-            plan.append(PhysicalWaypoint(z_um=params.start_z_um, z_rate_um_s=params.retract_rate_um_s))
+            retract_z = params.retract_z_for_point(point) if isinstance(params, ScanHoppingITParameters) else params.start_z_um
+            plan.append(PhysicalWaypoint(z_um=retract_z, z_rate_um_s=params.retract_rate_um_s))
             descriptors.append((point, "retract"))
         self._submit_method_plan(plan, descriptors, "it", resume=True)
 

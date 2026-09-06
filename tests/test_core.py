@@ -417,6 +417,21 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(it.spacing_um, (10.0, 0.0))
         self.assertAlmostEqual(it.estimated_known_duration_s(), 13.0)
 
+    def test_raster_scan_uses_extra_safe_z_at_line_flyback(self) -> None:
+        params = ScanHoppingCVParameters(
+            x_points=3, y_points=2, serpentine=False,
+            start_z_um=55, end_z_um=80, raster_line_retract_um=8,
+        )
+        self.assertEqual([point[1] for point in params.grid()], [0, 1, 2, 0, 1, 2])
+        self.assertEqual(params.retract_z_for_point(2), 47)
+        self.assertEqual(params.approach_start_z_for_point(3), 47)
+        self.assertEqual(params.retract_z_for_point(5), 55)
+        invalid = ScanHoppingITParameters(
+            x_points=2, y_points=2, serpentine=False,
+            start_z_um=2, end_z_um=80, raster_line_retract_um=5,
+        )
+        self.assertTrue(any("outside" in error for error in invalid.validate(AppSettings())))
+
     def test_scan_end_of_travel_aborts_pixel_without_cv(self) -> None:
         settings = AppSettings()
         backend = SimulationBackend(settings)

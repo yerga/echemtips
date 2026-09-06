@@ -380,6 +380,19 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.read_samples()
         self.assertEqual(self.driver.method_status()["stage"], "it")
 
+    def test_raster_cv_retracts_farther_before_line_flyback(self) -> None:
+        params = ScanHoppingCVParameters(
+            x_points=2, y_points=2, serpentine=False,
+            start_z_um=55, end_z_um=80, raster_line_retract_um=7, cycles=1,
+        )
+        self.driver.start_scan_hopping_cv(params)
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.driver.cancel_program()
+        self.driver._cancelled = False
+        self.driver._submit_scan_cv(1)
+        final = self.session.fifos["Host_To_FPGA_Positions"].writes[-1][-14:]
+        self.assertEqual(final[8], position_to_raw(48, self.settings.z_range_um, self.settings.z_bipolar))
+
     def test_approach_status_uses_recorded_line_baseline(self) -> None:
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
         self.session.registers["WaitingForWayPoints"].value = False
