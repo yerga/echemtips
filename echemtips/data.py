@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 from typing import Any, TextIO
 
-from .models import AppSettings, Sample
+from .models import AppSettings, Sample, ScanHoppingCVParameters, ScanHoppingITParameters
 
 
 class DataRecorder:
@@ -24,6 +24,14 @@ class DataRecorder:
     FLUSH_EVERY = 16
     MAX_RECENT_SAMPLES = 1024
     _STATUSES = {"running", "complete", "aborted", "error", "discarded"}
+    _PER_SAMPLE_OMISSIONS = {
+        "feedback_type",
+        "scan_row",
+        "scan_column",
+        "commanded_x_um",
+        "commanded_y_um",
+        "commanded_z_um",
+    }
 
     def __init__(
         self,
@@ -49,6 +57,7 @@ class DataRecorder:
         self._sample_count = 0
         self._writes_since_sync = 0
         self._elapsed_origin_s: float | None = None
+        self._csv_fieldnames = self._fields_for_parameters(None)
 
     @property
     def active(self) -> bool:
@@ -85,6 +94,7 @@ class DataRecorder:
         self._csv_path = None
         self._metadata_path = None
         self._metadata = {}
+        self._csv_fieldnames = self._fields_for_parameters(parameters)
 
         if settings is None:
             return
@@ -95,7 +105,7 @@ class DataRecorder:
             csv_path = self._unique_csv_path(folder, self.started_at, name)
             metadata_path = csv_path.with_suffix(".json")
             stream = csv_path.open("x", newline="", encoding="utf-8", buffering=1)
-            writer = csv.DictWriter(stream, fieldnames=[field.name for field in fields(Sample)])
+            writer = csv.DictWriter(stream, fieldnames=self._csv_fieldnames)
             writer.writeheader()
             stream.flush()
             self._csv_stream = stream
@@ -107,9 +117,14 @@ class DataRecorder:
                 "started_at": self.started_at.isoformat(timespec="seconds"),
                 "sample_count": 0,
                 "status": "running",
+                "recording_schema_version": 2,
+                "csv_columns": list(self._csv_fieldnames),
                 "settings": self._json_value(settings),
                 "parameters": self._json_value(parameters),
             }
+            scan_grid = self._scan_grid_metadata(parameters)
+            if scan_grid is not None:
+                self._metadata["scan_grid"] = scan_grid
             self._write_metadata()
         except Exception as exc:
             self._close_csv()
@@ -134,7 +149,7 @@ class DataRecorder:
             if len(self.samples) >= self._recent_sample_limit:
                 self.samples.pop(0)
             self.samples.append(recorded)
-            self._csv_writer.writerow(recorded.as_row())
+            self._csv_writer.writerow(self._sample_row(recorded))
             self._sample_count += 1
             self._metadata["sample_count"] = self._sample_count
             stream = self._csv_stream
@@ -183,6 +198,9 @@ class DataRecorder:
             if parameters is not None:
                 self._parameters = parameters
                 self._metadata["parameters"] = self._json_value(parameters)
+                scan_grid = self._scan_grid_metadata(parameters)
+                if scan_grid is not None:
+                    self._metadata["scan_grid"] = scan_grid
             try:
                 self._finish_stream(status)
             except Exception as exc:
@@ -200,18 +218,24 @@ class DataRecorder:
         folder.mkdir(parents=True, exist_ok=True)
         stem = self._unique_stem(folder, started, self.name)
         csv_path = folder / f"{stem}.csv"
+        fieldnames = self._fields_for_parameters(parameters)
         with csv_path.open("w", newline="", encoding="utf-8") as stream:
-            writer = csv.DictWriter(stream, fieldnames=[field.name for field in fields(Sample)])
+            writer = csv.DictWriter(stream, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(sample.as_row() for sample in self.samples)
+            writer.writerows(self._sample_row(sample, fieldnames) for sample in self.samples)
         metadata = {
             "experiment": self.name,
             "started_at": started.isoformat(timespec="seconds"),
             "sample_count": len(self.samples),
             "status": status,
+            "recording_schema_version": 2,
+            "csv_columns": list(fieldnames),
             "settings": self._json_value(settings),
             "parameters": self._json_value(parameters),
         }
+        scan_grid = self._scan_grid_metadata(parameters)
+        if scan_grid is not None:
+            metadata["scan_grid"] = scan_grid
         csv_path.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         return csv_path
 
@@ -279,6 +303,38 @@ class DataRecorder:
     @staticmethod
     def _json_value(value: Any) -> Any:
         return asdict(value) if is_dataclass(value) else value
+
+    @classmethod
+    def _fields_for_parameters(cls, parameters: Any) -> tuple[str, ...]:
+        omitted = set(cls._PER_SAMPLE_OMISSIONS)
+        if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
+            omitted.add("scan_pixel")
+        return tuple(field.name for field in fields(Sample) if field.name not in omitted)
+
+    def _sample_row(self, sample: Sample, fieldnames: tuple[str, ...] | None = None) -> dict[str, float | int]:
+        values = sample.as_row()
+        return {name: values[name] for name in (fieldnames or self._csv_fieldnames)}
+
+    @staticmethod
+    def _scan_grid_metadata(parameters: Any) -> dict[str, Any] | None:
+        if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
+            return None
+        pixels = [
+            {
+                "scan_pixel": pixel,
+                "scan_row": row,
+                "scan_column": column,
+                "x_um": x_um,
+                "y_um": y_um,
+            }
+            for pixel, (row, column, x_um, y_um) in enumerate(parameters.grid())
+        ]
+        return {
+            "coordinate_unit": "um",
+            "path": "serpentine" if parameters.serpentine else "raster",
+            "pixel_count": len(pixels),
+            "pixels": pixels,
+        }
 
     @classmethod
     def _unique_stem(cls, folder: Path, started: datetime, name: str) -> str:

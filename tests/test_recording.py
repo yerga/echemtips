@@ -8,10 +8,10 @@ import unittest
 from unittest.mock import patch
 
 from echemtips.data import DataRecorder
-from echemtips.models import AppSettings, ApproachCVParameters, Sample
+from echemtips.models import AppSettings, ApproachCVParameters, Sample, ScanHoppingCVParameters
 
 
-def sample(index: int, **tags: int) -> Sample:
+def sample(index: int, **tags: float | int) -> Sample:
     return Sample(
         elapsed_s=float(index),
         x_um=1.0,
@@ -39,18 +39,23 @@ class StreamingRecordingTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertEqual(json.loads(path.with_suffix(".json").read_text())["status"], "running")
 
-            tagged = sample(1, line_number=7, scan_pixel=11, scan_row=2, scan_column=3)
+            tagged = sample(
+                1, line_number=7, scan_pixel=11, scan_row=2, scan_column=3,
+                feedback_type=1, commanded_x_um=4, commanded_y_um=5, commanded_z_um=6,
+            )
             recorder.append(tagged)
             with path.open(newline="", encoding="utf-8") as stream:
                 reader = csv.DictReader(stream)
                 rows = list(reader)
                 self.assertNotIn("current3_na", reader.fieldnames or ())
                 self.assertNotIn("lockin_amplitude_na", reader.fieldnames or ())
+                for omitted in (
+                    "feedback_type", "scan_pixel", "scan_row", "scan_column",
+                    "commanded_x_um", "commanded_y_um", "commanded_z_um",
+                ):
+                    self.assertNotIn(omitted, reader.fieldnames or ())
             self.assertEqual(len(rows), 1)
             self.assertEqual(int(rows[0]["line_number"]), 7)
-            self.assertEqual(int(rows[0]["scan_pixel"]), 11)
-            self.assertEqual(int(rows[0]["scan_row"]), 2)
-            self.assertEqual(int(rows[0]["scan_column"]), 3)
             recorder.finish(status="aborted")
 
     def test_unique_names_do_not_overwrite_recordings(self) -> None:
@@ -123,10 +128,17 @@ class StreamingRecordingTests(unittest.TestCase):
     def test_csv_and_metadata_round_trip(self) -> None:
         with TemporaryDirectory() as folder:
             settings = self.settings(folder)
-            params = ApproachCVParameters(cycles=3)
+            params = ScanHoppingCVParameters(
+                x_start_um=10, x_end_um=20, x_points=2,
+                y_start_um=30, y_end_um=40, y_points=2,
+                cycles=3, serpentine=True,
+            )
             recorder = DataRecorder()
             recorder.start("Round trip", settings, params)
-            recorder.append(sample(0, line_number=4, scan_pixel=8))
+            recorder.append(sample(
+                0, line_number=4, scan_pixel=2, scan_row=1, scan_column=1,
+                feedback_type=1, commanded_x_um=20, commanded_y_um=40, commanded_z_um=58,
+            ))
             output = recorder.finish()
             assert output is not None
             with output.open(newline="", encoding="utf-8") as stream:
@@ -136,7 +148,20 @@ class StreamingRecordingTests(unittest.TestCase):
             self.assertEqual(metadata["sample_count"], len(rows))
             self.assertEqual(metadata["parameters"]["cycles"], 3)
             self.assertEqual(int(rows[0]["line_number"]), 4)
-            self.assertEqual(int(rows[0]["scan_pixel"]), 8)
+            self.assertEqual(int(rows[0]["scan_pixel"]), 2)
+            self.assertEqual(metadata["recording_schema_version"], 2)
+            self.assertEqual(metadata["csv_columns"], list(rows[0]))
+            self.assertEqual(metadata["scan_grid"]["path"], "serpentine")
+            self.assertEqual(metadata["scan_grid"]["pixel_count"], 4)
+            self.assertEqual(
+                metadata["scan_grid"]["pixels"][2],
+                {"scan_pixel": 2, "scan_row": 1, "scan_column": 1, "x_um": 20.0, "y_um": 40.0},
+            )
+            for omitted in (
+                "feedback_type", "scan_row", "scan_column",
+                "commanded_x_um", "commanded_y_um", "commanded_z_um",
+            ):
+                self.assertNotIn(omitted, rows[0])
 
     def test_write_failure_preserves_rows_and_marks_error(self) -> None:
         with TemporaryDirectory() as folder:
