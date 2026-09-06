@@ -116,6 +116,14 @@ class QtLayoutTests(unittest.TestCase):
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
+            self.assertIsNot(watch.current1_plot, watch.current2_plot)
+            self.assertEqual(watch.current1_plot.graph.getAxis("left").labelText, "Current 1 (nA)")
+            self.assertEqual(watch.current2_plot.graph.getAxis("left").labelText, "Current 2 (nA)")
+            monitor = window.pages["Watch position"]
+            self.assertEqual(
+                tuple(plot.graph.getAxis("left").labelText for plot in (monitor.x_plot, monitor.y_plot, monitor.z_plot)),
+                ("X position (µm)", "Y position (µm)", "Z position (µm)"),
+            )
             move = window.pages["Move piezo"]
             self.assertEqual(
                 tuple(move.axis.itemText(index) for index in range(move.axis.count())),
@@ -210,20 +218,23 @@ class QtLayoutTests(unittest.TestCase):
         try:
             self.assertFalse(watch.live_enabled)
             watch.on_samples([first])
-            self.assertEqual(len(watch.plot.x_values), 0)
+            self.assertEqual(len(watch.current1_plot.x_values), 0)
 
             watch.set_live_view(True)
             watch.on_samples([first])
-            self.assertEqual(len(watch.plot.x_values), 1)
-            self.assertEqual(watch.current_label.text(), "+1.250 nA")
+            self.assertEqual(len(watch.current1_plot.x_values), 1)
+            self.assertEqual(len(watch.current2_plot.x_values), 1)
+            self.assertEqual(watch.current_label.text(), "i1  +1.250 nA")
+            self.assertEqual(watch.current2_label.text(), "i2  +0.200 nA")
 
             watch.set_live_view(False)
             watch.on_samples([second])
-            self.assertEqual(len(watch.plot.x_values), 1)
-            self.assertEqual(watch.current_label.text(), "+1.250 nA")
+            self.assertEqual(len(watch.current1_plot.x_values), 1)
+            self.assertEqual(watch.current_label.text(), "i1  +1.250 nA")
 
             watch.set_live_view(True)
-            self.assertEqual(len(watch.plot.x_values), 0)
+            self.assertEqual(len(watch.current1_plot.x_values), 0)
+            self.assertEqual(len(watch.current2_plot.x_values), 0)
             self.assertEqual(watch.live_button.text(), "Stop live view")
         finally:
             window.close()
@@ -236,11 +247,13 @@ class QtLayoutTests(unittest.TestCase):
         try:
             self.assertFalse(monitor.live_enabled)
             monitor.on_samples([sample])
-            self.assertEqual(len(monitor.plot.x_values), 0)
+            self.assertEqual(len(monitor.x_plot.x_values), 0)
             monitor.set_live_view(True)
             monitor.on_samples([sample])
-            self.assertEqual(tuple(series[-1] for series in monitor.plot.series), (12.0, 23.0, 34.0))
-            self.assertEqual(tuple(curve.name() for curve in monitor.plot.curves), ("X", "Y", "Z"))
+            self.assertEqual(monitor.x_plot.series[0][-1], 12.0)
+            self.assertEqual(monitor.y_plot.series[0][-1], 23.0)
+            self.assertEqual(monitor.z_plot.series[0][-1], 34.0)
+            self.assertEqual(monitor.x_plot.x_values[-1], 0.0)
         finally:
             window.close()
 

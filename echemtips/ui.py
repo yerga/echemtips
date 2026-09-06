@@ -293,29 +293,37 @@ class WatchPage(BasePage):
         self.live_enabled = False
         self.live_button = button("Start live view", self.toggle_live_view)
         form.addWidget(self.live_button)
-        form.addWidget(button("Clear graph", lambda: self.plot.clear()))
+        form.addWidget(button("Clear graphs", self.clear_plots))
         self.live_status_label = label("Live view is off. Start it to plot new samples.", "muted")
         self.live_status_label.setWordWrap(True)
         form.addWidget(self.live_status_label)
         form.addSpacing(12)
         form.addWidget(label("LIVE READOUT", "muted"))
-        self.current_label = label("— nA", "readout")
+        self.current_label = label("i1  — nA", "readout")
+        self.current2_label = label("i2  — nA", "readout")
         self.position_label = label("Z  — µm", "muted")
         form.addWidget(self.current_label)
+        form.addWidget(self.current2_label)
         form.addWidget(self.position_label)
         form.addStretch(1)
         control_scroll = scroll_area(controls, minimum_width=285)
         control_scroll.setMaximumWidth(350)
         layout.addWidget(control_scroll)
 
-        self.plot = Plot(
-            "Current channels",
-            "Current (nA)",
-            (COLORS["accent"], COLORS["blue"]),
-            app.settings.display_max_points,
-            names=FEEDBACK_CHANNELS,
-        )
-        layout.addWidget(_plot_card("Current history", "Opt-in live view; recordings remain full-rate while this display is decimated.", self.plot), 1)
+        history = Card("Current history", "Opt-in live view; recordings remain full-rate while these displays are decimated.")
+        history_layout = _vbox(history.body)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.current1_plot = Plot("Current 1 vs time", "Current 1 (nA)", (COLORS["accent"],), app.settings.display_max_points)
+        self.current2_plot = Plot("Current 2 vs time", "Current 2 (nA)", (COLORS["blue"],), app.settings.display_max_points)
+        self.current1_plot.configure(height=145); self.current2_plot.configure(height=145)
+        splitter.addWidget(self.current1_plot); splitter.addWidget(self.current2_plot)
+        splitter.setSizes([1, 1]); history_layout.addWidget(splitter)
+        layout.addWidget(history, 1)
+        self.plot = self.current1_plot
+
+    def clear_plots(self) -> None:
+        self.current1_plot.clear()
+        self.current2_plot.clear()
 
     def apply_voltage(self) -> None:
         try:
@@ -389,8 +397,10 @@ class WatchPage(BasePage):
     def set_live_view(self, enabled: bool, *, clear_on_start: bool = True) -> None:
         enabled = bool(enabled)
         if enabled and not self.live_enabled and clear_on_start:
-            self.plot.clear()
-            self.current_label.setText("— nA")
+            self.clear_plots()
+            self._live_time_origin_s: float | None = None
+            self.current_label.setText("i1  — nA")
+            self.current2_label.setText("i2  — nA")
             self.position_label.setText("Z  — µm")
         self.live_enabled = enabled
         self.live_button.setText("Stop live view" if enabled else "Start live view")
@@ -407,11 +417,17 @@ class WatchPage(BasePage):
         if not samples or not self.live_enabled:
             return
         latest = samples[-1]
-        self.current_label.setText(f"{latest.current1_na:+.3f} nA")
+        self.current_label.setText(f"i1  {latest.current1_na:+.3f} nA")
+        self.current2_label.setText(f"i2  {latest.current2_na:+.3f} nA")
         self.position_label.setText(f"Z  {latest.z_um:.3f} µm")
         for sample in samples:
-            self.plot.append(sample.elapsed_s, sample.current1_na, sample.current2_na, redraw=False)
-        self.plot.redraw()
+            origin = getattr(self, "_live_time_origin_s", None)
+            if origin is None:
+                origin = sample.elapsed_s; self._live_time_origin_s = origin
+            elapsed = max(0.0, sample.elapsed_s - origin)
+            self.current1_plot.append(elapsed, sample.current1_na, redraw=False)
+            self.current2_plot.append(elapsed, sample.current2_na, redraw=False)
+        self.current1_plot.redraw(); self.current2_plot.redraw()
 
 
 class WatchPositionPage(BasePage):
@@ -433,7 +449,7 @@ class WatchPositionPage(BasePage):
         form.addWidget(self.start_recording_button)
         form.addWidget(self.stop_recording_button)
         form.addWidget(self.live_button)
-        form.addWidget(button("Clear graph", lambda: self.plot.clear()))
+        form.addWidget(button("Clear graphs", self.clear_plots))
         self.live_status_label = label("Live view is off. Start it to plot new samples.", "muted", word_wrap=True)
         form.addWidget(self.live_status_label)
         form.addStretch(1)
@@ -441,14 +457,21 @@ class WatchPositionPage(BasePage):
         control_scroll.setMaximumWidth(350)
         layout.addWidget(control_scroll)
 
-        self.plot = Plot(
-            "Measured piezo positions",
-            "Position (µm)",
-            (COLORS["blue"], COLORS["warning"], COLORS["accent"]),
-            app.settings.display_max_points,
-            names=("X", "Y", "Z"),
-        )
-        layout.addWidget(_plot_card("Position history", "Measured position channels AI0, AI1, and AI2.", self.plot), 1)
+        history = Card("Position history", "Separate measured position channels from AI0, AI1, and AI2.")
+        history_layout = _vbox(history.body)
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.x_plot = Plot("X position vs time", "X position (µm)", (COLORS["blue"],), app.settings.display_max_points, "")
+        self.y_plot = Plot("Y position vs time", "Y position (µm)", (COLORS["warning"],), app.settings.display_max_points, "")
+        self.z_plot = Plot("Z position vs time", "Z position (µm)", (COLORS["accent"],), app.settings.display_max_points)
+        for plot in (self.x_plot, self.y_plot, self.z_plot):
+            plot.configure(height=100); splitter.addWidget(plot)
+        splitter.setSizes([1, 1, 1]); history_layout.addWidget(splitter)
+        layout.addWidget(history, 1)
+        self.plot = self.x_plot
+
+    def clear_plots(self) -> None:
+        for plot in (self.x_plot, self.y_plot, self.z_plot):
+            plot.clear()
 
     def _can_control_recording(self) -> bool:
         try:
@@ -503,7 +526,8 @@ class WatchPositionPage(BasePage):
     def set_live_view(self, enabled: bool, *, clear_on_start: bool = True) -> None:
         enabled = bool(enabled)
         if enabled and not self.live_enabled and clear_on_start:
-            self.plot.clear()
+            self.clear_plots()
+            self._live_time_origin_s: float | None = None
         self.live_enabled = enabled
         self.live_button.setText("Stop live view" if enabled else "Start live view")
         self.live_status_label.setText("Plotting samples acquired from now." if enabled else "Live view is off. Start it to plot new samples.")
@@ -512,8 +536,15 @@ class WatchPositionPage(BasePage):
         if not samples or not self.live_enabled:
             return
         for sample in samples:
-            self.plot.append(sample.elapsed_s, sample.x_um, sample.y_um, sample.z_um, redraw=False)
-        self.plot.redraw()
+            origin = getattr(self, "_live_time_origin_s", None)
+            if origin is None:
+                origin = sample.elapsed_s; self._live_time_origin_s = origin
+            elapsed = max(0.0, sample.elapsed_s - origin)
+            self.x_plot.append(elapsed, sample.x_um, redraw=False)
+            self.y_plot.append(elapsed, sample.y_um, redraw=False)
+            self.z_plot.append(elapsed, sample.z_um, redraw=False)
+        for plot in (self.x_plot, self.y_plot, self.z_plot):
+            plot.redraw()
 
 
 class ManagedExperimentPage(BasePage):
