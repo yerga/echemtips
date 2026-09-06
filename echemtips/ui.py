@@ -54,6 +54,7 @@ from .qt_common import (
 
 
 FEEDBACK_CHANNELS = ("Current 1", "Current 2")
+PA_PER_NA = 1000.0
 
 
 def _vbox(widget: QtWidgets.QWidget, margins: tuple[int, int, int, int] = (0, 0, 0, 0), spacing: int = 10) -> QtWidgets.QVBoxLayout:
@@ -574,7 +575,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.potential = add_field(form, Field("Approach potential", "0.1", "V"), 2, 0)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5)
         feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); form.addWidget(feedback_box, 2, 1)
-        self.threshold = add_field(form, Field("Contact threshold", "2", "nA"), 3, 0)
+        self.threshold = add_field(form, Field("Contact threshold", "2000", "pA"), 3, 0)
         self.x_position = add_field(form, Field("Optional X position", "", "µm"), 4, 0)
         self.y_position = add_field(form, Field("Optional Y position", "", "µm"), 4, 1)
         self.greater = Check("Trigger when greater", True)
@@ -595,7 +596,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
     def parameters(self) -> ApproachParameters:
         return ApproachParameters(
             self.start_z.float(), self.end_z.float(), self.approach_rate.float(), self.retract_rate.float(),
-            self.potential.float(), self.feedback_channel.get(), self.threshold.float(), self.greater.get(), self.retract.get(),
+            self.potential.float(), self.feedback_channel.get(), self.threshold.float() / PA_PER_NA, self.greater.get(), self.retract.get(),
             self.x_position.optional_float(), self.y_position.optional_float(),
         )
 
@@ -635,7 +636,7 @@ class ApproachCVPage(ManagedExperimentPage):
         choice_frame = QtWidgets.QWidget(); choice_layout = _vbox(choice_frame, spacing=5)
         choice_layout.addWidget(label("Feedback signal", "muted")); choice_layout.addWidget(self.feedback_channel)
         ag.addWidget(choice_frame, 2, 0)
-        self.threshold = add_field(ag, Field("Contact threshold", "2.0", "nA"), 2, 1)
+        self.threshold = add_field(ag, Field("Contact threshold", "2000", "pA"), 2, 1)
         self.greater_than = Check("Trigger when signal is greater than threshold", True)
         ag.addWidget(self.greater_than, 3, 0, 1, 2)
         controls_layout.addWidget(approach)
@@ -665,7 +666,7 @@ class ApproachCVPage(ManagedExperimentPage):
         return ApproachCVParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
-            feedback_threshold_na=self.threshold.float(), greater_than=self.greater_than.get(), cv_start_v=self.cv_start.float(),
+            feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=self.greater_than.get(), cv_start_v=self.cv_start.float(),
             cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.scan_rate.float(),
             cycles=self.cycles.integer(), retract_after=self.retract.get(),
         )
@@ -714,7 +715,7 @@ class ApproachITPage(ManagedExperimentPage):
         self.approach_rate = add_field(g, Field("Approach rate", "3", "µm/s"), 1, 0); self.retract_rate = add_field(g, Field("Retract rate", "10", "µm/s"), 1, 1)
         self.approach_v = add_field(g, Field("Approach potential", "0.1", "V"), 2, 0)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 2, 1)
-        self.threshold = add_field(g, Field("Contact threshold", "2", "nA"), 3, 0)
+        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 0)
         self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 3, 1); self.initial_t = add_field(g, Field("Initial hold", "0.25", "s"), 4, 0)
         self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 4, 1); self.step_t = add_field(g, Field("Pulse hold", "1.0", "s"), 5, 0)
         self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 5, 1); self.return_t = add_field(g, Field("Return hold", "0.25", "s"), 6, 0)
@@ -737,7 +738,7 @@ class ApproachITPage(ManagedExperimentPage):
     def parameters(self) -> ApproachITParameters:
         return ApproachITParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float(), greater_than=self.greater.get(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
             retract_after=self.retract.get(), x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(), initial_potential_v=self.initial_v.float(),
             initial_hold_s=self.initial_t.float(), step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(),
             return_hold_s=self.return_t.float(), cycles=self.cycles.integer(),
@@ -781,7 +782,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         specs = (
             ("x_start", "X start", "35", "µm"), ("x_end", "X end", "65", "µm"), ("x_points", "X points", "3", ""), ("y_points", "Y points", "3", ""),
             ("y_start", "Y start", "35", "µm"), ("y_end", "Y end", "65", "µm"), ("start_z", "Retracted Z", "55", "µm"), ("end_z", "Approach limit Z", "80", "µm"),
-            ("lateral_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Contact threshold", "2", "nA"),
+            ("lateral_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Contact threshold", "2000", "pA"),
             ("approach_v", "Approach potential", "0.1", "V"), ("map_v", "Current-map potential", "0.2", "V"), ("cv_start", "CV start", "-0.2", "V"), ("vertex1", "CV vertex 1", "0.6", "V"),
             ("vertex2", "CV vertex 2", "-0.4", "V"), ("scan_rate", "CV scan rate", "2", "V/s"), ("cycles", "CV cycles", "1", ""),
         )
@@ -806,7 +807,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         return ScanHoppingCVParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float(), cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA, cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
             cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.serpentine.get(),
         )
 
@@ -861,7 +862,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         specs = (
             ("x_start", "X start", "35", "µm"), ("x_end", "X end", "65", "µm"), ("x_points", "X points", "3", ""), ("y_points", "Y points", "3", ""),
             ("y_start", "Y start", "35", "µm"), ("y_end", "Y end", "65", "µm"), ("start_z", "Retracted Z", "55", "µm"), ("end_z", "Approach limit Z", "80", "µm"),
-            ("xy_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Contact threshold", "2", "nA"),
+            ("xy_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Contact threshold", "2000", "pA"),
             ("approach_v", "Approach potential", "0.1", "V"), ("cycles", "I–t cycles", "1", ""), ("initial_v", "Initial potential", "-0.1", "V"), ("initial_t", "Initial hold", "0.25", "s"),
             ("step_v", "Pulse potential", "0.4", "V"), ("step_t", "Pulse hold", "1.0", "s"), ("return_v", "Return potential", "-0.1", "V"), ("return_t", "Return hold", "0.25", "s"),
         )
@@ -882,7 +883,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         return ScanHoppingITParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float(), greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
             step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.serpentine.get(),
         )
 

@@ -60,6 +60,11 @@ class QtLayoutTests(unittest.TestCase):
                     tuple(selector.itemText(index) for index in range(selector.count())),
                     ("Current 1", "Current 2"),
                 )
+                threshold = window.pages[page_name].threshold
+                self.assertEqual(threshold.unit_label.text(), "pA")
+                self.assertAlmostEqual(float(threshold.variable.get()), 2000.0)
+            self.assertAlmostEqual(window.pages["Approach"].parameters().feedback_threshold, 2.0)
+            self.assertAlmostEqual(window.pages["Approach + CV"].parameters().feedback_threshold_na, 2.0)
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
