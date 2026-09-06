@@ -827,20 +827,42 @@ class SettingsPage(BasePage):
         self.x_range = add_field(pg, Field("X maximum", str(app.settings.x_range_um), "µm"), 0, 0); self.y_range = add_field(pg, Field("Y maximum", str(app.settings.y_range_um), "µm"), 0, 1); self.z_range = add_field(pg, Field("Z maximum", str(app.settings.z_range_um), "µm"), 0, 2)
         self.x_bipolar = Check("X: −10 to +10 V", app.settings.x_bipolar); self.y_bipolar = Check("Y: −10 to +10 V", app.settings.y_bipolar); self.z_bipolar = Check("Z: −10 to +10 V", app.settings.z_bipolar)
         pg.addWidget(self.x_bipolar, 1, 0); pg.addWidget(self.y_bipolar, 1, 1); pg.addWidget(self.z_bipolar, 1, 2); rl.addWidget(piezos)
-        amplifier = Card("Current amplifiers", "Sensitivity is output volts per nanoamp of measured current."); amp = _grid(amplifier.body)
-        self.sensitivity1 = add_field(amp, Field("Current 1 · AI3", str(app.settings.current1_v_per_na), "V/nA"), 0, 0); self.sensitivity2 = add_field(amp, Field("Current 2 · AI4", str(app.settings.current2_v_per_na), "V/nA"), 0, 1); rl.addWidget(amplifier)
-        saving = Card("Saving"); sv = _vbox(saving.body); self.save_directory = Field("Data folder", app.settings.save_directory); self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save); self.command_ratio = Field("AO3 command potential ratio", str(app.settings.command_voltage_ratio))
-        sv.addWidget(self.save_directory); sv.addWidget(self.auto_save); sv.addWidget(self.command_ratio); rl.addWidget(saving)
+        amplifier = Card("Current amplifiers and potential command", "Configure the two current conversions and the AO3-to-E1 command scaling."); amp = _grid(amplifier.body)
+        self.sensitivity1 = add_field(amp, Field("Current 1 · AI3", str(app.settings.current1_v_per_na), "V/nA"), 0, 0); self.sensitivity2 = add_field(amp, Field("Current 2 · AI4", str(app.settings.current2_v_per_na), "V/nA"), 0, 1)
+        ratio_row = QtWidgets.QWidget(); ratio_layout = _hbox(ratio_row); self.command_ratio = Field("Command voltage ratio · AO3", str(app.settings.command_voltage_ratio), ":1"); ratio_layout.addWidget(self.command_ratio, 1)
+        ratio_help_text = (
+            "eChemTips multiplies requested E1 by this ratio before writing AO3. "
+            "At 1:1, the requested E1 range is ±10 V. At 5:1, a requested +1 V sends +5 V on AO3 "
+            "and the maximum requested E1 range is ±2 V. Use 5:1 when the external controller's "
+            "±2 V potential span is represented by the NI output's ±10 V command span."
+        )
+        self.command_ratio_help = QtWidgets.QToolButton(); self.command_ratio_help.setText("ⓘ"); self.command_ratio_help.setToolTip(ratio_help_text); self.command_ratio_help.setWhatsThis(ratio_help_text); self.command_ratio_help.setAccessibleName("Command voltage ratio help"); self.command_ratio_help.setFixedSize(32, 32); ratio_layout.addWidget(self.command_ratio_help, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        amp.addWidget(ratio_row, 1, 0, 1, 2)
+        self.command_ratio_summary = label("", "muted", word_wrap=True); amp.addWidget(self.command_ratio_summary, 2, 0, 1, 2); rl.addWidget(amplifier)
+        saving = Card("Saving"); sv = _vbox(saving.body); self.save_directory = Field("Data folder", app.settings.save_directory); self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save)
+        sv.addWidget(self.save_directory); sv.addWidget(self.auto_save); rl.addWidget(saving)
         display = Card("Display", "Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
         self.display_max_points = Field("Display buffer", str(app.settings.display_max_points), "points/plot"); dv.addWidget(self.display_max_points); rl.addWidget(display); rl.addStretch(1)
         actions = QtWidgets.QWidget(); al = _hbox(actions); al.addWidget(button("Save and apply settings", self.save, "primary")); al.addWidget(label("Changing backend settings disconnects the current device.", "muted", word_wrap=True), 1)
         full = QtWidgets.QWidget(); full_layout = _vbox(full); full_layout.addWidget(content); full_layout.addWidget(actions); self.viewport = scroll_area(full); body_layout = _vbox(self.body); body_layout.addWidget(self.viewport)
-        self.sample_time.entry.textChanged.connect(self._refresh_period); self.samples_per_point.entry.textChanged.connect(self._refresh_period); self.mode.currentTextChanged.connect(self._sync_mode)
-        self._refresh_period(); self._sync_mode()
+        self.sample_time.entry.textChanged.connect(self._refresh_period); self.samples_per_point.entry.textChanged.connect(self._refresh_period); self.command_ratio.entry.textChanged.connect(self._refresh_command_ratio); self.mode.currentTextChanged.connect(self._sync_mode)
+        self._refresh_period(); self._refresh_command_ratio(); self._sync_mode()
 
     def _refresh_period(self, *_args: object) -> None:
         try: self.period_label.setText(f"Effective data interval  {self.sample_time.integer() * (self.samples_per_point.integer() + 1) / 1000:.3f} ms")
         except ValueError: self.period_label.setText("Effective data interval  —")
+
+    def _refresh_command_ratio(self, *_args: object) -> None:
+        try:
+            ratio = self.command_ratio.float()
+            if not math.isfinite(ratio) or ratio <= 0:
+                raise ValueError
+            limit = 10.0 / ratio
+            self.command_ratio_summary.setText(
+                f"{ratio:g}:1 → requested E1 is limited to ±{limit:g} V; +1 V E1 commands {ratio:g} V on AO3."
+            )
+        except ValueError:
+            self.command_ratio_summary.setText("Enter a positive ratio to calculate the E1 range.")
 
     def _sync_mode(self, *_args: object) -> None:
         hardware = self.mode.get() == "NI FPGA"

@@ -45,6 +45,10 @@ class QtLayoutTests(unittest.TestCase):
             self.assertNotIn("External lock-in", settings_text)
             self.assertNotIn("Advanced FPGA feedback", settings_text)
             self.assertNotIn("Calibration provenance", settings_text)
+            self.assertIn("Current amplifiers and potential command", settings_text)
+            self.assertIn("5:1", settings.command_ratio_help.toolTip())
+            settings.command_ratio.entry.setText("5")
+            self.assertIn("±2 V", settings.command_ratio_summary.text())
             for page_name in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
                 selector = window.pages[page_name].feedback_channel
                 self.assertEqual(
