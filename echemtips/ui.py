@@ -77,6 +77,18 @@ def _contact_mode(choice: Choice) -> str:
     return "baseline_relative" if choice.get() == "Change from approach baseline" else "absolute"
 
 
+def _contact_help() -> QtWidgets.QLabel:
+    text = label(
+        "Baseline-relative mode compares Δi with a self-referenced baseline at approach start. "
+        "Enter the threshold magnitude. A zero settling time proceeds immediately.",
+        "muted",
+        word_wrap=True,
+    )
+    text.setMaximumWidth(330)
+    text.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
+    return text
+
+
 def _vbox(widget: QtWidgets.QWidget, margins: tuple[int, int, int, int] = (0, 0, 0, 0), spacing: int = 10) -> QtWidgets.QVBoxLayout:
     layout = QtWidgets.QVBoxLayout(widget)
     layout.setContentsMargins(*margins)
@@ -992,7 +1004,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode)
         form.addWidget(mode_box, 2, 0)
         self.settling_time = add_field(form, Field("Settle after contact", "0.5", "s"), 2, 1)
-        form.addWidget(label("Baseline-relative mode compares Δi with a self-referenced baseline at approach start; enter the threshold magnitude. Zero settling proceeds immediately.", "muted"), 3, 0, 1, 2)
+        form.addWidget(_contact_help(), 3, 0, 1, 2)
         left_layout.addWidget(contact)
 
         position = Card("3 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
@@ -1081,7 +1093,7 @@ class ApproachCVPage(ManagedExperimentPage):
         self.settling_time = add_field(ag, Field("Settle after contact", "0.5", "s"), 3, 1)
         self.greater_than = Check("Trigger when signal is greater than threshold", True)
         ag.addWidget(self.greater_than, 4, 0, 1, 2)
-        ag.addWidget(label("Baseline-relative mode compares Δi with a self-referenced baseline at approach start; enter the threshold magnitude. Zero settling proceeds immediately.", "muted"), 5, 0, 1, 2)
+        ag.addWidget(_contact_help(), 5, 0, 1, 2)
         controls_layout.addWidget(approach)
         position = Card("2 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
         pg = _grid(position.body)
@@ -1189,7 +1201,7 @@ class ApproachITPage(ManagedExperimentPage):
         self.greater = Check("Trigger when greater", True); g.addWidget(self.greater, 1, 1)
         mode_box = QtWidgets.QWidget(); mode_layout = _vbox(mode_box, spacing=5); mode_layout.addWidget(label("Contact criterion", "muted")); self.feedback_mode = Choice(CONTACT_MODE_LABELS, "Absolute current"); mode_layout.addWidget(self.feedback_mode); g.addWidget(mode_box, 2, 0)
         self.settling_time = add_field(g, Field("Settle after contact", "0.5", "s"), 2, 1)
-        g.addWidget(label("Baseline-relative mode compares Δi with a self-referenced baseline at approach start; enter the threshold magnitude. Zero settling proceeds immediately.", "muted"), 3, 0, 1, 2)
+        g.addWidget(_contact_help(), 3, 0, 1, 2)
         hl.addWidget(contact)
         position = Card("3 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
         g = _grid(position.body)
