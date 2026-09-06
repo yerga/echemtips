@@ -41,9 +41,9 @@ The original user guide maps the breakout box as follows:
 |---|---|
 | AO0 / AO1 / AO2 | X / Y / Z piezo command |
 | AO3 / AO4 | Voltage 1 / Voltage 2 |
-| AI0 / AI1 / AI2 | X / Y / Z readback (AI1 may be Current 4) |
-| AI3 / AI4 / AI6 | Current 1 / Current 2 / Current 3 |
-| AI5 / AI7 | Lock-in amplitude / phase |
+| AI0 / AI1 / AI2 | X / Y / Z readback |
+| AI3 / AI4 | Current 1 / Current 2 |
+| AI5 / AI6 / AI7 | Unused by eChemTips |
 
 The developer guide is internally inconsistent about the electrode outputs: its breakout-box table and ChangeOnFly section use AO3/AO4, while the waypoint table says AO4/AO5. The application keeps AO3/AO4, which also agrees with the existing UI/project mapping. Confirm the physical breakout box during commissioning rather than relying on the stray waypoint-table entries.
 
@@ -68,9 +68,9 @@ The final frame was traced through the `Build Array` node. Each waypoint is 14 I
 3. X, Y, Z, Voltage 1, and Voltage 2 target positions (five words)
 4. position-loop wait, hold timer, and packed flags (three words)
 
-Packed flag bits 0–10 are Move X, Move Y, Move Z, Move V, Jump V, Hold, Move V2, Jump V2, Hold Feedback 1, Move Z Picomotor, and picomotor direction. Position and velocity helpers use `2^15`, a 40 MHz clock, and the corresponding `ExpandVelScaller` register. `ni_protocol.py` implements these conversions and `test_ni_protocol.py` verifies the frame and scaling independently of NI-RIO.
+Packed flag bits 0–8 are used for Move X, Move Y, Move Z, Move V, Jump V, Hold, Move V2, Jump V2, and Hold Feedback 1. The deployed frame also reserves bits 9–10 for legacy picomotor commands, but eChemTips never sets them. Position and velocity helpers use `2^15`, a 40 MHz clock, and the corresponding `ExpandVelScaller` register. `ni_protocol.py` implements these conversions and `test_ni_protocol.py` verifies the frame and scaling independently of NI-RIO.
 
-The acquisition FIFO is also 14 I16 words per sample. Words 0–11 contain X/Y/Z, V1/V2, Current 1/2/3, feedback type, line number, lock-in amplitude, and lock-in phase. The last two biased I16 words are joined high-word first into the 40 MHz U32 timestamp. The native decoder unwraps timestamp rollover and exposes the result as `Sample.elapsed_s`.
+The acquisition FIFO is also 14 I16 words per sample. eChemTips decodes X/Y/Z, V1/V2, Current 1/2, feedback type, line number, and the timestamp. The deployed FPGA still supplies legacy values in the remaining words, but the Python application intentionally ignores them. The last two biased I16 words are joined high-word first into the 40 MHz U32 timestamp. The native decoder unwraps timestamp rollover and exposes the result as `Sample.elapsed_s`.
 
 ## Site driver contract
 
@@ -124,7 +124,7 @@ The native implementation deliberately separates method logic from common host b
 
 The advanced feedback settings write both threshold channels, comparison polarity, proportional gain, maximum Z update, running-average terms, self-reference-on-hold, and all three bulk-retraction distances. Waypoint update intervals are compiled into each frame. These are host configuration operations only: feedback decisions and Z updates remain FPGA-resident.
 
-Current 4 is AI1, multiplexed with the Y-position input in the original configuration. The Settings option records which interpretation is active and provides an independent Current 4 amplifier sensitivity. “Applied Y” remains usable as commanded-output readback, but it is not a measured Y-position input when Current 4 is selected.
+The current application always treats AI1 as Y-position readback. It does not expose the original Current 4 multiplexing mode.
 
 ## Commissioning checklist
 

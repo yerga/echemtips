@@ -20,7 +20,7 @@ class AcquisitionOrderingTests(unittest.TestCase):
             settings = AppSettings(save_directory=folder)
             recorder = DataRecorder()
             recorder.start("Watch Current", settings)
-            recorder.append(Sample(1, 35, 35, 68, .2, 0, 3, 0, 0))
+            recorder.append(Sample(1, 35, 35, 68, .2, 0, 3, 0))
             path = recorder.output_path
 
             def fail():
@@ -46,7 +46,7 @@ class AcquisitionOrderingTests(unittest.TestCase):
             recorder = DataRecorder()
             params = ScanHoppingCVParameters(x_points=1, y_points=1)
             recorder.start("Scan Hopping CV", settings, params)
-            sample = Sample(1, 35, 35, 68, .2, 0, 3, 0, 0)
+            sample = Sample(1, 35, 35, 68, .2, 0, 3, 0)
             scan = SimpleNamespace(state=ExperimentState.CV, active=True, params=params)
 
             def process(samples):
@@ -84,8 +84,8 @@ class AcquisitionOrderingTests(unittest.TestCase):
             recorder = DataRecorder()
             params = ScanHoppingCVParameters(x_points=1, y_points=1)
             recorder.start("Scan Hopping CV", settings, params)
-            first = Sample(1, 35, 35, 68, .2, 0, 3, 0, 0)
-            final = Sample(2, 35, 35, 68, .1, 0, 4, 0, 0)
+            first = Sample(1, 35, 35, 68, .2, 0, 3, 0)
+            final = Sample(2, 35, 35, 68, .1, 0, 4, 0)
             scan = SimpleNamespace(state=ExperimentState.CV, active=True, params=params)
 
             def process(samples):

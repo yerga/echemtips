@@ -92,10 +92,6 @@ class ApproachCVExperiment:
         return {
             "Current 1": sample.current1_na,
             "Current 2": sample.current2_na,
-            "Current 3": sample.current3_na,
-            "Current 4": sample.current4_na,
-            "Lock-in amplitude": sample.lockin_amplitude_na,
-            "Lock-in phase": sample.lockin_phase_deg,
         }[self.params.feedback_channel]
 
     def _begin_cv(self) -> None:
@@ -337,7 +333,8 @@ class ScanHoppingCVExperiment:
         if self.state == ExperimentState.APPROACHING:
             self.approach_trace.append((sample.elapsed_s, sample.z_um, sample.current1_na))
             self._last_approach_z = sample.z_um
-            hit = sample.current1_na >= p.feedback_threshold_na if p.greater_than else sample.current1_na <= p.feedback_threshold_na
+            value = feedback_value(sample, p.feedback_channel)
+            hit = value >= p.feedback_threshold_na if p.greater_than else value <= p.feedback_threshold_na
             endpoint = abs(sample.z_um - p.end_z_um) < tolerance
             if hit:
                 key = (row, column)
@@ -404,7 +401,8 @@ class ScanHoppingCVExperiment:
         if stage == "approach":
             self._last_approach_z = sample.z_um
             self.approach_trace.append((sample.elapsed_s, sample.z_um, sample.current1_na))
-            hit = sample.current1_na >= self.params.feedback_threshold_na if self.params.greater_than else sample.current1_na <= self.params.feedback_threshold_na
+            value = feedback_value(sample, self.params.feedback_channel)
+            hit = value >= self.params.feedback_threshold_na if self.params.greater_than else value <= self.params.feedback_threshold_na
             if hit:
                 self._hardware_contact_seen.add(point)
         elif stage == "cv":
@@ -452,10 +450,6 @@ def feedback_value(sample: Sample, channel: str) -> float:
     return {
         "Current 1": sample.current1_na,
         "Current 2": sample.current2_na,
-        "Current 3": sample.current3_na,
-        "Current 4": sample.current4_na,
-        "Lock-in amplitude": sample.lockin_amplitude_na,
-        "Lock-in phase": sample.lockin_phase_deg,
     }[channel]
 
 
@@ -870,7 +864,8 @@ class ScanHoppingITExperiment:
                 self.backend.move("Z", p.end_z_um, p.approach_rate_um_s)
                 self.state, self.detail = ExperimentState.APPROACHING, f"Point {self.point_index + 1}/{p.point_count} · approaching"
             if self.state == ExperimentState.APPROACHING:
-                hit = sample.current1_na >= p.feedback_threshold if p.greater_than else sample.current1_na <= p.feedback_threshold
+                value = feedback_value(sample, p.feedback_channel)
+                hit = value >= p.feedback_threshold if p.greater_than else value <= p.feedback_threshold
                 if hit:
                     self.contact_z[self._key(self.point_index)] = sample.z_um
                     self._start_it()

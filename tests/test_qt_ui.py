@@ -45,6 +45,12 @@ class QtLayoutTests(unittest.TestCase):
             self.assertNotIn("External lock-in", settings_text)
             self.assertNotIn("Advanced FPGA feedback", settings_text)
             self.assertNotIn("Calibration provenance", settings_text)
+            for page_name in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
+                selector = window.pages[page_name].feedback_channel
+                self.assertEqual(
+                    tuple(selector.itemText(index) for index in range(selector.count())),
+                    ("Current 1", "Current 2"),
+                )
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
             self.assertEqual(watch.live_button.text(), "Start live view")
@@ -84,8 +90,8 @@ class QtLayoutTests(unittest.TestCase):
         window = EChemTipsApp()
         window.poll_timer.stop()
         watch = window.pages["Watch current"]
-        first = Sample(1.0, 50, 50, 50, 0.1, 0, 1.25, 0.2, 0.1)
-        second = Sample(2.0, 50, 50, 50, 0.1, 0, 1.50, 0.2, 0.1)
+        first = Sample(1.0, 50, 50, 50, 0.1, 0, 1.25, 0.2)
+        second = Sample(2.0, 50, 50, 50, 0.1, 0, 1.50, 0.2)
         try:
             self.assertFalse(watch.live_enabled)
             watch.on_samples([first])

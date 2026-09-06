@@ -21,8 +21,6 @@ def sample(index: int, **tags: int) -> Sample:
         voltage2_v=0.2,
         current1_na=10.0 + index,
         current2_na=20.0,
-        current3_na=30.0,
-        current4_na=40.0,
         **tags,
     )
 
@@ -44,7 +42,10 @@ class StreamingRecordingTests(unittest.TestCase):
             tagged = sample(1, line_number=7, scan_pixel=11, scan_row=2, scan_column=3)
             recorder.append(tagged)
             with path.open(newline="", encoding="utf-8") as stream:
-                rows = list(csv.DictReader(stream))
+                reader = csv.DictReader(stream)
+                rows = list(reader)
+                self.assertNotIn("current3_na", reader.fieldnames or ())
+                self.assertNotIn("lockin_amplitude_na", reader.fieldnames or ())
             self.assertEqual(len(rows), 1)
             self.assertEqual(int(rows[0]["line_number"]), 7)
             self.assertEqual(int(rows[0]["scan_pixel"]), 11)

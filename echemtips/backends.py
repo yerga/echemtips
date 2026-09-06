@@ -273,7 +273,6 @@ class SimulationBackend(InstrumentBackend):
         noise = self._rng.gauss(0.0, 0.035)
         current1 = 0.22 + drift + contact * (2.7 + faradaic) + capacitive + noise
         current2 = -0.15 + contact * 0.7 + self._rng.gauss(0.0, 0.025)
-        current3 = 0.08 + 0.18 * math.sin(elapsed * 1.7) + self._rng.gauss(0.0, 0.02)
         return Sample(
             elapsed_s=elapsed,
             x_um=self._positions["X"],
@@ -283,10 +282,6 @@ class SimulationBackend(InstrumentBackend):
             voltage2_v=self._voltage[2],
             current1_na=current1,
             current2_na=current2,
-            current3_na=current3,
-            current4_na=0.3 * current2,
-            lockin_amplitude_na=abs(current1) * 0.08,
-            lockin_phase_deg=25.0 + 8.0 * math.sin(elapsed),
             line_number=self._line_number,
             commanded_x_um=self._positions["X"],
             commanded_y_um=self._positions["Y"],
@@ -398,7 +393,7 @@ class NIFPGABackend(InstrumentBackend):
             True,
             supports("configure_feedback"),
             supports("configure_feedback"),
-            self.full_rate_data_available and not self.settings.read_current4_instead_y,
+            self.full_rate_data_available,
             self.full_rate_data_available,
         )
 
@@ -406,7 +401,7 @@ class NIFPGABackend(InstrumentBackend):
     def position_readback_label(self) -> str:
         if not self.full_rate_data_available:
             return "Commanded output register (not measured position)"
-        return "Measured AI0/AI1/AI2" if not self.settings.read_current4_instead_y else "Measured AI0/AI2; Y input is Current 4"
+        return "Measured AI0/AI1/AI2"
 
     @_synchronized_io
     def connect(self) -> None:
@@ -486,14 +481,9 @@ class NIFPGABackend(InstrumentBackend):
         return raw_to_position(raw, span, bipolar)
 
     def _raw_to_current(self, raw: int, channel: int) -> float:
-        if channel not in (1, 2, 3, 4):
+        if channel not in (1, 2):
             raise BackendError(f"Unknown current channel: {channel}")
         return raw_to_current(raw, getattr(self.settings, f"current{channel}_v_per_na"))
-
-    def _raw_to_lockin_amplitude(self, raw: int) -> float:
-        normalized = self._raw_to_voltage(raw) / 10.0
-        normalized -= self.settings.lockin_offset_pct / 100.0
-        return normalized * self.settings.lockin_sensitivity_na / self.settings.lockin_expand
 
     @_synchronized_io
     def read_sample(self) -> Sample:
@@ -507,10 +497,6 @@ class NIFPGABackend(InstrumentBackend):
             voltage2_v=self._raw_to_voltage(read("Applied Voltage 2")),
             current1_na=self._raw_to_current(read("MeasuredCurrent"), 1),
             current2_na=self._raw_to_current(read("MeasuredCurrent 2"), 2),
-            current3_na=self._raw_to_current(read("MeasuredCurrent 3"), 3),
-            current4_na=self._raw_to_current(read("MeasuredCurrent 4"), 4),
-            lockin_amplitude_na=self._raw_to_lockin_amplitude(read("Ext amp")),
-            lockin_phase_deg=self._raw_to_voltage(read("Ext Phase")) * 18.0,
             line_number=read("LineNumber"),
         )
 

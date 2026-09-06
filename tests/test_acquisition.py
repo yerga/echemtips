@@ -8,7 +8,7 @@ from echemtips.models import Sample
 
 
 def _sample(value: float) -> Sample:
-    return Sample(value, 1, 2, 3, 0, 0, value, 0, 0)
+    return Sample(value, 1, 2, 3, 0, 0, value, 0)
 
 
 class _Backend:

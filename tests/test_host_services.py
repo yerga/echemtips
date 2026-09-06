@@ -47,13 +47,13 @@ class HostServiceTests(unittest.TestCase):
                 voltage1_rate_v_s=.25, jump_voltage2=True,
                 feedback_action="proportional_secondary_pause",
                 hold=True, hold_us=1000, update_interval_us=12,
-                hold_feedback1=True, move_z_picomotor=True, z_picomotor_direction=True,
+                hold_feedback1=True,
             ),
             PhysicalWaypoint(relative_z_um=-5, z_rate_um_s=5, feedback_action="relative_retract"),
         ], current)
         first, second = compiled.waypoints
         self.assertTrue(all((first.move_x, first.move_y, first.move_z, first.move_v, first.move_v2)))
-        self.assertTrue(first.jump_v2 and first.hold and first.hold_feedback1 and first.move_z_picomotor)
+        self.assertTrue(first.jump_v2 and first.hold and first.hold_feedback1)
         self.assertEqual(first.line_type, FEEDBACK_ACTION_CODES["proportional_secondary_pause"])
         self.assertEqual((first.update_wait_us, first.hold_timer), (12, 1000))
         self.assertEqual(second.line_type, FEEDBACK_ACTION_CODES["relative_retract"])

@@ -54,7 +54,7 @@ def _smoke_test(app: EChemTipsApp) -> None:
     app.cv_experiment.start(CVParameters(-.1, .2, -.2, 100, 1))
     for _ in range(5):
         app.cv_experiment._last_tick -= 1
-        cv.on_samples([Sample(0, 50, 50, 50, 0, 0, 0, 0, 0)])
+        cv.on_samples([Sample(0, 50, 50, 50, 0, 0, 0, 0)])
         if app.cv_experiment.state == ExperimentState.COMPLETE:
             break
     if app.cv_experiment.state != ExperimentState.COMPLETE or not cv.cv_plot.x_values:
@@ -63,9 +63,9 @@ def _smoke_test(app: EChemTipsApp) -> None:
     standalone_approach = app.pages["Approach"]
     app.approach_experiment.start(ApproachParameters(10, 90, 3, 10, .1, "Current 1", 2, True, True))
     standalone_approach.on_samples([
-        Sample(0, 50, 50, 10, .1, 0, 0, 0, 0),
-        Sample(1, 50, 50, 68, .1, 0, 3, 0, 0),
-        Sample(2, 50, 50, 10, .1, 0, 0, 0, 0),
+        Sample(0, 50, 50, 10, .1, 0, 0, 0),
+        Sample(1, 50, 50, 68, .1, 0, 3, 0),
+        Sample(2, 50, 50, 10, .1, 0, 0, 0),
     ])
     if app.approach_experiment.state != ExperimentState.COMPLETE or not standalone_approach.z_plot.x_values:
         raise RuntimeError("Standalone Approach UI did not detect contact and retract")
@@ -75,13 +75,13 @@ def _smoke_test(app: EChemTipsApp) -> None:
         start_z_um=10, end_z_um=90, approach_rate_um_s=3, retract_rate_um_s=10,
         feedback_threshold=2, initial_hold_s=.001, step_hold_s=.001, return_hold_s=.001,
     ))
-    it_contact = Sample(1, 50, 50, 68, .1, 0, 3, 0, 0)
-    approach_it.on_samples([Sample(0, 50, 50, 10, .1, 0, 0, 0, 0), it_contact])
+    it_contact = Sample(1, 50, 50, 68, .1, 0, 3, 0)
+    approach_it.on_samples([Sample(0, 50, 50, 10, .1, 0, 0, 0), it_contact])
     approach_it.on_samples([it_contact])
     for _ in range(3):
         app.approach_it_experiment._step_deadline -= 1
         approach_it.on_samples([it_contact])
-    approach_it.on_samples([Sample(3, 50, 50, 10, .1, 0, 0, 0, 0)])
+    approach_it.on_samples([Sample(3, 50, 50, 10, .1, 0, 0, 0)])
     if app.approach_it_experiment.state != ExperimentState.COMPLETE or not approach_it.it_plot.x_values:
         raise RuntimeError("Approach + I-t UI did not run its contact-gated potential steps")
     approach = app.pages["Approach + CV"]
@@ -96,8 +96,8 @@ def _smoke_test(app: EChemTipsApp) -> None:
     approach.current_plot.clear()
     approach.cv_plot.clear()
     app.experiment.start(approach_params)
-    at_start = Sample(0, 50, 50, 10, 0, 0, 0, 0, 0)
-    contact = Sample(1, 50, 50, 68, 0, 0, 3, 0, 0)
+    at_start = Sample(0, 50, 50, 10, 0, 0, 0, 0)
+    contact = Sample(1, 50, 50, 68, 0, 0, 3, 0)
     approach.on_samples([at_start, contact])
     for _ in range(3):
         app.experiment._last_tick -= 1

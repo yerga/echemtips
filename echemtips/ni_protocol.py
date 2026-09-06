@@ -20,13 +20,9 @@ DEPLOYED_USB_SIGNATURE = "8229BC0D5A4935D854D1286878CEE54A"
 # one tested profile avoids scattering numeric hardware enums through drivers.
 ANALOG_OUTPUT_CHANNELS = {"X": "AO0", "Y": "AO1", "Z": "AO2", "Voltage 1": "AO3", "Voltage 2": "AO4"}
 ANALOG_INPUT_CHANNELS = {
-    "X": "AI0", "Y / Current 4": "AI1", "Z": "AI2", "Current 1": "AI3",
-    "Current 2": "AI4", "Lock-in amplitude": "AI5", "Current 3": "AI6", "Lock-in phase": "AI7",
+    "X": "AI0", "Y": "AI1", "Z": "AI2", "Current 1": "AI3", "Current 2": "AI4",
 }
-FEEDBACK_SIGNAL_CODES = {
-    "Lock-in amplitude": 0, "Current 1": 1, "Current 2": 2,
-    "Lock-in phase": 3, "Current 3": 4, "Current 4": 5,
-}
+FEEDBACK_SIGNAL_CODES = {"Current 1": 1, "Current 2": 2}
 FEEDBACK_ACTION_CODES = {
     "none": 0,
     "pause_on_contact": 1,
@@ -398,9 +394,6 @@ class SampleDecoder:
         if len(words) != SAMPLE_WORDS:
             raise ValueError(f"FPGA sample requires {SAMPLE_WORDS} words; got {len(words)}.")
         s = self.settings
-        current4 = raw_to_current(words[1], s.current4_v_per_na) if s.read_current4_instead_y else 0.0
-        lockin = raw_to_adc_voltage(words[10]) / 10.0
-        lockin = (lockin - s.lockin_offset_pct / 100.0) * s.lockin_sensitivity_na / s.lockin_expand
         return Sample(
             elapsed_s=self._elapsed(words[12], words[13]),
             x_um=raw_to_position(words[0], s.x_range_um, s.x_bipolar),
@@ -410,10 +403,6 @@ class SampleDecoder:
             voltage2_v=raw_to_adc_voltage(words[4]),
             current1_na=raw_to_current(words[5], s.current1_v_per_na),
             current2_na=raw_to_current(words[6], s.current2_v_per_na),
-            current3_na=raw_to_current(words[7], s.current3_v_per_na),
-            current4_na=current4,
-            lockin_amplitude_na=lockin,
-            lockin_phase_deg=raw_to_adc_voltage(words[11]) * 18.0,
             feedback_type=int(words[8]),
             line_number=int(words[9]),
         )

@@ -15,15 +15,9 @@ from .qt_common import COLORS
 CURRENT_COLUMNS = {
     "Current 1": "current1_na",
     "Current 2": "current2_na",
-    "Current 3": "current3_na",
-    "Current 4": "current4_na",
 }
 
-RAW_SIGNALS = {
-    **CURRENT_COLUMNS,
-    "Lock-in amplitude": "lockin_amplitude_na",
-    "Lock-in phase": "lockin_phase_deg",
-}
+RAW_SIGNALS = dict(CURRENT_COLUMNS)
 
 PLOT_COLORS = (
     COLORS["accent"], COLORS["blue"], COLORS["danger"], COLORS["warning"],

@@ -242,7 +242,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         else:
             column = RAW_SIGNALS[selected]
             series.append((selected, times, self.dataset.values(column), COLORS["accent"]))
-            self.raw_current_plot.y_label = "Phase (deg)" if column == "lockin_phase_deg" else "Signal (nA)"
+            self.raw_current_plot.y_label = "Current (nA)"
         self.raw_current_plot.set_data(series)
         self.raw_context_plot.set_data([("Voltage 1", times, self.dataset.values("voltage1_v"), COLORS["blue"])])
 

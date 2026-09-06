@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from echemtips.models import (
     DEFAULT_BITFILE, AppSettings, ApproachCVParameters, ApproachITParameters, ApproachParameters,
-    CVParameters, FeedbackConfiguration, ScanHoppingCVParameters, ScanHoppingITParameters,
+    CVParameters, FeedbackConfiguration, Sample, ScanHoppingCVParameters, ScanHoppingITParameters,
 )
 from echemtips.ni_driver import WECSPMDriver
 from echemtips.ni_protocol import (
@@ -49,9 +49,10 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(ANALOG_OUTPUT_CHANNELS, {
             "X": "AO0", "Y": "AO1", "Z": "AO2", "Voltage 1": "AO3", "Voltage 2": "AO4",
         })
-        self.assertEqual(ANALOG_INPUT_CHANNELS["Current 1"], "AI3")
-        self.assertEqual(ANALOG_INPUT_CHANNELS["Z"], "AI2")
-        self.assertEqual(FEEDBACK_SIGNAL_CODES["Current 1"], 1)
+        self.assertEqual(ANALOG_INPUT_CHANNELS, {
+            "X": "AI0", "Y": "AI1", "Z": "AI2", "Current 1": "AI3", "Current 2": "AI4",
+        })
+        self.assertEqual(FEEDBACK_SIGNAL_CODES, {"Current 1": 1, "Current 2": 2})
         self.assertEqual(FEEDBACK_ACTION_CODES["pause_on_contact"], 1)
         self.assertEqual(FEEDBACK_ACTION_CODES["advance_on_contact"], 2)
 
@@ -290,6 +291,7 @@ class NativeDriverTests(unittest.TestCase):
             self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
             self.session.registers["WaitingForWayPoints"].value = True
             self.driver.read_samples()
+
             status = self.driver.method_status()
             if point == 0:
                 self.assertEqual(status["stage"], "approaching")
@@ -300,6 +302,17 @@ class NativeDriverTests(unittest.TestCase):
         # Successful terminal drain leaves the same USB session reusable.
         self.driver.start_method("cv", CVParameters(cycles=1))
         self.assertEqual(self.driver.method_status()["stage"], "cv")
+
+    def test_hardware_approach_accepts_current_2_feedback(self) -> None:
+        self.driver.start_method(
+            "approach",
+            ApproachParameters(feedback_channel="Current 2", feedback_threshold=1.5),
+        )
+        self.assertEqual(self.session.registers["FeedBackType"].value, 2)
+        self.driver._observe_contacts([
+            Sample(0, 50, 50, 68, 0.1, 0, 9.0, 2.0, line_number=1),
+        ])
+        self.assertIn(-1, self.driver._method_contact_observed)
 
     def test_resume_does_not_override_an_fpga_feedback_pause(self) -> None:
         self.session.registers["Internal Pause"].value = True

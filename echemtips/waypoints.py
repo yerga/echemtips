@@ -40,8 +40,6 @@ class PhysicalWaypoint:
     hold_us: int = 0
     update_interval_us: int = 0
     hold_feedback1: bool = False
-    move_z_picomotor: bool = False
-    z_picomotor_direction: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +223,5 @@ class WaypointCompiler:
                 move_v=move["V"], move_v2=move["V2"],
                 jump_v=item.jump_voltage1, jump_v2=item.jump_voltage2,
                 hold=item.hold, hold_feedback1=item.hold_feedback1,
-                move_z_picomotor=item.move_z_picomotor,
-                z_picomotor_direction=item.z_picomotor_direction,
             ))
         return CompiledWaypoints(output, exponents, None if indefinite_hold else total_duration)

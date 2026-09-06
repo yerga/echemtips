@@ -53,14 +53,7 @@ from .qt_common import (
 )
 
 
-FEEDBACK_CHANNELS = (
-    "Current 1",
-    "Current 2",
-    "Current 3",
-    "Current 4",
-    "Lock-in amplitude",
-    "Lock-in phase",
-)
+FEEDBACK_CHANNELS = ("Current 1", "Current 2")
 
 
 def _vbox(widget: QtWidgets.QWidget, margins: tuple[int, int, int, int] = (0, 0, 0, 0), spacing: int = 10) -> QtWidgets.QVBoxLayout:
@@ -197,9 +190,9 @@ class WatchPage(BasePage):
         self.plot = Plot(
             "Current channels",
             "Current (nA)",
-            (COLORS["accent"], COLORS["blue"], COLORS["danger"], COLORS["warning"]),
+            (COLORS["accent"], COLORS["blue"]),
             app.settings.display_max_points,
-            names=("Current 1", "Current 2", "Current 3", "Current 4"),
+            names=FEEDBACK_CHANNELS,
         )
         layout.addWidget(_plot_card("Current history", "Opt-in live view; recordings remain full-rate while this display is decimated.", self.plot), 1)
 
@@ -296,7 +289,7 @@ class WatchPage(BasePage):
         self.current_label.setText(f"{latest.current1_na:+.3f} nA")
         self.position_label.setText(f"Z  {latest.z_um:.3f} µm")
         for sample in samples:
-            self.plot.append(sample.elapsed_s, sample.current1_na, sample.current2_na, sample.current3_na, sample.current4_na, redraw=False)
+            self.plot.append(sample.elapsed_s, sample.current1_na, sample.current2_na, redraw=False)
         self.plot.redraw()
 
 
@@ -422,20 +415,22 @@ class StandaloneApproachPage(ManagedExperimentPage):
         root = QtWidgets.QHBoxLayout(self.body)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
-        controls = Card("Approach program", "FPGA feedback pauses Z motion when Current 1 crosses the configured threshold.")
+        controls = Card("Approach program", "FPGA feedback pauses Z motion when the selected current crosses the threshold.")
         form = _grid(controls.body)
         self.start_z = add_field(form, Field("Start Z", "10", "µm"), 0, 0)
         self.end_z = add_field(form, Field("End Z", "90", "µm"), 0, 1)
         self.approach_rate = add_field(form, Field("Approach rate", "3", "µm/s"), 1, 0)
         self.retract_rate = add_field(form, Field("Retract rate", "10", "µm/s"), 1, 1)
         self.potential = add_field(form, Field("Approach potential", "0.1", "V"), 2, 0)
-        self.threshold = add_field(form, Field("Current 1 threshold", "2", "nA"), 2, 1)
-        self.x_position = add_field(form, Field("Optional X position", "", "µm"), 3, 0)
-        self.y_position = add_field(form, Field("Optional Y position", "", "µm"), 3, 1)
+        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5)
+        feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); form.addWidget(feedback_box, 2, 1)
+        self.threshold = add_field(form, Field("Contact threshold", "2", "nA"), 3, 0)
+        self.x_position = add_field(form, Field("Optional X position", "", "µm"), 4, 0)
+        self.y_position = add_field(form, Field("Optional Y position", "", "µm"), 4, 1)
         self.greater = Check("Trigger when greater", True)
         self.retract = Check("Retract after approach", True)
-        form.addWidget(self.greater, 4, 0)
-        form.addWidget(self.retract, 4, 1)
+        form.addWidget(self.greater, 5, 0)
+        form.addWidget(self.retract, 5, 1)
         left = QtWidgets.QWidget(); left_layout = _vbox(left); left_layout.addWidget(controls); left_layout.addStretch(1)
         root.addWidget(_left_scroll(left))
         right = QtWidgets.QWidget(); right_layout = _vbox(right)
@@ -450,7 +445,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
     def parameters(self) -> ApproachParameters:
         return ApproachParameters(
             self.start_z.float(), self.end_z.float(), self.approach_rate.float(), self.retract_rate.float(),
-            self.potential.float(), "Current 1", self.threshold.float(), self.greater.get(), self.retract.get(),
+            self.potential.float(), self.feedback_channel.get(), self.threshold.float(), self.greater.get(), self.retract.get(),
             self.x_position.optional_float(), self.y_position.optional_float(),
         )
 
@@ -491,7 +486,6 @@ class ApproachCVPage(ManagedExperimentPage):
         choice_layout.addWidget(label("Feedback signal", "muted")); choice_layout.addWidget(self.feedback_channel)
         ag.addWidget(choice_frame, 2, 0)
         self.threshold = add_field(ag, Field("Contact threshold", "2.0", "nA"), 2, 1)
-        self.feedback_channel.currentTextChanged.connect(self._update_threshold_unit)
         self.greater_than = Check("Trigger when signal is greater than threshold", True)
         ag.addWidget(self.greater_than, 3, 0, 1, 2)
         controls_layout.addWidget(approach)
@@ -516,9 +510,6 @@ class ApproachCVPage(ManagedExperimentPage):
         plots.addWidget(_plot_card("Cyclic voltammogram", "Only samples acquired during CV waypoints.", self.cv_plot), 1, 0, 1, 2)
         right_layout.addLayout(plots, 1); root.addWidget(right, 1)
         self.plot = self.current_plot
-
-    def _update_threshold_unit(self, *_args: object) -> None:
-        self.threshold.set_unit("deg" if self.feedback_channel.get() == "Lock-in phase" else "nA")
 
     def parameters(self) -> ApproachCVParameters:
         return ApproachCVParameters(
@@ -571,14 +562,16 @@ class ApproachITPage(ManagedExperimentPage):
         g = _grid(controls.body)
         self.start_z = add_field(g, Field("Start Z", "10", "µm"), 0, 0); self.end_z = add_field(g, Field("End Z", "90", "µm"), 0, 1)
         self.approach_rate = add_field(g, Field("Approach rate", "3", "µm/s"), 1, 0); self.retract_rate = add_field(g, Field("Retract rate", "10", "µm/s"), 1, 1)
-        self.approach_v = add_field(g, Field("Approach potential", "0.1", "V"), 2, 0); self.threshold = add_field(g, Field("Current 1 threshold", "2", "nA"), 2, 1)
-        self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 3, 0); self.initial_t = add_field(g, Field("Initial hold", "0.25", "s"), 3, 1)
-        self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 4, 0); self.step_t = add_field(g, Field("Pulse hold", "1.0", "s"), 4, 1)
-        self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 5, 0); self.return_t = add_field(g, Field("Return hold", "0.25", "s"), 5, 1)
-        self.x_position = add_field(g, Field("Optional X position", "", "µm"), 6, 0); self.y_position = add_field(g, Field("Optional Y position", "", "µm"), 6, 1)
-        self.cycles = add_field(g, Field("Cycles", "1"), 7, 0)
+        self.approach_v = add_field(g, Field("Approach potential", "0.1", "V"), 2, 0)
+        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 2, 1)
+        self.threshold = add_field(g, Field("Contact threshold", "2", "nA"), 3, 0)
+        self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 3, 1); self.initial_t = add_field(g, Field("Initial hold", "0.25", "s"), 4, 0)
+        self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 4, 1); self.step_t = add_field(g, Field("Pulse hold", "1.0", "s"), 5, 0)
+        self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 5, 1); self.return_t = add_field(g, Field("Return hold", "0.25", "s"), 6, 0)
+        self.x_position = add_field(g, Field("Optional X position", "", "µm"), 6, 1); self.y_position = add_field(g, Field("Optional Y position", "", "µm"), 7, 0)
+        self.cycles = add_field(g, Field("Cycles", "1"), 7, 1)
         self.retract = Check("Retract after I–t", True); self.greater = Check("Trigger when greater", True)
-        g.addWidget(self.retract, 7, 1); g.addWidget(self.greater, 8, 0, 1, 2)
+        g.addWidget(self.retract, 8, 0); g.addWidget(self.greater, 8, 1)
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls); hl.addStretch(1); root.addWidget(_left_scroll(holder))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Approach + I–t status", "Start approach + I–t"))
         tabs = QtWidgets.QTabWidget(); full = QtWidgets.QWidget(); fl = QtWidgets.QHBoxLayout(full)
@@ -594,7 +587,7 @@ class ApproachITPage(ManagedExperimentPage):
     def parameters(self) -> ApproachITParameters:
         return ApproachITParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel="Current 1", feedback_threshold=self.threshold.float(), greater_than=self.greater.get(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float(), greater_than=self.greater.get(),
             retract_after=self.retract.get(), x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(), initial_potential_v=self.initial_v.float(),
             initial_hold_s=self.initial_t.float(), step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(),
             return_hold_s=self.return_t.float(), cycles=self.cycles.integer(),
@@ -638,13 +631,14 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         specs = (
             ("x_start", "X start", "35", "µm"), ("x_end", "X end", "65", "µm"), ("x_points", "X points", "3", ""), ("y_points", "Y points", "3", ""),
             ("y_start", "Y start", "35", "µm"), ("y_end", "Y end", "65", "µm"), ("start_z", "Retracted Z", "55", "µm"), ("end_z", "Approach limit Z", "80", "µm"),
-            ("lateral_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Current 1 threshold", "2", "nA"),
+            ("lateral_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Contact threshold", "2", "nA"),
             ("approach_v", "Approach potential", "0.1", "V"), ("map_v", "Current-map potential", "0.2", "V"), ("cv_start", "CV start", "-0.2", "V"), ("vertex1", "CV vertex 1", "0.6", "V"),
             ("vertex2", "CV vertex 2", "-0.4", "V"), ("scan_rate", "CV scan rate", "2", "V/s"), ("cycles", "CV cycles", "1", ""),
         )
         for index, (name, caption, value, unit) in enumerate(specs):
             setattr(self, name, add_field(g, Field(caption, value, unit), index // 2, index % 2))
-        self.serpentine = Check("Serpentine rows", True); g.addWidget(self.serpentine, 9, 1)
+        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 9, 1)
+        self.serpentine = Check("Serpentine rows", True); g.addWidget(self.serpentine, 10, 0, 1, 2)
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls); hl.addStretch(1); root.addWidget(_left_scroll(holder, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
         self.visual_tabs = QtWidgets.QTabWidget()
@@ -662,7 +656,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         return ScanHoppingCVParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_threshold_na=self.threshold.float(), cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float(), cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
             cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.serpentine.get(),
         )
 
@@ -717,12 +711,13 @@ class ScanHoppingITPage(ManagedExperimentPage):
         specs = (
             ("x_start", "X start", "35", "µm"), ("x_end", "X end", "65", "µm"), ("x_points", "X points", "3", ""), ("y_points", "Y points", "3", ""),
             ("y_start", "Y start", "35", "µm"), ("y_end", "Y end", "65", "µm"), ("start_z", "Retracted Z", "55", "µm"), ("end_z", "Approach limit Z", "80", "µm"),
-            ("xy_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Current 1 threshold", "2", "nA"),
+            ("xy_rate", "XY rate", "50", "µm/s"), ("approach_rate", "Approach rate", "15", "µm/s"), ("retract_rate", "Retract rate", "50", "µm/s"), ("threshold", "Contact threshold", "2", "nA"),
             ("approach_v", "Approach potential", "0.1", "V"), ("cycles", "I–t cycles", "1", ""), ("initial_v", "Initial potential", "-0.1", "V"), ("initial_t", "Initial hold", "0.25", "s"),
             ("step_v", "Pulse potential", "0.4", "V"), ("step_t", "Pulse hold", "1.0", "s"), ("return_v", "Return potential", "-0.1", "V"), ("return_t", "Return hold", "0.25", "s"),
         )
         for index, (name, caption, value, unit) in enumerate(specs): setattr(self, name, add_field(g, Field(caption, value, unit), index // 2, index % 2))
-        self.serpentine = Check("Serpentine rows", True); self.greater = Check("Trigger when greater", True); g.addWidget(self.serpentine, 10, 0); g.addWidget(self.greater, 10, 1)
+        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 10, 0)
+        self.serpentine = Check("Serpentine rows", True); self.greater = Check("Trigger when greater", True); g.addWidget(self.serpentine, 10, 1); g.addWidget(self.greater, 11, 0, 1, 2)
         holder = QtWidgets.QWidget(); hl = _vbox(holder); hl.addWidget(controls); hl.addStretch(1); root.addWidget(_left_scroll(holder, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Hopping I–t status", "Start hopping I–t")); tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points); self.current_plot = Plot("Current vs time", "Current 1 (nA)", (COLORS["blue"],), app.settings.display_max_points)
@@ -737,7 +732,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         return ScanHoppingITParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_threshold=self.threshold.float(), greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float(), greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
             step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.serpentine.get(),
         )
 
@@ -833,9 +828,7 @@ class SettingsPage(BasePage):
         self.x_bipolar = Check("X: −10 to +10 V", app.settings.x_bipolar); self.y_bipolar = Check("Y: −10 to +10 V", app.settings.y_bipolar); self.z_bipolar = Check("Z: −10 to +10 V", app.settings.z_bipolar)
         pg.addWidget(self.x_bipolar, 1, 0); pg.addWidget(self.y_bipolar, 1, 1); pg.addWidget(self.z_bipolar, 1, 2); rl.addWidget(piezos)
         amplifier = Card("Current amplifiers", "Sensitivity is output volts per nanoamp of measured current."); amp = _grid(amplifier.body)
-        self.sensitivity1 = add_field(amp, Field("Current 1 · AI3", str(app.settings.current1_v_per_na), "V/nA"), 0, 0); self.sensitivity2 = add_field(amp, Field("Current 2 · AI4", str(app.settings.current2_v_per_na), "V/nA"), 0, 1)
-        self.sensitivity3 = add_field(amp, Field("Current 3 · AI6", str(app.settings.current3_v_per_na), "V/nA"), 1, 0); self.sensitivity4 = add_field(amp, Field("Current 4 · AI1", str(app.settings.current4_v_per_na), "V/nA"), 1, 1)
-        self.read_current4 = Check("Read Current 4 on AI1 instead of Y position input", app.settings.read_current4_instead_y); amp.addWidget(self.read_current4, 2, 0, 1, 2); rl.addWidget(amplifier)
+        self.sensitivity1 = add_field(amp, Field("Current 1 · AI3", str(app.settings.current1_v_per_na), "V/nA"), 0, 0); self.sensitivity2 = add_field(amp, Field("Current 2 · AI4", str(app.settings.current2_v_per_na), "V/nA"), 0, 1); rl.addWidget(amplifier)
         saving = Card("Saving"); sv = _vbox(saving.body); self.save_directory = Field("Data folder", app.settings.save_directory); self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save); self.command_ratio = Field("AO3 command potential ratio", str(app.settings.command_voltage_ratio))
         sv.addWidget(self.save_directory); sv.addWidget(self.auto_save); sv.addWidget(self.command_ratio); rl.addWidget(saving)
         display = Card("Display", "Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
@@ -864,8 +857,7 @@ class SettingsPage(BasePage):
         return AppSettings(
             mode=self.mode.get(), resource=self.resource.variable.get().strip(), bitfile=self.bitfile.text().strip(), hardware_transport=self.transport.get(),
             x_range_um=self.x_range.float(), y_range_um=self.y_range.float(), z_range_um=self.z_range.float(), x_bipolar=self.x_bipolar.get(), y_bipolar=self.y_bipolar.get(), z_bipolar=self.z_bipolar.get(),
-            command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), current3_v_per_na=self.sensitivity3.float(), current4_v_per_na=self.sensitivity4.float(), read_current4_instead_y=self.read_current4.get(),
-            lockin_sensitivity_na=self.app.settings.lockin_sensitivity_na, lockin_expand=self.app.settings.lockin_expand, lockin_offset_pct=self.app.settings.lockin_offset_pct, sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
+            command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
             hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=self.save_directory.variable.get().strip(), auto_save=self.auto_save.get(),
             display_max_points=self.display_max_points.integer(),
             feedback2_enabled=self.app.settings.feedback2_enabled, feedback2_channel=self.app.settings.feedback2_channel, feedback2_threshold=self.app.settings.feedback2_threshold, feedback2_greater_than=self.app.settings.feedback2_greater_than, feedback_p_gain=self.app.settings.feedback_p_gain,

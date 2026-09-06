@@ -82,10 +82,12 @@ class WECSPMDriver:
         self._cancelled = False
         self._cancel_detail = ""
         self._approach_threshold_na = 0.0
+        self._approach_feedback_channel = "Current 1"
         self._approach_greater_than = True
         self._approach_end_z_raw: int | None = None
         self._approach_contact_observed = False
         self._scan_threshold_na = 0.0
+        self._scan_feedback_channel = "Current 1"
         self._scan_greater_than = True
         self._scan_end_z_raw: int | None = None
         self._scan_contact_observed: set[int] = set()
@@ -102,6 +104,7 @@ class WECSPMDriver:
         self._method_terminal = ""
         self._method_detail = ""
         self._method_threshold = 0.0
+        self._method_feedback_channel = "Current 1"
         self._method_greater_than = True
         self._method_contact_observed: set[int] = set()
         self._method_grid: list[tuple[int, int, float, float]] = []
@@ -395,22 +398,12 @@ class WECSPMDriver:
     def _feedback_value_to_raw(self, channel: str, value: float) -> int:
         if not math.isfinite(value):
             raise ValueError("Feedback thresholds must be finite.")
-        if channel.startswith("Current "):
+        if channel in {"Current 1", "Current 2"}:
             index = int(channel.rsplit(" ", 1)[1])
             sensitivity = getattr(self.settings, f"current{index}_v_per_na")
             if abs(value * sensitivity) > 10:
                 raise ValueError(f"{channel} feedback threshold exceeds its +/-10 V ADC range.")
             return current_to_raw(value, sensitivity)
-        if channel == "Lock-in amplitude":
-            normalized = value * self.settings.lockin_expand / self.settings.lockin_sensitivity_na
-            normalized += self.settings.lockin_offset_pct / 100.0
-            if abs(normalized) > 1:
-                raise ValueError("Lock-in amplitude feedback threshold exceeds its configured analog range.")
-            return clamp_i16(normalized * 32768.0)
-        if channel == "Lock-in phase":
-            if abs(value) > 180:
-                raise ValueError("Lock-in phase feedback threshold must be within +/-180 degrees.")
-            return clamp_i16(value * 32768.0 / 180.0)
         raise ValueError(f"Unsupported feedback channel: {channel}")
 
     def _distance_to_raw(self, distance_um: float) -> int:
@@ -470,10 +463,9 @@ class WECSPMDriver:
             raise ValueError("; ".join(errors))
         if 1 + 3 * params.cycles + int(params.retract_after) > 65535:
             raise ValueError("Reduce CV cycles: the streamed CV exceeds the verified line-tag span.")
-        if params.feedback_channel != "Current 1":
-            raise ValueError("This first real-device profile supports Current 1 feedback only.")
-        if abs(params.feedback_threshold_na * self.settings.current1_v_per_na) > 10:
-            raise ValueError("Feedback threshold exceeds Current 1's +/-10 V ADC range.")
+        feedback_index = int(params.feedback_channel[-1])
+        if abs(params.feedback_threshold_na * getattr(self.settings, f"current{feedback_index}_v_per_na")) > 10:
+            raise ValueError("Feedback threshold exceeds the selected current input's +/-10 V ADC range.")
         if any(
             abs(voltage * self.settings.command_voltage_ratio) > 10
             for voltage in (params.approach_voltage_v, params.cv_start_v, params.cv_vertex1_v, params.cv_vertex2_v)
@@ -525,6 +517,7 @@ class WECSPMDriver:
         self._approach_phase = "approach"
         self._scan_sequence = None
         self._approach_threshold_na = params.feedback_threshold_na
+        self._approach_feedback_channel = params.feedback_channel
         self._approach_greater_than = params.greater_than
         self._approach_end_z_raw = end_z
         self._approach_contact_observed = False
@@ -607,8 +600,9 @@ class WECSPMDriver:
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("; ".join(errors))
-        if abs(params.feedback_threshold_na * self.settings.current1_v_per_na) > 10:
-            raise ValueError("Feedback threshold exceeds Current 1's +/-10 V ADC range.")
+        feedback_index = int(params.feedback_channel[-1])
+        if abs(params.feedback_threshold_na * getattr(self.settings, f"current{feedback_index}_v_per_na")) > 10:
+            raise ValueError("Feedback threshold exceeds the selected current input's +/-10 V ADC range.")
         if any(
             abs(voltage * self.settings.command_voltage_ratio) > 10
             for voltage in (params.approach_voltage_v, params.cv_start_v, params.cv_vertex1_v, params.cv_vertex2_v)
@@ -626,7 +620,7 @@ class WECSPMDriver:
         s = self.settings
         self.configure_feedback(FeedbackConfiguration.from_settings(
             self.settings,
-            primary_channel="Current 1",
+            primary_channel=params.feedback_channel,
             primary_threshold=params.feedback_threshold_na,
             primary_greater_than=params.greater_than,
         ))
@@ -636,6 +630,7 @@ class WECSPMDriver:
         self._scan_history.clear()
         self._scan_point = 0
         self._scan_threshold_na = params.feedback_threshold_na
+        self._scan_feedback_channel = params.feedback_channel
         self._scan_greater_than = params.greater_than
         self._scan_end_z_raw = position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar)
         self._scan_contact_observed.clear()
@@ -860,9 +855,10 @@ class WECSPMDriver:
             self._method_grid = parameters.grid()
             self._method_point = 0
             self._method_threshold = parameters.feedback_threshold
+            self._method_feedback_channel = parameters.feedback_channel
             self._method_greater_than = parameters.greater_than
             self.configure_feedback(FeedbackConfiguration.from_settings(
-                self.settings, primary_channel="Current 1",
+                self.settings, primary_channel=parameters.feedback_channel,
                 primary_threshold=parameters.feedback_threshold,
                 primary_greater_than=parameters.greater_than,
             ))
@@ -871,10 +867,9 @@ class WECSPMDriver:
 
         if not isinstance(parameters, (ApproachParameters, ApproachITParameters)):
             raise TypeError(f"{name} requires approach parameters")
-        if parameters.feedback_channel != "Current 1":
-            raise ValueError("The deployed USB-7856R profile supports Current 1 feedback for hardware approaches.")
         self._method_point = -1
         self._method_threshold = parameters.feedback_threshold
+        self._method_feedback_channel = parameters.feedback_channel
         self._method_greater_than = parameters.greater_than
         self.configure_feedback(FeedbackConfiguration.from_settings(
             self.settings, primary_channel=parameters.feedback_channel,
@@ -1120,6 +1115,10 @@ class WECSPMDriver:
     def _feedback_hit(self, current_na: float, threshold_na: float, greater_than: bool) -> bool:
         return current_na >= threshold_na if greater_than else current_na <= threshold_na
 
+    @staticmethod
+    def _sample_current(sample: Sample, channel: str) -> float:
+        return sample.current1_na if channel == "Current 1" else sample.current2_na
+
     def _raw_z_tolerance(self) -> int:
         multiplier = 2.0 if self.settings.z_bipolar else 1.0
         return max(2, round(0.08 * 32768.0 * multiplier / self.settings.z_range_um))
@@ -1143,13 +1142,13 @@ class WECSPMDriver:
         for sample in samples:
             approach_stage = self.approach_context(sample.line_number)
             if approach_stage == "approach" and self._feedback_hit(
-                sample.current1_na, self._approach_threshold_na, self._approach_greater_than
+                self._sample_current(sample, self._approach_feedback_channel), self._approach_threshold_na, self._approach_greater_than
             ):
                 self._approach_contact_observed = True
             point, scan_stage = self.scan_context(sample.line_number)
             if point >= 0 and scan_stage == "approach":
                 self._scan_last_approach_z[point] = sample.z_um
-                if self._feedback_hit(sample.current1_na, self._scan_threshold_na, self._scan_greater_than):
+                if self._feedback_hit(self._sample_current(sample, self._scan_feedback_channel), self._scan_threshold_na, self._scan_greater_than):
                     self._scan_contact_observed.add(point)
             if previous_scan is not None and previous_scan[0] == point and previous_scan[1] == "approach" and scan_stage == "cv":
                 if not self._scan_contact_confirmed(point):
@@ -1157,7 +1156,7 @@ class WECSPMDriver:
             previous_scan = (point, scan_stage)
             method_point, method_stage = self.method_context(sample.line_number)
             if method_stage == "approach" and self._feedback_hit(
-                sample.current1_na, self._method_threshold, self._method_greater_than
+                self._sample_current(sample, self._method_feedback_channel), self._method_threshold, self._method_greater_than
             ):
                 self._method_contact_observed.add(method_point)
 

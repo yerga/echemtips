@@ -27,7 +27,7 @@ The Settings page exposes the startup timeout and command-watchdog margin. A tim
 
 The NI API and the target use bounded integer registers. The earlier validation did not reject every non-finite calibration and allowed a feedback threshold whose amplifier output was outside the AI channel's ±10 V range. Converting such a threshold to I16 could saturate it, changing the requested contact condition.
 
-Settings and experiment validation now reject non-finite ranges, sensitivities, lock-in scaling, potentials, speeds, positions, timeouts, and thresholds. On the real-device profile, `feedback threshold × V/nA sensitivity` must fit the ±10 V ADC range and command potentials must fit AO3 after applying its configured ratio. These checks run before opening the NI session and again before building a hardware program.
+Settings and experiment validation now reject non-finite ranges, Current 1/2 sensitivities, potentials, speeds, positions, timeouts, and thresholds. On the real-device backend, `feedback threshold × V/nA sensitivity` must fit the ±10 V ADC range and command potentials must fit AO3 after applying its configured ratio. These checks run before opening the NI session and again before building a hardware program.
 
 ## Verification boundary
 

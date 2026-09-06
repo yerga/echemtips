@@ -45,15 +45,13 @@ class SettingsTests(unittest.TestCase):
             expected = AppSettings(
                 z_range_um=38.0,
                 mode="NI FPGA",
-                current4_v_per_na=2.5,
-                read_current4_instead_y=True,
+                current2_v_per_na=2.5,
             )
             store.save(expected)
             actual = store.load()
             self.assertEqual(actual.z_range_um, 38.0)
             self.assertEqual(actual.mode, "NI FPGA")
-            self.assertEqual(actual.current4_v_per_na, 2.5)
-            self.assertTrue(actual.read_current4_instead_y)
+            self.assertEqual(actual.current2_v_per_na, 2.5)
 
     def test_legacy_default_bitfile_is_migrated_to_usb_target(self) -> None:
         with TemporaryDirectory() as folder:
@@ -106,12 +104,11 @@ class SimulationTests(unittest.TestCase):
 
 class ConversionTests(unittest.TestCase):
     def test_fpga_raw_scaling(self) -> None:
-        backend = NIFPGABackend(AppSettings(z_range_um=100.0, current4_v_per_na=2.0))
+        backend = NIFPGABackend(AppSettings(z_range_um=100.0, current2_v_per_na=2.0))
         self.assertAlmostEqual(backend._raw_to_voltage(32767), 10.0, places=3)
         self.assertAlmostEqual(backend._raw_to_position(16384, "Z"), 50.0, places=2)
         self.assertAlmostEqual(backend._raw_to_current(32767, 1), 10.0, places=3)
-        self.assertAlmostEqual(backend._raw_to_current(32767, 4), 5.0, places=3)
-        self.assertAlmostEqual(backend._raw_to_lockin_amplitude(32767), 1.0, places=3)
+        self.assertAlmostEqual(backend._raw_to_current(32767, 2), 5.0, places=3)
 
 
 class NIBackendSafetyTests(unittest.TestCase):
@@ -131,7 +128,7 @@ class NIBackendSafetyTests(unittest.TestCase):
 
 class DataTests(unittest.TestCase):
     def test_csv_and_metadata_are_written(self) -> None:
-        sample = Sample(0.1, 1, 2, 3, 0.1, 0.0, 1.2, 0.2, 0.1)
+        sample = Sample(0.1, 1, 2, 3, 0.1, 0.0, 1.2, 0.2)
         with TemporaryDirectory() as folder:
             settings = AppSettings(save_directory=folder)
             recorder = DataRecorder()
@@ -167,8 +164,20 @@ class ExperimentTests(unittest.TestCase):
         experiment = ApproachExperiment(backend, settings)
         params = ApproachParameters(retract_after=False)
         experiment.start(params)
-        experiment.tick_samples([Sample(0, 50, 50, params.start_z_um, .1, 0, 0, 0, 0)])
-        experiment.tick_samples([Sample(1, 50, 50, 68, .1, 0, 3, 0, 0)])
+        experiment.tick_samples([Sample(0, 50, 50, params.start_z_um, .1, 0, 0, 0)])
+        experiment.tick_samples([Sample(1, 50, 50, 68, .1, 0, 3, 0)])
+        self.assertEqual(experiment.state, ExperimentState.COMPLETE)
+        self.assertEqual(experiment.contact_z, 68)
+
+    def test_standalone_approach_can_use_current_2_feedback(self) -> None:
+        settings = AppSettings()
+        backend = SimulationBackend(settings)
+        backend.connect()
+        experiment = ApproachExperiment(backend, settings)
+        params = ApproachParameters(feedback_channel="Current 2", feedback_threshold=2.0, retract_after=False)
+        experiment.start(params)
+        experiment.tick_samples([Sample(0, 50, 50, params.start_z_um, .1, 0, 5, 0)])
+        experiment.tick_samples([Sample(1, 50, 50, 68, .1, 0, 5, 3)])
         self.assertEqual(experiment.state, ExperimentState.COMPLETE)
         self.assertEqual(experiment.contact_z, 68)
 
@@ -179,8 +188,8 @@ class ExperimentTests(unittest.TestCase):
         experiment = ApproachITExperiment(backend, settings)
         params = ApproachITParameters(initial_hold_s=.01, step_hold_s=.01, return_hold_s=.01)
         experiment.start(params)
-        start = Sample(0, 50, 50, params.start_z_um, .1, 0, 0, 0, 0)
-        contact = Sample(1, 50, 50, 68, .1, 0, 3, 0, 0)
+        start = Sample(0, 50, 50, params.start_z_um, .1, 0, 0, 0)
+        contact = Sample(1, 50, 50, 68, .1, 0, 3, 0)
         experiment.tick_samples([start])
         self.assertEqual(experiment.state, ExperimentState.APPROACHING)
         experiment.tick_samples([contact])
@@ -233,10 +242,10 @@ class ExperimentTests(unittest.TestCase):
             retract_after=True,
         )
         experiment.start(params)
-        at_start = Sample(0, 50, 50, 10, 0, 0, 0, 0, 0)
+        at_start = Sample(0, 50, 50, 10, 0, 0, 0, 0)
         experiment.tick(at_start)
         self.assertEqual(experiment.state, ExperimentState.APPROACHING)
-        contact = Sample(1, 50, 50, 68, 0, 0, 3, 0, 0)
+        contact = Sample(1, 50, 50, 68, 0, 0, 3, 0)
         experiment.tick(contact)
         self.assertEqual(experiment.state, ExperimentState.CV)
         for _ in range(3):
@@ -255,11 +264,11 @@ class ExperimentTests(unittest.TestCase):
         experiment = ApproachCVExperiment(backend, settings)
         params = ApproachCVParameters(start_z_um=10, end_z_um=12, feedback_threshold_na=9, cycles=1)
         experiment.start(params)
-        experiment.tick(Sample(0, 50, 50, 10, params.approach_voltage_v, 0, 0, 0, 0))
-        experiment.tick(Sample(1, 50, 50, 12, params.approach_voltage_v, 0, 0, 0, 0))
+        experiment.tick(Sample(0, 50, 50, 10, params.approach_voltage_v, 0, 0, 0))
+        experiment.tick(Sample(1, 50, 50, 12, params.approach_voltage_v, 0, 0, 0))
         self.assertEqual(experiment.state, ExperimentState.RETRACTING)
         self.assertEqual(experiment._segments, [])
-        experiment.tick(Sample(2, 50, 50, 10, params.approach_voltage_v, 0, 0, 0, 0))
+        experiment.tick(Sample(2, 50, 50, 10, params.approach_voltage_v, 0, 0, 0))
         self.assertEqual(experiment.state, ExperimentState.ABORTED)
         self.assertIn("CV was not run", experiment.detail)
 
@@ -302,7 +311,7 @@ class ExperimentTests(unittest.TestCase):
         params = ScanHoppingCVParameters(x_points=1, y_points=1, cv_start_v=-0.2)
         experiment.start(params)
         experiment.state = ExperimentState.APPROACHING
-        contact = Sample(0, 35, 35, 68, params.approach_voltage_v, 0, 3, 0, 0)
+        contact = Sample(0, 35, 35, 68, params.approach_voltage_v, 0, 3, 0)
         experiment.tick_samples([contact])
         self.assertEqual(experiment.state, ExperimentState.CV)
         self.assertAlmostEqual(experiment._cv_voltage, params.cv_start_v)
@@ -348,11 +357,11 @@ class ExperimentTests(unittest.TestCase):
             start_z_um=10, end_z_um=12, feedback_threshold_na=9,
         )
         experiment.start(params)
-        experiment.tick_samples([Sample(0, 20, 20, 10, params.approach_voltage_v, 0, 0, 0, 0)])
-        experiment.tick_samples([Sample(1, 20, 20, 12, params.approach_voltage_v, 0, 0, 0, 0)])
+        experiment.tick_samples([Sample(0, 20, 20, 10, params.approach_voltage_v, 0, 0, 0)])
+        experiment.tick_samples([Sample(1, 20, 20, 12, params.approach_voltage_v, 0, 0, 0)])
         self.assertEqual(experiment.state, ExperimentState.RETRACTING)
         self.assertEqual(experiment._segments, [])
-        experiment.tick_samples([Sample(2, 20, 20, 10, params.approach_voltage_v, 0, 0, 0, 0)])
+        experiment.tick_samples([Sample(2, 20, 20, 10, params.approach_voltage_v, 0, 0, 0)])
         self.assertEqual(experiment.state, ExperimentState.ABORTED)
         self.assertFalse(experiment.contact_detected[(0, 0)])
         self.assertNotIn((0, 0), experiment.current_at_potential)
@@ -383,9 +392,9 @@ class ExperimentTests(unittest.TestCase):
         params = ScanHoppingCVParameters(x_points=1, y_points=1, map_potential_v=0.2)
         experiment.start(params)
         samples = [
-            Sample(0, 35, 35, 67.4, 0.1, 0, 2.1, 0, 0, line_number=1),
-            Sample(1, 35, 35, 67.4, 0.2, 0, 3.25, 0, 0, line_number=2),
-            Sample(2, 35, 35, 60.0, -0.2, 0, 1.0, 0, 0, line_number=3),
+            Sample(0, 35, 35, 67.4, 0.1, 0, 2.1, 0, line_number=1),
+            Sample(1, 35, 35, 67.4, 0.2, 0, 3.25, 0, line_number=2),
+            Sample(2, 35, 35, 60.0, -0.2, 0, 1.0, 0, line_number=3),
         ]
         experiment.tick_samples(samples)
         self.assertEqual(experiment.state, ExperimentState.COMPLETE)

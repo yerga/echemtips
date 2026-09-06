@@ -61,12 +61,6 @@ class AppSettings:
     command_voltage_ratio: float = 1.0
     current1_v_per_na: float = 1.0
     current2_v_per_na: float = 1.0
-    current3_v_per_na: float = 1.0
-    current4_v_per_na: float = 1.0
-    read_current4_instead_y: bool = False
-    lockin_sensitivity_na: float = 1.0
-    lockin_expand: float = 1.0
-    lockin_offset_pct: float = 0.0
     sample_time_us: int = 4
     samples_per_point: int = 256
     hardware_ready_timeout_s: float = 5.0
@@ -133,24 +127,16 @@ class AppSettings:
         for name, value in (
             ("Current 1 sensitivity", self.current1_v_per_na),
             ("Current 2 sensitivity", self.current2_v_per_na),
-            ("Current 3 sensitivity", self.current3_v_per_na),
-            ("Current 4 sensitivity", self.current4_v_per_na),
         ):
             if not _finite_number(value) or value <= 0:
                 errors.append(f"{name} must be positive.")
-        if not _finite_number(self.lockin_sensitivity_na) or self.lockin_sensitivity_na <= 0:
-            errors.append("Lock-in sensitivity must be positive.")
-        if not _finite_number(self.lockin_expand) or self.lockin_expand <= 0:
-            errors.append("Lock-in expand must be positive.")
-        if not _finite_number(self.lockin_offset_pct) or not -100 <= self.lockin_offset_pct <= 100:
-            errors.append("Lock-in offset must be between -100% and +100%.")
         if not _finite_number(self.hardware_ready_timeout_s) or not 0.5 <= self.hardware_ready_timeout_s <= 60:
             errors.append("FPGA ready timeout must be between 0.5 and 60 seconds.")
         if not _finite_number(self.hardware_watchdog_margin_s) or not 1 <= self.hardware_watchdog_margin_s <= 600:
             errors.append("FPGA watchdog margin must be between 1 and 600 seconds.")
         if not isinstance(self.display_max_points, int) or isinstance(self.display_max_points, bool) or not 500 <= self.display_max_points <= 100_000:
             errors.append("Display buffer must contain between 500 and 100,000 points.")
-        feedback_channels = {"Current 1", "Current 2", "Current 3", "Current 4", "Lock-in amplitude", "Lock-in phase"}
+        feedback_channels = {"Current 1", "Current 2"}
         if self.feedback2_channel not in feedback_channels:
             errors.append("Secondary feedback signal is not supported.")
         if not _finite_number(self.feedback2_threshold):
@@ -263,10 +249,6 @@ class Sample:
     voltage2_v: float
     current1_na: float
     current2_na: float
-    current3_na: float
-    current4_na: float = 0.0
-    lockin_amplitude_na: float = 0.0
-    lockin_phase_deg: float = 0.0
     feedback_type: int = 0
     line_number: int = 0
     scan_pixel: int = -1
@@ -298,7 +280,7 @@ class ApproachCVParameters:
 
     @property
     def feedback_unit(self) -> str:
-        return "deg" if self.feedback_channel == "Lock-in phase" else "nA"
+        return "nA"
 
     def validate(self, settings: AppSettings) -> list[str]:
         errors: list[str] = []
@@ -310,14 +292,7 @@ class ApproachCVParameters:
             errors.append("Start Z and end Z must be different.")
         if not math.isfinite(self.approach_rate_um_s) or self.approach_rate_um_s <= 0:
             errors.append("Approach rate must be positive.")
-        if self.feedback_channel not in {
-            "Current 1",
-            "Current 2",
-            "Current 3",
-            "Current 4",
-            "Lock-in amplitude",
-            "Lock-in phase",
-        }:
+        if self.feedback_channel not in {"Current 1", "Current 2"}:
             errors.append("Feedback signal is not supported.")
         if not math.isfinite(self.feedback_threshold_na):
             errors.append("Feedback threshold must be finite.")
@@ -384,7 +359,7 @@ class ApproachParameters:
 
     @property
     def feedback_unit(self) -> str:
-        return "deg" if self.feedback_channel == "Lock-in phase" else "nA"
+        return "nA"
 
     def validate(self, settings: AppSettings) -> list[str]:
         errors: list[str] = []
@@ -396,7 +371,7 @@ class ApproachParameters:
         for name, value in (("Approach rate", self.approach_rate_um_s), ("Retract rate", self.retract_rate_um_s)):
             if not math.isfinite(value) or value <= 0:
                 errors.append(f"{name} must be positive.")
-        channels = {"Current 1", "Current 2", "Current 3", "Current 4", "Lock-in amplitude", "Lock-in phase"}
+        channels = {"Current 1", "Current 2"}
         if self.feedback_channel not in channels:
             errors.append("Feedback signal is not supported.")
         if not math.isfinite(self.feedback_threshold):
@@ -477,6 +452,7 @@ class ScanHoppingCVParameters:
     approach_rate_um_s: float = 15.0
     retract_rate_um_s: float = 50.0
     approach_voltage_v: float = 0.1
+    feedback_channel: str = "Current 1"
     feedback_threshold_na: float = 2.0
     greater_than: bool = True
     cv_start_v: float = -0.2
@@ -532,12 +508,14 @@ class ScanHoppingCVParameters:
                 errors.append(f"{name} must be positive.")
         if not 1 <= self.cycles <= 100:
             errors.append("CV cycles must be between 1 and 100.")
+        if self.feedback_channel not in {"Current 1", "Current 2"}:
+            errors.append("Feedback signal must be Current 1 or Current 2.")
         if not math.isfinite(self.feedback_threshold_na):
             errors.append("Feedback threshold must be finite.")
-        elif settings.mode == "NI FPGA" and math.isfinite(settings.current1_v_per_na) and abs(
-            self.feedback_threshold_na * settings.current1_v_per_na
-        ) > 10:
-            errors.append("Feedback threshold exceeds Current 1's +/-10 V ADC range.")
+        elif settings.mode == "NI FPGA" and self.feedback_channel in {"Current 1", "Current 2"}:
+            channel = int(self.feedback_channel[-1])
+            if abs(self.feedback_threshold_na * getattr(settings, f"current{channel}_v_per_na")) > 10:
+                errors.append("Feedback threshold exceeds the selected current input's +/-10 V ADC range.")
         voltages = (self.approach_voltage_v, self.cv_start_v, self.cv_vertex1_v, self.cv_vertex2_v, self.map_potential_v)
         if any(not math.isfinite(value) or not -10 <= value <= 10 for value in voltages):
             errors.append("All potentials must be between -10 V and +10 V.")
@@ -570,6 +548,7 @@ class ScanHoppingITParameters:
     approach_rate_um_s: float = 15.0
     retract_rate_um_s: float = 50.0
     approach_voltage_v: float = 0.1
+    feedback_channel: str = "Current 1"
     feedback_threshold: float = 2.0
     greater_than: bool = True
     initial_potential_v: float = -0.1
@@ -610,7 +589,7 @@ class ScanHoppingITParameters:
         approach = ApproachITParameters(
             start_z_um=self.start_z_um, end_z_um=self.end_z_um,
             approach_rate_um_s=self.approach_rate_um_s, retract_rate_um_s=self.retract_rate_um_s,
-            approach_voltage_v=self.approach_voltage_v, feedback_channel="Current 1",
+            approach_voltage_v=self.approach_voltage_v, feedback_channel=self.feedback_channel,
             feedback_threshold=self.feedback_threshold, greater_than=self.greater_than,
             initial_potential_v=self.initial_potential_v, initial_hold_s=self.initial_hold_s,
             step_potential_v=self.step_potential_v, step_hold_s=self.step_hold_s,

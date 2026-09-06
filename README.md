@@ -10,7 +10,7 @@ The current application includes:
 - Approach followed by CV or potential-step current-time acquisition.
 - Scan hopping with CV or current-time acquisition, full-experiment Z/current histories, contact-height maps, and current maps.
 - Bounded X/Y/Z piezo movement and controlled potential output.
-- Capability-aware simulation and NI USB-7856R instrument profiles.
+- Simulation and NI USB-7856R operation with a fixed, explicit channel map.
 - A separate data-analysis UI for eChemTips CSV recordings and identified legacy LabVIEW exports.
 
 The simulator requires no laboratory hardware. Real-device support uses the existing compiled FPGA target; eChemTips does not replace FPGA-side feedback or timing logic.
