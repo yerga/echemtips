@@ -414,6 +414,7 @@ class ScanHoppingCVParameters:
     map_potential_v: float = 0.2
     serpentine: bool = True
     raster_line_retract_um: float = 5.0
+    retract_distance_um: float = 10.0
 
     @property
     def point_count(self) -> int:
@@ -426,20 +427,27 @@ class ScanHoppingCVParameters:
             abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
         )
 
-    def retract_z_for_point(self, point: int) -> float:
+    def retract_distance_for_point(self, point: int) -> float:
         grid = self.grid()
         ends_raster_line = (
             not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
         )
-        if not ends_raster_line:
-            return self.start_z_um
-        direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
-        return self.start_z_um + direction * self.raster_line_retract_um
+        return self.retract_distance_um + (self.raster_line_retract_um if ends_raster_line else 0.0)
 
-    def approach_start_z_for_point(self, point: int) -> float:
+    def retract_z_for_point(self, point: int, contact_z_um: float | None = None) -> float:
+        """Return the Z target relative to contact at one hop.
+
+        ``end_z_um`` is used only for estimates when a measured contact is not
+        supplied. Experiment execution always supplies actual contact Z.
+        """
+        contact_z = self.end_z_um if contact_z_um is None else contact_z_um
+        direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
+        return contact_z + direction * self.retract_distance_for_point(point)
+
+    def approach_start_z_for_point(self, point: int, previous_contact_z_um: float | None = None) -> float:
         if point <= 0:
             return self.start_z_um
-        return self.retract_z_for_point(point - 1)
+        return self.retract_z_for_point(point - 1, previous_contact_z_um)
 
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
@@ -449,11 +457,11 @@ class ScanHoppingCVParameters:
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
         repeated_approaches = sum(
-            abs(self.end_z_um - self.approach_start_z_for_point(point)) / self.approach_rate_um_s
+            self.retract_distance_for_point(point - 1) / self.approach_rate_um_s
             for point in range(1, self.point_count)
         )
         retracts = sum(
-            abs(self.end_z_um - self.retract_z_for_point(point)) / self.retract_rate_um_s
+            self.retract_distance_for_point(point) / self.retract_rate_um_s
             for point in range(self.point_count)
         )
         cv_per_point = self.cycles * (
@@ -494,12 +502,18 @@ class ScanHoppingCVParameters:
             errors.append("Z approach bounds are outside the configured Z range.")
         if self.start_z_um == self.end_z_um:
             errors.append("Start Z and end Z must be different.")
+        if not math.isfinite(self.retract_distance_um) or self.retract_distance_um <= 0:
+            errors.append("Retract distance from contact must be finite and positive.")
         if not math.isfinite(self.raster_line_retract_um) or self.raster_line_retract_um < 0:
             errors.append("Raster extra line retract must be finite and non-negative.")
-        elif not self.serpentine:
-            targets = [self.retract_z_for_point(point) for point in range(self.point_count)]
+        elif math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
+            targets = [
+                self.retract_z_for_point(point, contact_z)
+                for point in range(self.point_count)
+                for contact_z in (self.start_z_um, self.end_z_um)
+            ]
             if any(not 0 <= target <= settings.z_range_um for target in targets):
-                errors.append("Raster extra line retract would move Z outside the configured range.")
+                errors.append("Contact-relative retract would move Z outside the configured range.")
         for name, value in (
             ("Lateral rate", self.lateral_rate_um_s),
             ("Approach rate", self.approach_rate_um_s),
@@ -562,6 +576,7 @@ class ScanHoppingITParameters:
     cycles: int = 1
     serpentine: bool = True
     raster_line_retract_um: float = 5.0
+    retract_distance_um: float = 10.0
 
     @property
     def point_count(self) -> int:
@@ -574,20 +589,22 @@ class ScanHoppingITParameters:
             abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
         )
 
-    def retract_z_for_point(self, point: int) -> float:
+    def retract_distance_for_point(self, point: int) -> float:
         grid = self.grid()
         ends_raster_line = (
             not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
         )
-        if not ends_raster_line:
-            return self.start_z_um
-        direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
-        return self.start_z_um + direction * self.raster_line_retract_um
+        return self.retract_distance_um + (self.raster_line_retract_um if ends_raster_line else 0.0)
 
-    def approach_start_z_for_point(self, point: int) -> float:
+    def retract_z_for_point(self, point: int, contact_z_um: float | None = None) -> float:
+        contact_z = self.end_z_um if contact_z_um is None else contact_z_um
+        direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
+        return contact_z + direction * self.retract_distance_for_point(point)
+
+    def approach_start_z_for_point(self, point: int, previous_contact_z_um: float | None = None) -> float:
         if point <= 0:
             return self.start_z_um
-        return self.retract_z_for_point(point - 1)
+        return self.retract_z_for_point(point - 1, previous_contact_z_um)
 
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
@@ -597,11 +614,11 @@ class ScanHoppingITParameters:
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
         repeated_approaches = sum(
-            abs(self.end_z_um - self.approach_start_z_for_point(point)) / self.approach_rate_um_s
+            self.retract_distance_for_point(point - 1) / self.approach_rate_um_s
             for point in range(1, self.point_count)
         )
         retracts = sum(
-            abs(self.end_z_um - self.retract_z_for_point(point)) / self.retract_rate_um_s
+            self.retract_distance_for_point(point) / self.retract_rate_um_s
             for point in range(self.point_count)
         )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
@@ -650,12 +667,18 @@ class ScanHoppingITParameters:
             errors.append("X and Y point counts must each be between 1 and 64.")
         if not math.isfinite(self.lateral_rate_um_s) or self.lateral_rate_um_s <= 0:
             errors.append("Lateral rate must be positive.")
+        if not math.isfinite(self.retract_distance_um) or self.retract_distance_um <= 0:
+            errors.append("Retract distance from contact must be finite and positive.")
         if not math.isfinite(self.raster_line_retract_um) or self.raster_line_retract_um < 0:
             errors.append("Raster extra line retract must be finite and non-negative.")
-        elif not self.serpentine:
-            targets = [self.retract_z_for_point(point) for point in range(self.point_count)]
+        elif math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
+            targets = [
+                self.retract_z_for_point(point, contact_z)
+                for point in range(self.point_count)
+                for contact_z in (self.start_z_um, self.end_z_um)
+            ]
             if any(not 0 <= target <= settings.z_range_um for target in targets):
-                errors.append("Raster extra line retract would move Z outside the configured range.")
+                errors.append("Contact-relative retract would move Z outside the configured range.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
         total_tags = 1 + self.point_count * (3 + hold_frames)
         if settings.mode == "NI FPGA" and total_tags > 32767:

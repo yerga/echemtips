@@ -275,6 +275,7 @@ class NativeDriverTests(unittest.TestCase):
         for point in range(2):
             approach_end = self.driver._program_baseline + self.driver._program_total
             self.session.registers["LineNumber"].value = approach_end
+            self.session.registers["Applied Z"].value = position_to_raw(68, self.settings.z_range_um, self.settings.z_bipolar)
             self.session.registers["Feedback1 Boolean"].value = True
             self.session.registers["Internal Pause"].value = True
             self.session.registers["WaitingForWayPoints"].value = True
@@ -282,6 +283,8 @@ class NativeDriverTests(unittest.TestCase):
             self.assertEqual(self.driver.method_context(approach_end), (point, "it:initial"))
             self.assertEqual(self.driver.method_context(approach_end + 1), (point, "it:pulse"))
             self.assertEqual(self.driver.method_context(approach_end + 3), (point, "retract"))
+            retract = self.driver.positions_fifo.writes[-1][-14:]
+            self.assertEqual(retract[8], position_to_raw(58, self.settings.z_range_um, self.settings.z_bipolar))
 
             self.session.registers["Feedback1 Boolean"].value = False
             self.session.registers["Internal Pause"].value = False
@@ -389,9 +392,10 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.cancel_program()
         self.driver._cancelled = False
+        self.session.registers["Applied Z"].value = position_to_raw(70, self.settings.z_range_um, self.settings.z_bipolar)
         self.driver._submit_scan_cv(1)
         final = self.session.fifos["Host_To_FPGA_Positions"].writes[-1][-14:]
-        self.assertEqual(final[8], position_to_raw(48, self.settings.z_range_um, self.settings.z_bipolar))
+        self.assertEqual(final[8], position_to_raw(53, self.settings.z_range_um, self.settings.z_bipolar))
 
     def test_approach_status_uses_recorded_line_baseline(self) -> None:
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))

@@ -99,6 +99,9 @@ class QtLayoutTests(unittest.TestCase):
                 scan_page.scan_pattern.setCurrentText("Raster")
                 self.assertTrue(scan_page.line_retract.entry.isEnabled())
                 self.assertFalse(scan_page.parameters().serpentine)
+                self.assertEqual(scan_page.start_z.findChildren(QtWidgets.QLabel)[0].text(), "Initial approach Z")
+                self.assertEqual(scan_page.retract_distance.findChildren(QtWidgets.QLabel)[0].text(), "Retract distance from contact")
+                self.assertAlmostEqual(scan_page.parameters().retract_distance_um, 10.0)
                 self.assertEqual(scan_page.z_plot.rolling_window_s, 60)
                 self.assertEqual(scan_page.current_plot.rolling_window_s, 60)
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]

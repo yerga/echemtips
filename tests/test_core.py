@@ -423,9 +423,11 @@ class ExperimentTests(unittest.TestCase):
             start_z_um=55, end_z_um=80, raster_line_retract_um=8,
         )
         self.assertEqual([point[1] for point in params.grid()], [0, 1, 2, 0, 1, 2])
-        self.assertEqual(params.retract_z_for_point(2), 47)
-        self.assertEqual(params.approach_start_z_for_point(3), 47)
-        self.assertEqual(params.retract_z_for_point(5), 55)
+        self.assertEqual(params.retract_z_for_point(2, 68), 50)
+        self.assertEqual(params.approach_start_z_for_point(3, 68), 50)
+        self.assertEqual(params.retract_z_for_point(5, 68), 58)
+        self.assertEqual(params.retract_distance_for_point(2), 18)
+        self.assertEqual(params.retract_distance_for_point(5), 10)
         invalid = ScanHoppingITParameters(
             x_points=2, y_points=2, serpentine=False,
             start_z_um=2, end_z_um=80, raster_line_retract_um=5,

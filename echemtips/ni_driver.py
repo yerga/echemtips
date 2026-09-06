@@ -110,6 +110,7 @@ class WECSPMDriver:
         self._method_greater_than = True
         self._method_contact_observed: set[int] = set()
         self._method_manually_accepted: set[int] = set()
+        self._method_last_approach_z: dict[int, float] = {}
         self._method_grid: list[tuple[int, int, float, float]] = []
         self._method_point = -1
         self._method_no_contact = False
@@ -696,7 +697,7 @@ class WECSPMDriver:
         current_y = raw_to_position(current["Y"], s.y_range_um, s.y_bipolar)
         current_z = raw_to_position(current["Z"], s.z_range_um, s.z_bipolar)
         expected = max(abs(x_um - current_x), abs(y_um - current_y)) / params.lateral_rate_um_s
-        expected += abs(params.end_z_um - params.approach_start_z_for_point(point)) / params.approach_rate_um_s
+        expected += abs(params.end_z_um - current_z) / params.approach_rate_um_s
         if initial:
             expected += abs(current_z - params.start_z_um) / params.retract_rate_um_s
         self._enqueue(waypoints, expected)
@@ -713,13 +714,17 @@ class WECSPMDriver:
         if params is None:
             raise RuntimeError("Scan CV phase has no parameters")
         current = self._current_targets()
+        contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
+        low_z, high_z = sorted((params.start_z_um, params.end_z_um))
+        if not low_z <= contact_z <= high_z:
+            contact_z = self._scan_last_approach_z.get(point, params.end_z_um)
         plan = cyclic_voltammetry_plan(
             start_v=params.cv_start_v,
             vertex1_v=params.cv_vertex1_v,
             vertex2_v=params.cv_vertex2_v,
             scan_rate_v_s=params.cv_scan_rate_v_s,
             cycles=params.cycles,
-            retract_z_um=params.retract_z_for_point(point),
+            retract_z_um=params.retract_z_for_point(point, contact_z),
             retract_rate_um_s=params.retract_rate_um_s,
         )
         compiled = self.compiler.compile(plan, current)
@@ -810,6 +815,7 @@ class WECSPMDriver:
         self._method_detail = ""
         self._method_contact_observed.clear()
         self._method_manually_accepted.clear()
+        self._method_last_approach_z.clear()
         self._method_grid = []
         self._method_point = -1
         self._method_no_contact = False
@@ -939,7 +945,15 @@ class WECSPMDriver:
         descriptors = [(point, f"it:{label}") for label in labels]
         should_retract = params.retract_after if isinstance(params, ApproachITParameters) else True
         if should_retract:
-            retract_z = params.retract_z_for_point(point) if isinstance(params, ScanHoppingITParameters) else params.start_z_um
+            if isinstance(params, ScanHoppingITParameters):
+                current = self._current_targets()
+                contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
+                low_z, high_z = sorted((params.start_z_um, params.end_z_um))
+                if not low_z <= contact_z <= high_z:
+                    contact_z = self._method_last_approach_z.get(point, params.end_z_um)
+                retract_z = params.retract_z_for_point(point, contact_z)
+            else:
+                retract_z = params.start_z_um
             plan.append(PhysicalWaypoint(z_um=retract_z, z_rate_um_s=params.retract_rate_um_s))
             descriptors.append((point, "retract"))
         self._submit_method_plan(plan, descriptors, "it", resume=True)
@@ -1194,10 +1208,12 @@ class WECSPMDriver:
                     self._scan_failed_contact = point
             previous_scan = (point, scan_stage)
             method_point, method_stage = self.method_context(sample.line_number)
-            if method_stage == "approach" and self._feedback_hit(
-                self._sample_current(sample, self._method_feedback_channel), self._method_threshold, self._method_greater_than
-            ):
-                self._method_contact_observed.add(method_point)
+            if method_stage == "approach":
+                self._method_last_approach_z[method_point] = sample.z_um
+                if self._feedback_hit(
+                    self._sample_current(sample, self._method_feedback_channel), self._method_threshold, self._method_greater_than
+                ):
+                    self._method_contact_observed.add(method_point)
 
     def stop_motion(self) -> None:
         """Safely cancel the active program and keep the healthy session reusable."""

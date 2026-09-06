@@ -1019,15 +1019,16 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.y_start = add_field(g, Field("Y start", "35", "µm"), 1, 0); self.y_end = add_field(g, Field("Y end", "65", "µm"), 1, 1)
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
-        self.line_retract = add_field(g, Field("Raster line extra retract", "5", "µm"), 3, 1)
+        self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
         hl.addWidget(area)
-        movement = Card("2 · Motion and contact", "Configure lateral motion, each Z approach, and current-feedback contact detection.")
+        movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
-        self.start_z = add_field(g, Field("Retracted Z", "55", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "80", "µm"), 0, 1)
+        self.start_z = add_field(g, Field("Initial approach Z", "55", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "80", "µm"), 0, 1)
         self.lateral_rate = add_field(g, Field("XY rate", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach rate", "15", "µm/s"), 1, 1)
         self.retract_rate = add_field(g, Field("Retract rate", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
-        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 0)
-        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 3, 1)
+        self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
+        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
+        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · Cyclic voltammetry", "Select the per-hop potential E1 waveform and current-map sampling potential.")
         g = _grid(electrochemistry.body)
@@ -1066,7 +1067,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA, cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
-            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(),
+            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(),
         )
 
     def _sync_scan_pattern(self, *_args: object) -> None:
@@ -1136,16 +1137,17 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.y_start = add_field(g, Field("Y start", "35", "µm"), 1, 0); self.y_end = add_field(g, Field("Y end", "65", "µm"), 1, 1)
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
-        self.line_retract = add_field(g, Field("Raster line extra retract", "5", "µm"), 3, 1)
+        self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
         hl.addWidget(area)
-        movement = Card("2 · Motion and contact", "Configure lateral motion, each Z approach, and current-feedback contact detection.")
+        movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
-        self.start_z = add_field(g, Field("Retracted Z", "55", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "80", "µm"), 0, 1)
+        self.start_z = add_field(g, Field("Initial approach Z", "55", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "80", "µm"), 0, 1)
         self.xy_rate = add_field(g, Field("XY rate", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach rate", "15", "µm/s"), 1, 1)
         self.retract_rate = add_field(g, Field("Retract rate", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
-        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 0)
-        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 3, 1)
-        self.greater = Check("Trigger when greater", True); g.addWidget(self.greater, 4, 0, 1, 2)
+        self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
+        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
+        feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
+        self.greater = Check("Trigger when greater", True); g.addWidget(self.greater, 5, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · I–t potential program", "Potential E1 follows initial → pulse → return at every hop.")
         g = _grid(electrochemistry.body)
@@ -1181,7 +1183,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
-            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(),
+            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(),
         )
 
     def _sync_scan_pattern(self, *_args: object) -> None:
