@@ -40,13 +40,14 @@ def _smoke_test(app: EChemTipsApp) -> None:
     app.backend.connect()
     app._set_connection_ui(True)
     samples = [app.backend.read_sample() for _ in range(5)]
+    watch = app.pages["Watch current"]
+    watch.set_live_view(True)
     for name, page in app.pages.items():
         app.show_page(name)
         page.on_samples(samples)
         QtWidgets.QApplication.processEvents()
         if page.sizeHint().width() <= 0 or page.sizeHint().height() <= 0:
             raise RuntimeError(f"Page did not lay out correctly: {name}")
-    watch = app.pages["Watch current"]
     if len(watch.plot.x_values) < len(samples):
         raise RuntimeError("Watch Current discarded samples from an acquisition batch")
     cv = app.pages["CV"]

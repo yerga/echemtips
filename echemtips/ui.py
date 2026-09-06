@@ -178,10 +178,13 @@ class WatchPage(BasePage):
         self.stop_recording_button.setEnabled(False)
         form.addWidget(self.start_recording_button)
         form.addWidget(self.stop_recording_button)
-        self.live_enabled = True
-        self.live_button = button("Pause live view", self.toggle_live_view)
+        self.live_enabled = False
+        self.live_button = button("Start live view", self.toggle_live_view)
         form.addWidget(self.live_button)
         form.addWidget(button("Clear graph", lambda: self.plot.clear()))
+        self.live_status_label = label("Live view is off. Start it to plot new samples.", "muted")
+        self.live_status_label.setWordWrap(True)
+        form.addWidget(self.live_status_label)
         form.addSpacing(12)
         form.addWidget(label("LIVE READOUT", "muted"))
         self.current_label = label("— nA", "readout")
@@ -200,7 +203,7 @@ class WatchPage(BasePage):
             app.settings.display_max_points,
             names=("Current 1", "Current 2", "Current 3", "Current 4"),
         )
-        layout.addWidget(_plot_card("Current history", "Full-rate data are recorded; this view is display-decimated.", self.plot), 1)
+        layout.addWidget(_plot_card("Current history", "Opt-in live view; recordings remain full-rate while this display is decimated.", self.plot), 1)
 
     def apply_voltage(self) -> None:
         try:
@@ -235,6 +238,7 @@ class WatchPage(BasePage):
             if self.app.recorder.active:
                 raise BackendError("A recording is already active.")
             self.app.recorder.start("Watch Current", self.app.settings)
+            self.set_live_view(True)
             self.app._sync_action_states()
             self.app.toast("Recording current channels", "success")
         except (BackendError, OSError, ValueError) as exc:
@@ -257,23 +261,45 @@ class WatchPage(BasePage):
         self.stop_recording() if self.app.recorder.active else self.start_recording()
 
     def toggle_live_view(self) -> None:
-        self.live_enabled = not self.live_enabled
-        self.live_button.setText("Pause live view" if self.live_enabled else "Resume live view")
-        self.app.toast("Live view resumed" if self.live_enabled else "Live view paused")
+        if self.live_enabled:
+            self.set_live_view(False)
+            self.app.toast("Live view stopped")
+            return
+        try:
+            self.app.require_connection()
+            if self.app.any_experiment_active:
+                raise BackendError("Use the active experiment page to view its data while the experiment is running.")
+            self.set_live_view(True)
+            self.app.toast("Live view started; plotting new samples", "success")
+        except BackendError as exc:
+            self.app.show_error(str(exc))
+
+    def set_live_view(self, enabled: bool, *, clear_on_start: bool = True) -> None:
+        enabled = bool(enabled)
+        if enabled and not self.live_enabled and clear_on_start:
+            self.plot.clear()
+            self.current_label.setText("— nA")
+            self.position_label.setText("Z  — µm")
+        self.live_enabled = enabled
+        self.live_button.setText("Stop live view" if enabled else "Start live view")
+        self.live_status_label.setText(
+            "Plotting samples acquired from now."
+            if enabled
+            else "Live view is off. Start it to plot new samples."
+        )
 
     def on_sample(self, sample: Sample) -> None:
         self.on_samples([sample])
 
     def on_samples(self, samples: list[Sample]) -> None:
-        if not samples:
+        if not samples or not self.live_enabled:
             return
         latest = samples[-1]
         self.current_label.setText(f"{latest.current1_na:+.3f} nA")
         self.position_label.setText(f"Z  {latest.z_um:.3f} µm")
-        if self.live_enabled:
-            for sample in samples:
-                self.plot.append(sample.elapsed_s, sample.current1_na, sample.current2_na, sample.current3_na, sample.current4_na, redraw=False)
-            self.plot.redraw()
+        for sample in samples:
+            self.plot.append(sample.elapsed_s, sample.current1_na, sample.current2_na, sample.current3_na, sample.current4_na, redraw=False)
+        self.plot.redraw()
 
 
 class ManagedExperimentPage(BasePage):
@@ -299,6 +325,9 @@ class ManagedExperimentPage(BasePage):
             raise BackendError("Another experiment is already running.")
         if self.app.recorder.active:
             raise BackendError("Stop the current recording before starting an experiment.")
+        watch = self.app.pages.get("Watch current")
+        if isinstance(watch, WatchPage):
+            watch.set_live_view(False)
         self.app.recorder.start(self.recording_name, self.app.settings, parameters)
         try:
             self.experiment.start(parameters)
@@ -959,12 +988,17 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         elif connected and self.backend.hardware_approach_cv_required and not self.backend.approach_cv_available: notes.append("manual motion only")
         if connected and not self.backend.full_rate_data_available: notes.append("register readback")
         suffix = f" · {' · '.join(notes)}" if notes else ""; self.connection_label.setText(f"{'Connected' if connected else 'Disconnected'} · {self.backend.label}{suffix}"); self.execution_label.setText("Idle" if connected else "Offline")
-        self.connect_button.setText("Disconnect" if connected else "Connect"); caps = self.backend.capabilities; self.pause_button.setEnabled(connected and caps.pause_resume); self.resume_button.setEnabled(connected and caps.pause_resume); self.next_waypoint_button.setEnabled(connected and caps.end_current_waypoint); self._sync_action_states()
+        self.connect_button.setText("Disconnect" if connected else "Connect"); caps = self.backend.capabilities; self.pause_button.setEnabled(connected and caps.pause_resume); self.resume_button.setEnabled(connected and caps.pause_resume); self.next_waypoint_button.setEnabled(connected and caps.end_current_waypoint)
+        if not connected and hasattr(self, "pages"):
+            watch = self.pages.get("Watch current")
+            if isinstance(watch, WatchPage): watch.set_live_view(False)
+        self._sync_action_states()
 
     def _sync_action_states(self) -> None:
         if not hasattr(self, "pages"): return
         connected = self.backend.connected; watch = self.pages["Watch current"]
         watch_owned = self.recorder.active and self.recorder.name == "Watch Current"; watch.start_recording_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); watch.stop_recording_button.setEnabled(watch_owned)
+        watch.live_button.setEnabled(connected and not self.any_experiment_active)
         for page_name, key in {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it"}.items():
             page = self.pages[page_name]; page.start_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); page.stop_button.setEnabled(self.experiments[key].active)
 
@@ -1038,7 +1072,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if samples:
             self._sample = samples[-1]
             for name, page in self.pages.items():
-                if name not in {"Scan hopping + CV", "Scan hopping + I-t"}: page.on_samples(samples)
+                if name in {"Scan hopping + CV", "Scan hopping + I-t"}: continue
+                if name == "Watch current" and not page.live_enabled: continue
+                page.on_samples(samples)
         else:
             for name in ("CV", "Approach", "Approach + I-t"):
                 page = self.pages.get(name)

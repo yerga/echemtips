@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
+from echemtips.models import Sample
 from echemtips.qt_common import Heatmap
 from echemtips.ui import EChemTipsApp, create_application
 
@@ -39,6 +40,7 @@ class QtLayoutTests(unittest.TestCase):
             )
             watch = window.pages["Watch current"]
             self.assertEqual(watch.stop_recording_button.text(), "Stop and save")
+            self.assertEqual(watch.live_button.text(), "Start live view")
         finally:
             window.poll_timer.stop()
             window.close()
@@ -70,6 +72,33 @@ class QtLayoutTests(unittest.TestCase):
             self.assertFalse(hasattr(heatmap.view, "ui"))
         finally:
             heatmap.close()
+
+    def test_watch_current_only_plots_during_an_explicit_live_session(self) -> None:
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        watch = window.pages["Watch current"]
+        first = Sample(1.0, 50, 50, 50, 0.1, 0, 1.25, 0.2, 0.1)
+        second = Sample(2.0, 50, 50, 50, 0.1, 0, 1.50, 0.2, 0.1)
+        try:
+            self.assertFalse(watch.live_enabled)
+            watch.on_samples([first])
+            self.assertEqual(len(watch.plot.x_values), 0)
+
+            watch.set_live_view(True)
+            watch.on_samples([first])
+            self.assertEqual(len(watch.plot.x_values), 1)
+            self.assertEqual(watch.current_label.text(), "+1.250 nA")
+
+            watch.set_live_view(False)
+            watch.on_samples([second])
+            self.assertEqual(len(watch.plot.x_values), 1)
+            self.assertEqual(watch.current_label.text(), "+1.250 nA")
+
+            watch.set_live_view(True)
+            self.assertEqual(len(watch.plot.x_values), 0)
+            self.assertEqual(watch.live_button.text(), "Stop live view")
+        finally:
+            window.close()
 
 
 if __name__ == "__main__":
