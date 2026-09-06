@@ -32,6 +32,7 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertTrue(page.isVisible(), name)
                 self.assertGreater(page.width(), 0, name)
                 self.assertGreater(page.height(), 0, name)
+                self.assertTrue(window.instrument_readout.isVisible(), name)
             settings = window.pages["Settings"]
             self.assertGreater(settings.viewport.verticalScrollBar().maximum(), 0)
             self.assertEqual(
@@ -78,6 +79,27 @@ class QtLayoutTests(unittest.TestCase):
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()
             self.assertTrue(window.export_button.isVisible())
+        finally:
+            window.close()
+
+    def test_instrument_readout_tracks_latest_sample_and_clears_on_disconnect(self) -> None:
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        sample = Sample(1.0, 12.3456, 23.4567, 34.5678, -0.2, 0.4, 1.25, -0.75)
+        try:
+            window._consume_acquired([sample], finalize=False)
+            values = window.instrument_readout.value_labels
+            self.assertEqual(values["x_um"].text(), "12.346 µm")
+            self.assertEqual(values["y_um"].text(), "23.457 µm")
+            self.assertEqual(values["z_um"].text(), "34.568 µm")
+            self.assertEqual(values["voltage1_v"].text(), "-0.200 V")
+            self.assertEqual(values["voltage2_v"].text(), "+0.400 V")
+            self.assertEqual(values["current1_na"].text(), "+1.250 nA")
+            self.assertEqual(values["current2_na"].text(), "-0.750 nA")
+
+            window._set_connection_ui(False)
+            self.assertEqual(values["x_um"].text(), "— µm")
+            self.assertEqual(values["current2_na"].text(), "— nA")
         finally:
             window.close()
 

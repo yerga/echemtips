@@ -42,6 +42,7 @@ def application_stylesheet() -> str:
     QMainWindow, QWidget#window, QScrollArea#pageScroll, QStackedWidget {{ background: {c['window']}; }}
     QFrame#topbar {{ background: {c['panel']}; border: 0; border-bottom: 1px solid {c['border']}; }}
     QFrame#sidebar {{ background: {c['sidebar']}; border: 0; }}
+    QFrame#instrumentStrip {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}
     QFrame#card {{ background: {c['panel']}; border: 1px solid {c['border']}; border-radius: 10px; }}
     QFrame#cardBody, QFrame#transparent {{ background: transparent; border: 0; }}
     QLabel#pageTitle {{ font-size: 25px; font-weight: 700; }}
@@ -52,6 +53,9 @@ def application_stylesheet() -> str:
     QLabel#sidebarMuted {{ color: {c['sidebar_muted']}; font-size: 11px; }}
     QLabel#statusStrong {{ color: {c['accent']}; font-size: 18px; font-weight: 700; }}
     QLabel#readout {{ color: {c['accent']}; font-size: 25px; font-weight: 700; }}
+    QLabel#stripHeading {{ color: {c['muted']}; font-size: 10px; font-weight: 700; }}
+    QLabel#stripCaption {{ color: {c['muted']}; font-size: 10px; }}
+    QLabel#stripValue {{ color: {c['text']}; font-size: 14px; font-weight: 700; }}
     QPushButton {{
         background: {c['panel_2']}; border: 1px solid {c['border']}; border-radius: 7px;
         min-height: 34px; padding: 3px 14px; font-weight: 600;

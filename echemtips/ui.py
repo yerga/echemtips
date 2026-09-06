@@ -148,6 +148,54 @@ class StatusCard(Card):
             self.stop_button.setEnabled(False)
 
 
+class InstrumentReadoutBar(QtWidgets.QFrame):
+    """Compact, always-visible readback of the active instrument channels."""
+
+    _CHANNELS = (
+        ("x_um", "X", "µm"),
+        ("y_um", "Y", "µm"),
+        ("z_um", "Z", "µm"),
+        ("voltage1_v", "E1", "V"),
+        ("voltage2_v", "E2", "V"),
+        ("current1_na", "i1", "nA"),
+        ("current2_na", "i2", "nA"),
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("instrumentStrip")
+        self.setFixedHeight(66)
+        row = _hbox(self, (18, 7, 18, 7), 6)
+        heading = QtWidgets.QWidget()
+        heading_layout = _vbox(heading, spacing=0)
+        heading_layout.addWidget(label("LIVE READBACK", "stripHeading"))
+        heading_layout.addWidget(label("Measured channels", "stripCaption"))
+        row.addWidget(heading)
+        row.addSpacing(8)
+
+        self.value_labels: dict[str, QtWidgets.QLabel] = {}
+        for attribute, caption, unit in self._CHANNELS:
+            cell = QtWidgets.QWidget()
+            cell.setMinimumWidth(72)
+            cell_layout = _vbox(cell, spacing=0)
+            cell_layout.addWidget(label(caption, "stripCaption"))
+            value_label = label(f"— {unit}", "stripValue")
+            value_label.setAccessibleName(f"{caption} measured value")
+            cell_layout.addWidget(value_label)
+            row.addWidget(cell, 1)
+            self.value_labels[attribute] = value_label
+
+    def set_sample(self, sample: Sample) -> None:
+        for attribute, _caption, unit in self._CHANNELS:
+            value = getattr(sample, attribute)
+            sign = "+" if attribute in {"voltage1_v", "voltage2_v", "current1_na", "current2_na"} else ""
+            self.value_labels[attribute].setText(f"{value:{sign}.3f} {unit}")
+
+    def clear(self) -> None:
+        for attribute, _caption, unit in self._CHANNELS:
+            self.value_labels[attribute].setText(f"— {unit}")
+
+
 class WatchPage(BasePage):
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Watch current", "Monitor live current and position, control the potential outputs, and record without blocking the display.")
@@ -936,7 +984,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host); self.next_waypoint_button = button("Next", self.end_current_waypoint); self.connect_button = button("Connect", self.toggle_connection, "primary")
         for widget in (self.pause_button, self.resume_button, self.next_waypoint_button, self.connect_button): tl.addWidget(widget)
         tl.addWidget(button("EMERGENCY STOP", self.emergency_stop, "danger")); ml.addWidget(topbar)
-        self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (22, 18, 22, 18)); container_layout.addWidget(self.stack); ml.addWidget(container, 1); layout.addWidget(main, 1)
+        self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (22, 18, 22, 10)); container_layout.addWidget(self.stack); ml.addWidget(container, 1)
+        self.instrument_readout = InstrumentReadoutBar(); readout_container = QtWidgets.QWidget(); readout_layout = _vbox(readout_container, (22, 0, 22, 10)); readout_layout.addWidget(self.instrument_readout); ml.addWidget(readout_container)
+        layout.addWidget(main, 1)
         self.statusBar().setSizeGripEnabled(False)
 
     def _build_pages(self) -> None:
@@ -1000,6 +1050,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not connected and hasattr(self, "pages"):
             watch = self.pages.get("Watch current")
             if isinstance(watch, WatchPage): watch.set_live_view(False)
+            self.instrument_readout.clear()
         self._sync_action_states()
 
     def _sync_action_states(self) -> None:
@@ -1079,6 +1130,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if page is not None: page.on_samples(samples)
         if samples:
             self._sample = samples[-1]
+            readout = getattr(self, "instrument_readout", None)
+            if readout is not None:
+                readout.set_sample(self._sample)
             for name, page in self.pages.items():
                 if name in {"Scan hopping + CV", "Scan hopping + I-t"}: continue
                 if name == "Watch current" and not page.live_enabled: continue
