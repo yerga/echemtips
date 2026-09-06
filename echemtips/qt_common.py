@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from collections.abc import Iterable
 
 import numpy as np
@@ -213,9 +214,11 @@ class Plot(QtWidgets.QWidget):
         max_points: int = 8_000,
         x_label: str = "Elapsed time (s)",
         names: tuple[str, ...] | None = None,
+        rolling_window_s: float | None = None,
     ) -> None:
         super().__init__()
         self.max_points = max(250, max_points)
+        self.rolling_window_s = rolling_window_s
         self.buffer = DisplayBuffer(len(colors), self.max_points)
         self.series = self.buffer.series
         self.x_values = self.buffer.x
@@ -248,6 +251,13 @@ class Plot(QtWidgets.QWidget):
             self.redraw()
 
     def redraw(self) -> None:
+        if self.rolling_window_s is not None and self.x_values:
+            cutoff = self.x_values[-1] - self.rolling_window_s
+            first_visible = bisect_left(self.x_values, cutoff)
+            if first_visible:
+                del self.x_values[:first_visible]
+                for values in self.series:
+                    del values[:first_visible]
         x = np.asarray(self.x_values, dtype=float)
         for curve, values in zip(self.curves, self.series):
             curve.setData(x, np.asarray(values, dtype=float), connect="finite")

@@ -9,7 +9,7 @@ from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.models import Sample
-from echemtips.qt_common import Heatmap
+from echemtips.qt_common import Heatmap, Plot
 from echemtips.ui import EChemTipsApp, create_application
 
 
@@ -135,6 +135,18 @@ class QtLayoutTests(unittest.TestCase):
             self.assertFalse(hasattr(heatmap.view, "ui"))
         finally:
             heatmap.close()
+
+    def test_rolling_plot_discards_only_old_display_points(self) -> None:
+        plot = Plot("Rolling", "Value", ("#12877f",), max_points=1000, rolling_window_s=120)
+        try:
+            for second in range(301):
+                plot.append(float(second), float(second), redraw=False)
+            plot.redraw()
+            self.assertGreaterEqual(plot.x_values[0], 180.0)
+            self.assertEqual(plot.x_values[-1], 300.0)
+            self.assertLessEqual(len(plot.x_values), 121)
+        finally:
+            plot.close()
 
     def test_watch_current_only_plots_during_an_explicit_live_session(self) -> None:
         window = EChemTipsApp()
