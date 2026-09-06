@@ -47,6 +47,8 @@ class QtLayoutTests(unittest.TestCase):
             self.assertNotIn("Advanced FPGA feedback", settings_text)
             self.assertNotIn("Calibration provenance", settings_text)
             self.assertIn("Current amplifiers and potential command", settings_text)
+            self.assertIn("Samples averaged per data point", settings_text)
+            self.assertNotIn("Samples per point", settings_text)
             self.assertIn("5:1", settings.command_ratio_help.toolTip())
             settings.command_ratio.entry.setText("5")
             self.assertIn("±2 V", settings.command_ratio_summary.text())

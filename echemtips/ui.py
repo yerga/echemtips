@@ -1199,7 +1199,7 @@ class SettingsPage(BasePage):
         cl.addWidget(label("FPGA hardware", "muted")); self.transport = Choice(("USB R Series", "PCIe/PXI R Series", "Auto"), app.settings.hardware_transport); cl.addWidget(self.transport)
         cl.addWidget(label("Compiled bitfile", "muted")); bitrow = QtWidgets.QWidget(); br = _hbox(bitrow); self.bitfile = QtWidgets.QLineEdit(app.settings.bitfile); br.addWidget(self.bitfile, 1); br.addWidget(button("Browse…", self.browse_bitfile)); cl.addWidget(bitrow); ll.addWidget(connection)
         acquisition = Card("Acquisition", "Effective interval includes the FPGA transfer iteration."); ag = _grid(acquisition.body)
-        self.sample_time = add_field(ag, Field("Sample time", str(app.settings.sample_time_us), "µs"), 0, 0); self.samples_per_point = add_field(ag, Field("Samples per point", str(app.settings.samples_per_point)), 0, 1)
+        self.sample_time = add_field(ag, Field("Sample time", str(app.settings.sample_time_us), "µs"), 0, 0); self.samples_per_point = add_field(ag, Field("Samples averaged per data point", str(app.settings.samples_per_point)), 0, 1)
         self.ready_timeout = add_field(ag, Field("FPGA ready timeout", str(app.settings.hardware_ready_timeout_s), "s"), 1, 0); self.watchdog_margin = add_field(ag, Field("Command watchdog margin", str(app.settings.hardware_watchdog_margin_s), "s"), 1, 1)
         self.period_label = label("", "statusStrong"); ag.addWidget(self.period_label, 2, 0, 1, 2); ll.addWidget(acquisition)
         ll.addStretch(1)
