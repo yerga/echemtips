@@ -45,6 +45,7 @@ from .qt_common import (
     Heatmap,
     Plot,
     ProgramDiagram,
+    TimedXYPlot,
     add_field,
     application_stylesheet,
     button,
@@ -91,6 +92,25 @@ def _plot_card(title: str, subtitle: str, plot: QtWidgets.QWidget) -> Card:
     layout = _vbox(card.body)
     layout.addWidget(plot, 1)
     return card
+
+
+def _approach_curves_view(latest: Plot, history: TimedXYPlot) -> QtWidgets.QWidget:
+    page = QtWidgets.QWidget()
+    layout = _vbox(page)
+    content = QtWidgets.QWidget()
+    content_layout = _vbox(content)
+    splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+    latest.configure(height=125); history.configure(height=125)
+    latest_section = QtWidgets.QWidget(); latest_layout = _vbox(latest_section, spacing=3)
+    latest_layout.addWidget(label("Latest approach", "cardTitle")); latest_layout.addWidget(label("Restarts when a new approach begins.", "muted")); latest_layout.addWidget(latest, 1)
+    history_section = QtWidgets.QWidget(); history_layout = _vbox(history_section, spacing=3)
+    history_layout.addWidget(label("Rolling approach history", "cardTitle")); history_layout.addWidget(label("All approach samples from the latest 60 seconds; complete data remain recorded.", "muted")); history_layout.addWidget(history, 1)
+    splitter.addWidget(latest_section); splitter.addWidget(history_section)
+    splitter.setSizes([175, 175])
+    content_layout.addWidget(splitter)
+    content.setMinimumHeight(360)
+    layout.addWidget(scroll_area(content))
+    return page
 
 
 def _program_card(
@@ -750,7 +770,8 @@ class StandaloneApproachPage(ManagedExperimentPage):
         plots_layout.addWidget(_plot_card("Approach current", "Selected feedback current during the complete approach.", self.current_plot), 1)
         tabs.addTab(plots, "Time traces")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["danger"],), app.settings.display_max_points, "Z position (µm)")
-        tabs.addTab(_plot_card("Approach curve", "Selected feedback current versus measured Z during approach only.", self.approach_curve), "Approach curve")
+        self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
+        tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         right_layout.addWidget(tabs, 1); root.addWidget(right, 1)
 
     def parameters(self) -> ApproachParameters:
@@ -762,7 +783,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
 
     def start(self) -> None:
         try:
-            params = self.parameters(); self.z_plot.clear(); self.current_plot.clear(); self.approach_curve.clear(); self._begin(params)
+            params = self.parameters(); self.z_plot.clear(); self.current_plot.clear(); self.approach_curve.clear(); self.approach_history.clear(); self._begin(params)
             self.app.toast("Approach started", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc:
             self.app.show_error(str(exc))
@@ -776,11 +797,13 @@ class StandaloneApproachPage(ManagedExperimentPage):
             self.z_plot.append(sample.elapsed_s, sample.z_um, redraw=False)
             current = _feedback_current(sample, self.experiment.params.feedback_channel)
             self.current_plot.append(sample.elapsed_s, current, redraw=False)
-            if stage == "approach": self.approach_curve.append(sample.z_um, current, redraw=False)
+            if stage == "approach":
+                self.approach_curve.append(sample.z_um, current, redraw=False)
+                self.approach_history.append_timed(sample.elapsed_s, sample.z_um, current, redraw=False)
             if not self.experiment._hardware: update = self.experiment.tick_samples([sample])
         if self.experiment._hardware: update = self.experiment.tick_samples(samples)
         if samples:
-            self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw()
+            self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
         self._show_update(update)
 
 
@@ -839,7 +862,8 @@ class ApproachCVPage(ManagedExperimentPage):
         tabs.addTab(traces, "Time traces")
         tabs.addTab(_plot_card("Cyclic voltammogram", "Only samples acquired during CV waypoints.", self.cv_plot), "Voltammogram")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
-        tabs.addTab(_plot_card("Approach curve", "Selected feedback current versus measured Z during approach only.", self.approach_curve), "Approach curve")
+        self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
+        tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         right_layout.addWidget(tabs, 1); root.addWidget(right, 1)
         self.plot = self.current_plot
 
@@ -856,7 +880,7 @@ class ApproachCVPage(ManagedExperimentPage):
     def start(self) -> None:
         try:
             params = self.parameters()
-            for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve): plot.clear()
+            for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve, self.approach_history): plot.clear()
             self._begin(params); self.app.toast("Approach + CV started", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
@@ -878,11 +902,12 @@ class ApproachCVPage(ManagedExperimentPage):
             stage = self.app.backend.hardware_approach_context(sample.line_number) if hardware else ("cv" if state_before == ExperimentState.CV else "")
             if stage == "approach" or (not hardware and state_before == ExperimentState.APPROACHING):
                 self.approach_curve.append(sample.z_um, current, redraw=False)
+                self.approach_history.append_timed(sample.elapsed_s, sample.z_um, current, redraw=False)
             if stage == "cv" or (not stage and state_before == ExperimentState.CV):
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
             if not hardware and experiment.active: update = experiment.tick(sample)
         if hardware and experiment.active: update = experiment.tick(samples[-1])
-        self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw()
+        self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
         if cv_changed: self.cv_plot.redraw()
         self._show_update(update)
 
@@ -936,7 +961,8 @@ class ApproachITPage(ManagedExperimentPage):
         il.addWidget(_plot_card("Potential steps", "Post-contact potential program.", self.voltage_plot), 1); il.addWidget(_plot_card("I–t response", "Current acquired during timed holds.", self.it_plot), 1)
         tabs.addTab(it, "I–t data"); rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_t0: float | None = None
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
-        tabs.addTab(_plot_card("Approach curve", "Selected feedback current versus measured Z during approach only.", self.approach_curve), "Approach curve")
+        self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
+        tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
 
     def parameters(self) -> ApproachITParameters:
         return ApproachITParameters(
@@ -950,7 +976,7 @@ class ApproachITPage(ManagedExperimentPage):
     def start(self) -> None:
         try:
             params = self.parameters()
-            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve): plot.clear()
+            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.clear()
             self._it_t0 = None; self._begin(params); self.app.toast("Approach + I–t started", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
@@ -965,14 +991,16 @@ class ApproachITPage(ManagedExperimentPage):
             if experiment._hardware: stage = self.app.backend.hardware_program_context(sample.line_number)[1]
             else:
                 was_it = experiment.state == ExperimentState.IT; update = experiment.tick_samples([sample]); stage = "it" if was_it or experiment.state == ExperimentState.IT else ""
-            if stage == "approach" or (not experiment._hardware and state_before == ExperimentState.APPROACHING): self.approach_curve.append(sample.z_um, current, redraw=False)
+            if stage == "approach" or (not experiment._hardware and state_before == ExperimentState.APPROACHING):
+                self.approach_curve.append(sample.z_um, current, redraw=False)
+                self.approach_history.append_timed(sample.elapsed_s, sample.z_um, current, redraw=False)
             if stage.startswith("it"):
                 self._it_t0 = sample.elapsed_s if self._it_t0 is None else self._it_t0; elapsed = sample.elapsed_s - self._it_t0
                 self.voltage_plot.append(elapsed, sample.voltage1_v, redraw=False); self.it_plot.append(elapsed, sample.current1_na, redraw=False)
         if experiment._hardware: update = experiment.tick_samples(samples)
         elif not samples: update = experiment.tick_samples([])
         if samples:
-            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve): plot.redraw()
+            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.redraw()
         self._show_update(update)
 
 
@@ -1027,7 +1055,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
         cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Cyclic voltammogram", "Only CV samples from the latest hop.", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
-        self.visual_tabs.addTab(_plot_card("Latest approach curve", "Selected feedback current versus measured Z at the latest hop.", self.approach_curve), "Approach curve")
+        self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
+        self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
         ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential.", self.current_map), 1); self.visual_tabs.addTab(maps, "Maps")
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
@@ -1046,7 +1075,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
     def start(self) -> None:
         try:
             params = self.parameters()
-            for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve): plot.clear()
+            for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve, self.approach_history): plot.clear()
             self.cv_pixel_label.setText("Waiting for a CV"); self.z_map.set_data({}, params.y_points, params.x_points); self.current_map.set_data({}, params.y_points, params.x_points)
             self._cv_point = -1; self._begin(params); self.app.toast(f"Scan started · {params.point_count} hops", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
@@ -1076,14 +1105,17 @@ class ScanHoppingCVPage(ManagedExperimentPage):
                 if state_before == ExperimentState.APPROACHING: stage = "approach"
             if stage == "approach" and point_index >= 0:
                 if point_index != self._approach_point:
+                    if self.approach_history.x_values:
+                        self.approach_history.add_gap(elapsed)
                     self.approach_curve.clear(); self._approach_point = point_index
                 self.approach_curve.append(sample.z_um, current, redraw=False)
+                self.approach_history.append_timed(elapsed, sample.z_um, current, redraw=False)
             if stage == "cv" and point_index >= 0:
                 if point_index != self._cv_point:
                     self.cv_plot.clear(); self._cv_point = point_index; row, column = experiment.params.grid()[point_index][:2]
                     self.cv_pixel_label.setText(f"Hop {point_index + 1} · row {row + 1}, column {column + 1}")
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
-        if samples: self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw()
+        if samples: self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
         if cv_changed: self.cv_plot.redraw()
         params = experiment.params; self.z_map.set_data(experiment.contact_z, params.y_points, params.x_points); self.current_map.set_data(experiment.current_at_potential, params.y_points, params.x_points)
         self._show_update(update)
@@ -1138,7 +1170,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Hop I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Hop I–t elapsed (s)")
         il.addWidget(_plot_card("Potential E1", "Timed steps at the latest hop.", self.voltage_plot), 1); il.addWidget(_plot_card("Current 1", "I–t response at the latest hop.", self.it_plot), 1); tabs.addTab(it, "I–t at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
-        tabs.addTab(_plot_card("Latest approach curve", "Selected feedback current versus measured Z at the latest hop.", self.approach_curve), "Approach curve")
+        self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
+        tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
         ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold.", self.current_map), 1); tabs.addTab(maps, "Maps")
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
@@ -1157,7 +1190,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
     def start(self) -> None:
         try:
             params = self.parameters()
-            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve): plot.clear()
+            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.clear()
             self.z_map.set_data({}, params.y_points, params.x_points); self.current_map.set_data({}, params.y_points, params.x_points); self._it_point, self._it_t0 = -1, None
             self._begin(params); self.app.toast("Hopping I–t scan started", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
@@ -1177,14 +1210,17 @@ class ScanHoppingITPage(ManagedExperimentPage):
                 point, stage = (sample.scan_pixel if sample.scan_pixel >= 0 else point_before), ("it" if was_it or experiment.state == ExperimentState.IT else "approach" if state_before == ExperimentState.APPROACHING else "")
             if stage == "approach" and point >= 0:
                 if point != self._approach_point:
+                    if self.approach_history.x_values:
+                        self.approach_history.add_gap(elapsed)
                     self.approach_curve.clear(); self._approach_point = point
                 self.approach_curve.append(sample.z_um, current, redraw=False)
+                self.approach_history.append_timed(elapsed, sample.z_um, current, redraw=False)
             if stage.startswith("it") and point >= 0:
                 if point != self._it_point: self._it_point, self._it_t0 = point, sample.elapsed_s; self.voltage_plot.clear(); self.it_plot.clear()
                 elapsed = sample.elapsed_s - (self._it_t0 if self._it_t0 is not None else sample.elapsed_s)
                 self.voltage_plot.append(elapsed, sample.voltage1_v, redraw=False); self.it_plot.append(elapsed, sample.current1_na, redraw=False)
         if samples:
-            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve): plot.redraw()
+            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.redraw()
         params = experiment.params; self.z_map.set_data(experiment.contact_z, params.y_points, params.x_points); self.current_map.set_data(experiment.current_at_pulse, params.y_points, params.x_points)
         self._show_update(update)
 

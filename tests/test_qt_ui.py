@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import math
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -9,7 +10,7 @@ from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.models import Sample
-from echemtips.qt_common import Heatmap, Plot
+from echemtips.qt_common import Heatmap, Plot, TimedXYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
@@ -80,6 +81,9 @@ class QtLayoutTests(unittest.TestCase):
             for page_name in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
                 curve = window.pages[page_name].approach_curve
                 self.assertEqual(curve.graph.getAxis("bottom").labelText, "Z position (µm)")
+                history = window.pages[page_name].approach_history
+                self.assertEqual(history.graph.getAxis("bottom").labelText, "Z position (µm)")
+                self.assertEqual(history.history_window_s, 60)
             for page_name in ("CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
                 preview = window.pages[page_name].program_preview
                 self.assertGreater(len(preview.labels), 0, page_name)
@@ -100,7 +104,7 @@ class QtLayoutTests(unittest.TestCase):
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
-                ("Time traces", "Voltammogram", "Approach curve"),
+                ("Time traces", "Voltammogram", "Approach curves"),
             )
             expected_sections = {
                 "Approach": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition"),
@@ -208,6 +212,21 @@ class QtLayoutTests(unittest.TestCase):
             self.assertEqual(page.elapsed_from_start(Sample(900, 35, 35, 55, 0.1, 0, 1, 0)), 0.0)
         finally:
             window.close()
+
+    def test_current_vs_z_history_uses_time_for_its_rolling_window(self) -> None:
+        plot = TimedXYPlot("History", "Current (nA)", "#12877f", 1000, "Z position (µm)", 60)
+        try:
+            plot.append_timed(0, 50, 1, redraw=False)
+            plot.append_timed(30, 55, 2, redraw=False)
+            plot.add_gap(61)
+            plot.append_timed(61, 60, 3, redraw=False)
+            plot.redraw()
+            self.assertEqual(plot.clock_values, [30, 61, 61])
+            self.assertEqual(plot.x_values[0], 55)
+            self.assertTrue(math.isnan(plot.x_values[1]))
+            self.assertEqual(plot.series[0][-1], 3)
+        finally:
+            plot.close()
 
     def test_watch_current_only_plots_during_an_explicit_live_session(self) -> None:
         window = EChemTipsApp()

@@ -267,6 +267,71 @@ class Plot(QtWidgets.QWidget):
             self.setMinimumHeight(height)
 
 
+class TimedXYPlot(Plot):
+    """X/Y trace whose visible history is bounded by a separate time clock.
+
+    This is used for current-versus-Z approach histories: Z remains the
+    horizontal axis while acquisition time decides when old samples leave the
+    display. Full-rate persistence is handled independently by DataRecorder.
+    """
+
+    def __init__(
+        self,
+        title: str,
+        y_label: str,
+        color: str,
+        max_points: int,
+        x_label: str,
+        history_window_s: float = 60.0,
+    ) -> None:
+        if not math.isfinite(history_window_s) or history_window_s <= 0:
+            raise ValueError("History window must be positive.")
+        super().__init__(title, y_label, (color,), max_points, x_label)
+        self.history_window_s = history_window_s
+        self.clock_values: list[float] = []
+
+    def clear(self) -> None:
+        self.clock_values.clear()
+        super().clear()
+
+    def append_timed(self, clock_s: float, x: float, y: float, *, redraw: bool = True) -> None:
+        if not all(math.isfinite(value) for value in (clock_s, x, y)):
+            return
+        self.clock_values.append(clock_s)
+        self.x_values.append(x)
+        self.series[0].append(y)
+        self._prune_and_compact()
+        if redraw:
+            self.redraw()
+
+    def add_gap(self, clock_s: float) -> None:
+        """Prevent a line joining two separate approaches."""
+        if not math.isfinite(clock_s):
+            return
+        self.clock_values.append(clock_s)
+        self.x_values.append(float("nan"))
+        self.series[0].append(float("nan"))
+
+    def _prune_and_compact(self) -> None:
+        if self.clock_values:
+            cutoff = self.clock_values[-1] - self.history_window_s
+            first_visible = bisect_left(self.clock_values, cutoff)
+            if first_visible:
+                del self.clock_values[:first_visible]
+                del self.x_values[:first_visible]
+                del self.series[0][:first_visible]
+        if len(self.clock_values) > self.max_points * 2:
+            count = len(self.clock_values)
+            indices = [round(index * (count - 1) / (self.max_points - 1)) for index in range(self.max_points)]
+            self.clock_values[:] = [self.clock_values[index] for index in indices]
+            self.x_values[:] = [self.x_values[index] for index in indices]
+            self.series[0][:] = [self.series[0][index] for index in indices]
+
+    def redraw(self) -> None:
+        self._prune_and_compact()
+        super().redraw()
+
+
 class ProgramDiagram(QtWidgets.QWidget):
     """Small parameter-linked line profile used to explain a method program."""
 
