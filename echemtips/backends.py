@@ -696,7 +696,7 @@ class NIFPGABackend(InstrumentBackend):
         if not isinstance(raw, Mapping):
             raise BackendError("Site driver approach_cv_status() must return a mapping.")
         stage = str(raw.get("stage", "")).strip().lower()
-        allowed = {"preposition", "approaching", "contact", "cv", "retracting", "complete", "aborted"}
+        allowed = {"preposition", "approaching", "contact", "settling", "cv", "retracting", "complete", "aborted"}
         if stage not in allowed:
             raise BackendError(f"Site driver returned an invalid approach + CV stage: {stage!r}.")
         try:

@@ -233,6 +233,24 @@ class NIBackendSafetyTests(unittest.TestCase):
         backend.set_live_potential(2, -0.3)
         self.assertEqual(calls, [("idle", 1, 0.2), ("live", 2, -0.3)])
 
+    def test_approach_cv_accepts_the_driver_settling_stage(self) -> None:
+        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend.connected = True
+        backend._driver = SimpleNamespace(
+            start_approach_cv=lambda _params: None,
+            stop_motion=lambda: None,
+            approach_cv_status=lambda: {
+                "stage": "settling",
+                "detail": "Holding contact before CV",
+                "progress": 0.45,
+            },
+        )
+
+        update = backend.hardware_approach_cv_status()
+
+        self.assertEqual(update.stage, "settling")
+        self.assertEqual(update.detail, "Holding contact before CV")
+
 
 class DataTests(unittest.TestCase):
     def test_csv_and_metadata_are_written(self) -> None:
