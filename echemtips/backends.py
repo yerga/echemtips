@@ -102,6 +102,10 @@ class InstrumentBackend(ABC):
         """Describe unavoidable output changes caused merely by connecting."""
         return ""
 
+    def experiment_time(self) -> float:
+        """Monotonic execution clock used by host-side experiment timers."""
+        return time.monotonic()
+
     @property
     @abstractmethod
     def label(self) -> str:
@@ -233,6 +237,8 @@ class SimulationBackend(InstrumentBackend):
         self._voltage = {1: 0.0, 2: 0.0}
         self._line_number = 0
         self._paused = False
+        self._paused_at: float | None = None
+        self._paused_duration_s = 0.0
         self._diagnostic_mode = "normal"
         self._diagnostic_resistance_mohm = 100.0
         self._last_sample_voltage = 0.0
@@ -251,6 +257,14 @@ class SimulationBackend(InstrumentBackend):
     def connect(self, *, allow_startup_actuation: bool = False) -> None:
         self.connected = True
         self._started = self._last_tick = time.monotonic()
+        self._paused = False
+        self._paused_at = None
+        self._paused_duration_s = 0.0
+
+    def experiment_time(self) -> float:
+        now = time.monotonic()
+        current_pause = now - self._paused_at if self._paused_at is not None else 0.0
+        return now - self._paused_duration_s - current_pause
 
     @_synchronized_io
     def disconnect(self) -> None:
@@ -342,12 +356,18 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def pause(self) -> None:
-        self._paused = True
+        if not self._paused:
+            self._paused = True
+            self._paused_at = time.monotonic()
 
     @_synchronized_io
     def resume(self) -> None:
+        now = time.monotonic()
+        if self._paused_at is not None:
+            self._paused_duration_s += max(0.0, now - self._paused_at)
+            self._paused_at = None
         self._paused = False
-        self._last_tick = time.monotonic()
+        self._last_tick = now
 
     @_synchronized_io
     def end_current_waypoint(self) -> None:

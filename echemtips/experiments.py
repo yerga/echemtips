@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import time
 
 from .backends import InstrumentBackend
 from .models import (
@@ -63,7 +62,7 @@ class ApproachCVExperiment:
         self.state = ExperimentState.IDLE
         self.detail = "Configure the approach and CV, then start."
         self.progress = 0.0
-        self._last_tick = time.monotonic()
+        self._last_tick = self.backend.experiment_time()
         self._cv_voltage = 0.0
         self._segments: list[float] = []
         self._segment_index = 0
@@ -94,7 +93,7 @@ class ApproachCVExperiment:
         if not self.backend.hardware_approach_cv_required and not self.backend.motion_available:
             raise RuntimeError("This backend cannot move the probe.")
         self.params = params
-        self._last_tick = time.monotonic()
+        self._last_tick = self.backend.experiment_time()
         self._segments = []
         self._segment_index = 0
         self._hardware_sequence = self.backend.hardware_approach_cv_required
@@ -149,7 +148,7 @@ class ApproachCVExperiment:
         if self.params.settling_time_s <= 0:
             self._begin_cv()
             return
-        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self._settle_deadline = self.backend.experiment_time() + self.params.settling_time_s
         self.state = ExperimentState.SETTLING
         self.detail = f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
@@ -171,7 +170,7 @@ class ApproachCVExperiment:
             self.progress = update.progress
             return ExperimentUpdate(self.state, self.detail, self.progress)
 
-        now = time.monotonic()
+        now = self.backend.experiment_time()
         dt = min(now - self._last_tick, 0.25)
         self._last_tick = now
         p = self.params
@@ -265,7 +264,7 @@ class ScanHoppingCVExperiment:
         self.contact_detected: dict[tuple[int, int], bool] = {}
         self.approach_trace: list[tuple[float, float, float]] = []
         self._grid: list[tuple[int, int, float, float]] = []
-        self._last_tick = time.monotonic()
+        self._last_tick = self.backend.experiment_time()
         self._segments: list[float] = []
         self._segment_index = 0
         self._cv_voltage = 0.0
@@ -384,7 +383,7 @@ class ScanHoppingCVExperiment:
         if self.params.settling_time_s <= 0:
             self._begin_simulated_cv()
             return
-        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self._settle_deadline = self.backend.experiment_time() + self.params.settling_time_s
         self.state = ExperimentState.SETTLING
         self.detail = (
             f"Point {self.point_index + 1}/{self.params.point_count} · "
@@ -448,13 +447,13 @@ class ScanHoppingCVExperiment:
                 self.state = ExperimentState.RETRACTING
                 self.detail = f"Point {self.point_index + 1}/{p.point_count} · no contact; retracting and aborting scan"
         if self.state == ExperimentState.SETTLING:
-            if time.monotonic() < self._settle_deadline:
+            if self.backend.experiment_time() < self._settle_deadline:
                 return
             self._begin_simulated_cv()
             return
         if self.state == ExperimentState.CV:
             self._track_current(sample, self.point_index)
-            now = time.monotonic()
+            now = self.backend.experiment_time()
             dt = min(now - self._last_tick, 0.25)
             self._last_tick = now
             target = self._segments[self._segment_index]
@@ -567,7 +566,7 @@ class CVExperiment:
         self._targets: list[float] = []
         self._target_index = 0
         self._voltage: float | None = None
-        self._last_tick = time.monotonic()
+        self._last_tick = self.backend.experiment_time()
 
     @property
     def active(self) -> bool:
@@ -579,7 +578,7 @@ class CVExperiment:
             raise ValueError("\n".join(errors))
         self.params = params
         self._hardware = self.backend.hardware_approach_cv_required
-        self._last_tick = time.monotonic()
+        self._last_tick = self.backend.experiment_time()
         self._target_index = 0
         self.progress = 0.0
         if self._hardware:
@@ -619,7 +618,7 @@ class CVExperiment:
             return ExperimentUpdate(self.state, self.detail, self.progress)
         if self._voltage is None:
             self._voltage = samples[-1].voltage1_v
-        now = time.monotonic()
+        now = self.backend.experiment_time()
         dt = min(now - self._last_tick, 0.25)
         self._last_tick = now
         target = self._targets[self._target_index]
@@ -708,7 +707,7 @@ class ApproachExperiment:
         if self.params.settling_time_s <= 0:
             self._finish_contact()
             return
-        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self._settle_deadline = self.backend.experiment_time() + self.params.settling_time_s
         self.state, self.detail = ExperimentState.SETTLING, f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
@@ -752,7 +751,7 @@ class ApproachExperiment:
                         self.state, self.detail = ExperimentState.RETRACTING, "End Z reached without contact; retracting"
                     else:
                         self.state, self.detail = ExperimentState.ABORTED, "End Z reached without contact"
-            if self.state == ExperimentState.SETTLING and time.monotonic() >= self._settle_deadline:
+            if self.state == ExperimentState.SETTLING and self.backend.experiment_time() >= self._settle_deadline:
                 self._finish_contact()
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - p.start_z_um) < .08:
                 self.state = ExperimentState.ABORTED if self._no_contact else ExperimentState.COMPLETE
@@ -826,14 +825,14 @@ class ApproachITExperiment:
         if self.params.settling_time_s <= 0:
             self._start_it()
             return
-        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self._settle_deadline = self.backend.experiment_time() + self.params.settling_time_s
         self.state, self.detail = ExperimentState.SETTLING, f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def _start_it(self) -> None:
         potential, duration, label = self._steps[0]
         self.backend.set_voltage(1, potential)
         self._step_index, self.it_label = 0, label
-        self._step_deadline = time.monotonic() + duration
+        self._step_deadline = self.backend.experiment_time() + duration
         self.state, self.detail = ExperimentState.IT, f"I-t segment 1/{len(self._steps)} · {label}"
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
@@ -876,9 +875,9 @@ class ApproachITExperiment:
                         self.state, self.detail = ExperimentState.RETRACTING, "End Z reached without contact; retracting"
                     else:
                         self.state, self.detail = ExperimentState.ABORTED, "End Z reached without contact; I-t not run"
-            if self.state == ExperimentState.SETTLING and time.monotonic() >= self._settle_deadline:
+            if self.state == ExperimentState.SETTLING and self.backend.experiment_time() >= self._settle_deadline:
                 self._start_it()
-            if self.state == ExperimentState.IT and time.monotonic() >= self._step_deadline:
+            if self.state == ExperimentState.IT and self.backend.experiment_time() >= self._step_deadline:
                 self._step_index += 1
                 if self._step_index >= len(self._steps):
                     if p.retract_after:
@@ -890,7 +889,7 @@ class ApproachITExperiment:
                     potential, duration, label = self._steps[self._step_index]
                     self.backend.set_voltage(1, potential)
                     self.it_label = label
-                    self._step_deadline = time.monotonic() + duration
+                    self._step_deadline = self.backend.experiment_time() + duration
                     self.detail = f"I-t segment {self._step_index + 1}/{len(self._steps)} · {label}"
                 self.progress = .4 + .5 * self._step_index / max(1, len(self._steps))
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - p.start_z_um) < .08:
@@ -984,7 +983,7 @@ class ScanHoppingITExperiment:
         potential, duration, label = self._steps[0]
         self.backend.stop_motion(); self.backend.set_voltage(1, potential)
         self._step_index, self.it_label = 0, label
-        self._step_deadline = time.monotonic() + duration
+        self._step_deadline = self.backend.experiment_time() + duration
         self.state, self.detail = ExperimentState.IT, f"Point {self.point_index + 1}/{self.params.point_count} · I-t {label}"
 
     def _begin_settling(self) -> None:
@@ -992,7 +991,7 @@ class ScanHoppingITExperiment:
         if self.params.settling_time_s <= 0:
             self._start_it()
             return
-        self._settle_deadline = time.monotonic() + self.params.settling_time_s
+        self._settle_deadline = self.backend.experiment_time() + self.params.settling_time_s
         self.state, self.detail = (
             ExperimentState.SETTLING,
             f"Point {self.point_index + 1}/{self.params.point_count} · settling {self.params.settling_time_s:g} s",
@@ -1064,13 +1063,13 @@ class ScanHoppingITExperiment:
                     self.state, self.detail = ExperimentState.RETRACTING, "End Z reached without contact; aborting after retract"
                     self.it_label = "no-contact"
             if self.state == ExperimentState.SETTLING:
-                if time.monotonic() < self._settle_deadline:
+                if self.backend.experiment_time() < self._settle_deadline:
                     continue
                 self._start_it()
             if self.state == ExperimentState.IT:
                 if self.it_label == "pulse":
                     self._pulse_samples.setdefault(self.point_index, []).append(sample.current1_na)
-                if time.monotonic() >= self._step_deadline:
+                if self.backend.experiment_time() >= self._step_deadline:
                     self._step_index += 1
                     if self._step_index >= len(self._steps):
                         self._finish_pulse_map(self.point_index)
@@ -1081,7 +1080,7 @@ class ScanHoppingITExperiment:
                     else:
                         potential, duration, label = self._steps[self._step_index]
                         self.backend.set_voltage(1, potential); self.it_label = label
-                        self._step_deadline = time.monotonic() + duration
+                        self._step_deadline = self.backend.experiment_time() + duration
             retract_target = p.start_z_um if self.it_label == "no-contact" else self._retract_target_z
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < .08:
                 if self.it_label == "no-contact":

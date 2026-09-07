@@ -123,6 +123,33 @@ class SimulationTests(unittest.TestCase):
         near = self.backend.read_sample().current1_na
         self.assertGreater(near, far + 1.0)
 
+    def test_pause_freezes_host_side_cv_and_it_timers(self) -> None:
+        cv = CVExperiment(self.backend, self.settings)
+        cv.start(CVParameters(start_v=-0.2, vertex1_v=0.4, vertex2_v=-0.2, scan_rate_v_s=0.1, cycles=1))
+        cv.tick_samples([self.backend.read_sample()])
+        self.backend.pause()
+        assert self.backend._paused_at is not None
+        paused_at = self.backend._paused_at
+        cv.tick_samples([self.backend.read_sample()])
+        voltage_before = self.backend._voltage[1]
+
+        approach_it = ApproachITExperiment(self.backend, self.settings)
+        approach_it.params = ApproachITParameters()
+        approach_it._steps = approach_it.params.it_steps()
+        approach_it.state = ExperimentState.IT
+        approach_it._step_index = 0
+        approach_it._step_deadline = self.backend.experiment_time() + 10.0
+        remaining_before = approach_it._step_deadline - self.backend.experiment_time()
+
+        with patch("echemtips.backends.time.monotonic", return_value=paused_at + 20.0):
+            cv.tick_samples([self.backend.read_sample()])
+            approach_it.tick_samples([self.backend.read_sample()])
+            remaining_after = approach_it._step_deadline - self.backend.experiment_time()
+
+        self.assertEqual(self.backend._voltage[1], voltage_before)
+        self.assertEqual(approach_it._step_index, 0)
+        self.assertAlmostEqual(remaining_after, remaining_before, delta=0.02)
+
 
 class ConversionTests(unittest.TestCase):
     def test_fpga_raw_scaling(self) -> None:
