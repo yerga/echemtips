@@ -537,6 +537,7 @@ class ScanHoppingCVExperiment:
             state_by_stage = {
                 "preposition": ExperimentState.PREPOSITION,
                 "approaching": ExperimentState.APPROACHING,
+                "contact": ExperimentState.CONTACT,
                 "settling": ExperimentState.SETTLING,
                 "cv": ExperimentState.CV,
                 "retracting": ExperimentState.RETRACTING,

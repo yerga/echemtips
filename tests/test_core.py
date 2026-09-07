@@ -520,6 +520,43 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.current_at_potential[(0, 0)], 3.25)
         self.assertEqual(samples[1].scan_pixel, 0)
 
+    def test_hardware_scan_contact_transition_remains_active_until_cv(self) -> None:
+        class HardwareScanBackend(SimulationBackend):
+            def __init__(self, settings: AppSettings) -> None:
+                super().__init__(settings)
+                self.updates = [
+                    HardwareSequenceUpdate("contact", "contact confirmed", 0.1, 0, "contact"),
+                    HardwareSequenceUpdate("cv", "CV submitted", 0.2, 0, "cv"),
+                ]
+
+            @property
+            def hardware_approach_cv_required(self) -> bool:
+                return True
+
+            @property
+            def scan_hopping_cv_available(self) -> bool:
+                return True
+
+            def start_hardware_scan_hopping_cv(self, params: ScanHoppingCVParameters) -> None:
+                self.params = params
+
+            def hardware_scan_hopping_cv_status(self) -> HardwareSequenceUpdate:
+                return self.updates.pop(0)
+
+        settings = AppSettings()
+        backend = HardwareScanBackend(settings)
+        backend.connect()
+        experiment = ScanHoppingCVExperiment(backend, settings)
+        experiment.start(ScanHoppingCVParameters(x_points=1, y_points=1))
+
+        contact = experiment.tick_samples([])
+        self.assertEqual(contact.state, ExperimentState.CONTACT)
+        self.assertTrue(experiment.active)
+
+        cv = experiment.tick_samples([])
+        self.assertEqual(cv.state, ExperimentState.CV)
+        self.assertTrue(experiment.active)
+
 
 if __name__ == "__main__":
     unittest.main()
