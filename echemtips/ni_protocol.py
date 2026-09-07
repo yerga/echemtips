@@ -17,6 +17,17 @@ TARGET_TO_HOST_FIFO = "FPGA_To_Host_FIFO"
 DEPLOYED_USB_TARGET_CLASS = "USB-7856R"
 DEPLOYED_USB_SIGNATURE = "8229BC0D5A4935D854D1286878CEE54A"
 
+# FPGA Target.vi writes these values directly to AO0-AO4 and their Applied
+# indicators in its unconditional startup frame. External Pause is evaluated
+# later and therefore cannot prevent these startup output changes.
+DEPLOYED_STARTUP_RAW_OUTPUTS = {
+    "Applied X": 0x3FFF,
+    "Applied Y": 0x3FFF,
+    "Applied Z": 0,
+    "Applied Voltage": 0,
+    "Applied Voltage 2": 0,
+}
+
 # Developer Guide tables 1/2 and ChangeOnFly.ctl. Keeping these mappings in
 # one tested profile avoids scattering numeric hardware enums through drivers.
 ANALOG_OUTPUT_CHANNELS = {"X": "AO0", "Y": "AO1", "Z": "AO2", "Voltage 1": "AO3", "Voltage 2": "AO4"}

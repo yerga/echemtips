@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 import math
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
+from echemtips.backends import SimulationBackend
+from echemtips.models import AppSettings
 from echemtips.models import Sample
 from echemtips.qt_common import Heatmap, Plot, TimedXYPlot
 from echemtips.ui import EChemTipsApp, create_application
@@ -201,6 +204,46 @@ class QtLayoutTests(unittest.TestCase):
             self.assertEqual(values["x_um"].text(), "— µm")
             self.assertEqual(values["current2_na"].text(), "— nA")
         finally:
+            window.close()
+
+    def test_fpga_startup_warning_must_be_accepted_before_connecting(self) -> None:
+        class StartupBackend(SimulationBackend):
+            allow_startup_actuation = False
+
+            @property
+            def startup_notice(self) -> str:
+                return "Starting the FPGA changes physical outputs."
+
+            def connect(self, *, allow_startup_actuation: bool = False) -> None:
+                self.allow_startup_actuation = allow_startup_actuation
+                if allow_startup_actuation:
+                    super().connect()
+
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        backend = StartupBackend(AppSettings())
+        window.backend = backend
+        try:
+            with patch.object(
+                QtWidgets.QMessageBox,
+                "warning",
+                return_value=QtWidgets.QMessageBox.StandardButton.Cancel,
+            ):
+                window.toggle_connection()
+            self.assertFalse(backend.connected)
+            self.assertFalse(backend.allow_startup_actuation)
+
+            with patch.object(
+                QtWidgets.QMessageBox,
+                "warning",
+                return_value=QtWidgets.QMessageBox.StandardButton.Yes,
+            ):
+                window.toggle_connection()
+            self.assertTrue(backend.connected)
+            self.assertTrue(backend.allow_startup_actuation)
+        finally:
+            window._stop_acquisition()
+            backend.disconnect()
             window.close()
 
     def test_heatmap_has_compact_labelled_scale(self) -> None:

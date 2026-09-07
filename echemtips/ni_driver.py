@@ -13,6 +13,7 @@ from .models import (
     hold_frame_count,
 )
 from .ni_protocol import (
+    DEPLOYED_STARTUP_RAW_OUTPUTS,
     FPGA_TICKS_PER_US,
     FEEDBACK_ACTION_CODES,
     FEEDBACK_SIGNAL_CODES,
@@ -397,6 +398,33 @@ class WECSPMDriver:
             f"FPGA did not enter its ready state within {self.settings.hardware_ready_timeout_s:g} s; "
             "the target was stopped and must be reinitialized."
         )
+
+    def verify_startup_state(self) -> dict[str, int | bool]:
+        """Verify the hard-coded FPGA startup frame before enabling commands."""
+        expected: dict[str, int | bool] = {
+            **DEPLOYED_STARTUP_RAW_OUTPUTS,
+            "LineNumber": 0,
+            "External Pause": True,
+            "External Stop": False,
+            "Internal Pause": False,
+            "Internal Stop": False,
+            "EndCurrentLine": False,
+            "WaitingForWayPoints": True,
+        }
+        observed = {name: self._read_register(name) for name in expected}
+        mismatches = [
+            f"{name}={observed[name]!r} (expected {value!r})"
+            for name, value in expected.items()
+            if observed[name] != value
+        ]
+        if mismatches:
+            detail = "Unexpected FPGA startup state: " + "; ".join(mismatches)
+            try:
+                self.emergency_stop()
+            except Exception as exc:
+                detail += f"; emergency-stop verification also failed: {exc}"
+            raise RuntimeError(detail)
+        return observed
 
     def _check_target_health(self, *, allow_external_stop: bool = False) -> None:
         state = getattr(self.session, "fpga_vi_state", None)

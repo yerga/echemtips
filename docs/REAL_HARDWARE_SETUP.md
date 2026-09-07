@@ -28,6 +28,12 @@ In NI MAX, confirm that the device appears under Remote Systems/Devices and Inte
 
 The commissioned `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx` reports target class `USB-7856R` and signature `8229BC0D5A4935D854D1286878CEE54A`. It matches the native driver's WEC-SPM host interface but is not distributed in this repository. eChemTips uses `ECHEMTIPS_BITFILE` when set and also detects that filename in a sibling `WEC_SPM/FPGA Bitfiles` archive; otherwise select the private target explicitly in Settings. The older `FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx` is a PCIe-7852R image and must not be selected for the USB device.
 
+## Connection changes physical outputs
+
+Running the deployed FPGA executes an unconditional startup frame before its pause-controlled loops. It sets AO0/X and AO1/Y to raw `0x3FFF` (about +5 V), AO2/Z to 0 V, and AO3/E1 plus AO4/E2 to 0 V. The corresponding physical X/Y/Z positions shown by eChemTips are calculated from the configured piezo ranges and bipolar settings; measured positions can differ. `External Pause` cannot suppress these startup writes.
+
+The GUI therefore describes the exact expected startup outputs and requires confirmation before running an NI target. The native driver then verifies the applied-output registers, zero line number, pause/stop controls, and empty waiting state before the application reports a successful connection. A mismatch asserts the emergency stop and rejects the connection. Put the probe in a safely retracted condition and ensure the stage can accept this movement before confirming. Programmatic callers must explicitly pass `allow_startup_actuation=True` to `NIFPGABackend.connect()`.
+
 The Python app validates target family, required register datatypes/access roles, and FIFO datatypes, directions, and depths before opening a session. It will refuse a PCIe image while **USB R Series** is selected.
 
 ## Commissioning order

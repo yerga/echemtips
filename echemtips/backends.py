@@ -15,6 +15,7 @@ from typing import Any
 from .host import ExecutionSnapshot, ExecutionState
 from .models import AppSettings, ApproachCVParameters, FeedbackConfiguration, Sample, ScanHoppingCVParameters
 from .ni_protocol import (
+    DEPLOYED_STARTUP_RAW_OUTPUTS,
     inspect_bitfile,
     raw_to_adc_voltage,
     raw_to_current,
@@ -97,12 +98,17 @@ class InstrumentBackend(ABC):
         return "Measured/simulated position"
 
     @property
+    def startup_notice(self) -> str:
+        """Describe unavoidable output changes caused merely by connecting."""
+        return ""
+
+    @property
     @abstractmethod
     def label(self) -> str:
         raise NotImplementedError
 
     @abstractmethod
-    def connect(self) -> None:
+    def connect(self, *, allow_startup_actuation: bool = False) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -242,7 +248,7 @@ class SimulationBackend(InstrumentBackend):
         return "Simulator"
 
     @_synchronized_io
-    def connect(self) -> None:
+    def connect(self, *, allow_startup_actuation: bool = False) -> None:
         self.connected = True
         self._started = self._last_tick = time.monotonic()
 
@@ -374,11 +380,35 @@ class NIFPGABackend(InstrumentBackend):
         self._session: Any = None
         self._driver: Any = None
         self._started = 0.0
+        self._startup_verified = False
         self.driver_module = driver_module
 
     @property
     def label(self) -> str:
         return f"NI FPGA · {self.settings.resource}"
+
+    @property
+    def startup_notice(self) -> str:
+        x_um = raw_to_position(
+            DEPLOYED_STARTUP_RAW_OUTPUTS["Applied X"], self.settings.x_range_um, self.settings.x_bipolar
+        )
+        y_um = raw_to_position(
+            DEPLOYED_STARTUP_RAW_OUTPUTS["Applied Y"], self.settings.y_range_um, self.settings.y_bipolar
+        )
+        z_um = raw_to_position(
+            DEPLOYED_STARTUP_RAW_OUTPUTS["Applied Z"], self.settings.z_range_um, self.settings.z_bipolar
+        )
+        return (
+            "Running the deployed FPGA immediately sets AO0/X and AO1/Y to about +5 V "
+            f"(approximately X {x_um:.1f} µm, Y {y_um:.1f} µm with the configured calibration), "
+            f"AO2/Z to 0 V (approximately Z {z_um:.1f} µm), and E1/E2 to 0 V. "
+            "External Pause does not block these startup writes. Ensure the probe is safely retracted "
+            "and the stage can move before continuing."
+        )
+
+    @property
+    def startup_verified(self) -> bool:
+        return self._startup_verified
 
     @property
     def motion_available(self) -> bool:
@@ -433,10 +463,15 @@ class NIFPGABackend(InstrumentBackend):
         return "Measured AI0/AI1/AI2"
 
     @_synchronized_io
-    def connect(self) -> None:
+    def connect(self, *, allow_startup_actuation: bool = False) -> None:
         settings_errors = self.settings.validate()
         if settings_errors:
             raise BackendError("Invalid instrument settings: " + "; ".join(settings_errors))
+        if not allow_startup_actuation:
+            raise BackendError(
+                "Connecting this FPGA changes X/Y/Z and E1/E2 outputs immediately. "
+                "Use the application connection confirmation to authorize the documented startup outputs."
+            )
         try:
             from nifpga import Session
         except ImportError as exc:
@@ -469,8 +504,15 @@ class NIFPGABackend(InstrumentBackend):
 
                 self._driver = create_driver(self._session, self.settings)
             self._session.run()
-            if callable(getattr(self._driver, "wait_until_ready", None)):
-                self._driver.wait_until_ready()
+            wait_until_ready = getattr(self._driver, "wait_until_ready", None)
+            verify_startup_state = getattr(self._driver, "verify_startup_state", None)
+            if not callable(wait_until_ready) or not callable(verify_startup_state):
+                raise RuntimeError(
+                    "The FPGA driver does not implement the required startup-ready and output-verification handshake."
+                )
+            wait_until_ready()
+            verify_startup_state()
+            self._startup_verified = True
             self.connected = True
             self._started = time.monotonic()
         except Exception as exc:
@@ -490,6 +532,7 @@ class NIFPGABackend(InstrumentBackend):
                 pass
         self._session = None
         self._driver = None
+        self._startup_verified = False
         self.connected = False
 
     def _register(self, name: str) -> Any:

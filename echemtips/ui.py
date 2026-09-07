@@ -1776,7 +1776,26 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             self.flush_acquisition()
             if self.recorder.active: self.finish_recording(self.active_parameters, status="aborted")
             self._stop_acquisition(); self.backend.disconnect(); self._set_connection_ui(False); self.toast("Device disconnected", "warning"); return
-        try: self.backend.connect(); self._start_acquisition(); self._set_connection_ui(True); self.toast(f"Connected to {self.backend.label}", "success")
+        try:
+            startup_notice = self.backend.startup_notice
+            allow_startup_actuation = False
+            if startup_notice:
+                answer = QtWidgets.QMessageBox.warning(
+                    self,
+                    "FPGA startup changes physical outputs",
+                    startup_notice + "\n\nRun the FPGA and connect now?",
+                    QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.Cancel,
+                    QtWidgets.QMessageBox.StandardButton.Cancel,
+                )
+                if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                    self.toast("FPGA connection cancelled; outputs were not changed", "warning")
+                    return
+                allow_startup_actuation = True
+            self.backend.connect(allow_startup_actuation=allow_startup_actuation)
+            self._start_acquisition()
+            self._set_connection_ui(True)
+            suffix = " · startup outputs verified" if getattr(self.backend, "startup_verified", False) else ""
+            self.toast(f"Connected to {self.backend.label}{suffix}", "success")
         except BackendError as exc: self._set_connection_ui(False); self.show_error(str(exc))
 
     def _set_connection_ui(self, connected: bool) -> None:

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from echemtips.backends import BackendError, HardwareSequenceUpdate, NIFPGABackend, SafetyError, SimulationBackend
 from echemtips.data import DataRecorder
@@ -135,6 +138,75 @@ class NIBackendSafetyTests(unittest.TestCase):
         backend = NIFPGABackend(AppSettings(mode="NI FPGA", z_range_um=float("nan")))
         with self.assertRaisesRegex(BackendError, "Invalid instrument settings"):
             backend.connect()
+
+    def test_fpga_connection_requires_explicit_startup_actuation_permission(self) -> None:
+        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        self.assertIn("AO0/X", backend.startup_notice)
+        self.assertIn("+5 V", backend.startup_notice)
+        self.assertIn("X 50.0 µm", backend.startup_notice)
+        with self.assertRaisesRegex(BackendError, "changes X/Y/Z and E1/E2 outputs"):
+            backend.connect()
+
+    def test_authorized_fpga_connection_requires_and_records_startup_verification(self) -> None:
+        class Register:
+            def __init__(self) -> None:
+                self.value = False
+
+            def write(self, value: object) -> None:
+                self.value = value
+
+        class Session:
+            def __init__(self, _bitfile: str, _resource: str, *, no_run: bool) -> None:
+                self.no_run = no_run
+                self.fpga_vi_state = SimpleNamespace(name="NotRunning")
+                self.registers = {"External Stop": Register(), "External Pause": Register()}
+                self.ran = False
+                self.closed = False
+
+            def run(self) -> None:
+                self.ran = True
+
+            def close(self) -> None:
+                self.closed = True
+
+        class Driver:
+            def __init__(self) -> None:
+                self.ready = False
+                self.verified = False
+
+            def wait_until_ready(self) -> None:
+                self.ready = True
+
+            def verify_startup_state(self) -> None:
+                self.verified = True
+
+        with TemporaryDirectory() as folder:
+            bitfile = Path(folder) / "target.lvbitx"
+            bitfile.touch()
+            settings = AppSettings(mode="NI FPGA", bitfile=str(bitfile))
+            driver = Driver()
+            module = SimpleNamespace(create_driver=lambda _session, _settings: driver)
+            sessions: list[Session] = []
+
+            def open_session(*args: object, **kwargs: object) -> Session:
+                session = Session(*args, **kwargs)
+                sessions.append(session)
+                return session
+
+            with (
+                patch.dict(sys.modules, {"nifpga": SimpleNamespace(Session=open_session), "test_startup_driver": module}),
+                patch("echemtips.backends.inspect_bitfile", return_value=object()),
+                patch("echemtips.backends.validate_wec_bitfile", return_value=[]),
+            ):
+                backend = NIFPGABackend(settings, driver_module="test_startup_driver")
+                backend.connect(allow_startup_actuation=True)
+
+            self.assertTrue(sessions[0].no_run)
+            self.assertTrue(sessions[0].ran)
+            self.assertTrue(driver.ready)
+            self.assertTrue(driver.verified)
+            self.assertTrue(backend.startup_verified)
+            self.assertTrue(backend.connected)
 
     def test_emergency_stop_uses_latching_driver_operation(self) -> None:
         calls: list[str] = []

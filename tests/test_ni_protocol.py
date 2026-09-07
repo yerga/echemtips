@@ -16,6 +16,7 @@ from echemtips.ni_protocol import (
     FEEDBACK_ACTION_CODES,
     FEEDBACK_SIGNAL_CODES,
     FPGA_TICKS_PER_US,
+    DEPLOYED_STARTUP_RAW_OUTPUTS,
     SAMPLE_WORDS,
     SampleDecoder,
     Waypoint,
@@ -834,6 +835,41 @@ class NativeDriverTests(unittest.TestCase):
     def test_ready_handshake_accepts_waiting_target(self) -> None:
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.wait_until_ready()
+
+    def test_startup_state_matches_deployed_fpga_outputs(self) -> None:
+        for name, value in DEPLOYED_STARTUP_RAW_OUTPUTS.items():
+            self.session.registers[name].value = value
+        self.session.registers["LineNumber"].value = 0
+        self.session.registers["External Pause"].value = True
+        self.session.registers["External Stop"].value = False
+        self.session.registers["Internal Pause"].value = False
+        self.session.registers["Internal Stop"].value = False
+        self.session.registers["EndCurrentLine"].value = False
+        self.session.registers["WaitingForWayPoints"].value = True
+
+        observed = self.driver.verify_startup_state()
+
+        self.assertEqual(observed["Applied X"], 0x3FFF)
+        self.assertEqual(observed["Applied Y"], 0x3FFF)
+        self.assertEqual(observed["Applied Z"], 0)
+
+    def test_unexpected_startup_output_is_stopped_and_rejected(self) -> None:
+        for name, value in DEPLOYED_STARTUP_RAW_OUTPUTS.items():
+            self.session.registers[name].value = value
+        self.session.registers["Applied X"].value = 0
+        self.session.registers["LineNumber"].value = 0
+        self.session.registers["External Pause"].value = True
+        self.session.registers["External Stop"].value = False
+        self.session.registers["Internal Pause"].value = False
+        self.session.registers["Internal Stop"].value = False
+        self.session.registers["EndCurrentLine"].value = False
+        self.session.registers["WaitingForWayPoints"].value = True
+
+        with self.assertRaisesRegex(RuntimeError, "Unexpected FPGA startup state"):
+            self.driver.verify_startup_state()
+
+        self.assertTrue(self.session.registers["External Pause"].value)
+        self.assertTrue(self.session.registers["External Stop"].value)
 
     def test_ready_handshake_timeout_asserts_emergency_stop(self) -> None:
         self.driver.settings.hardware_ready_timeout_s = 0.5
