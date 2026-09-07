@@ -119,8 +119,16 @@ class CVCycle:
         return currents[high_index], potentials[high_index], currents[low_index], potentials[low_index]
 
 
-def _target_index(voltages: list[float], start: int, end: int, target: float, direction: int, noise_tolerance: float) -> int | None:
-    """Find a target crossing, or the turning point if a real scan falls just short."""
+def _target_index(
+    voltages: list[float],
+    start: int,
+    end: int,
+    target: float,
+    direction: int,
+    noise_tolerance: float,
+    target_tolerance: float,
+) -> int | None:
+    """Find a commanded target crossing or a turning point close to it."""
     if direction == 0:
         return min(range(start, end + 1), key=lambda index: abs(voltages[index] - target))
     previous = voltages[start]
@@ -131,8 +139,27 @@ def _target_index(voltages: list[float], start: int, end: int, target: float, di
         if direction * (value - target) >= 0:
             return min((index - 1, index), key=lambda candidate: abs(voltages[candidate] - target))
         if direction * (value - previous) < -noise_tolerance:
-            return index - 1
+            return index - 1 if abs(previous - target) <= target_tolerance else None
         previous = value
+    return end if abs(voltages[end] - target) <= target_tolerance else None
+
+
+def _cv_start_index(
+    voltages: list[float], cv_start: float, vertex1: float,
+    end: int, noise_tolerance: float, target_tolerance: float,
+) -> int | None:
+    """Find the first start-potential sample followed by the first CV leg."""
+    direction = 1 if vertex1 > cv_start else -1 if vertex1 < cv_start else 0
+    for index in range(end + 1):
+        if abs(voltages[index] - cv_start) > target_tolerance:
+            continue
+        for following in range(index + 1, end + 1):
+            change = voltages[following] - voltages[index]
+            if abs(change) <= noise_tolerance:
+                continue
+            if direction == 0 or direction * change > 0:
+                return index
+            break
     return None
 
 
@@ -157,7 +184,6 @@ def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
         vertex1 = float(parameters["cv_vertex1_v"] if "cv_vertex1_v" in parameters else parameters["vertex1_v"])
         vertex2 = float(parameters["cv_vertex2_v"] if "cv_vertex2_v" in parameters else parameters["vertex2_v"])
         requested_cycles = int(parameters["cycles"])
-        approach_voltage = float(parameters.get("approach_voltage_v", cv_start))
     except (KeyError, TypeError, ValueError):
         return []
     if requested_cycles < 1:
@@ -170,13 +196,13 @@ def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     active = [index for index in range(1, len(voltages)) if abs(voltages[index] - voltages[index - 1]) > active_tolerance]
     if not active:
         return []
-    departure_tolerance = max(0.01, abs(vertex1 - vertex2) * 0.03)
-    start_index = active[0]
-    for index in active:
-        if abs(voltages[index - 1] - approach_voltage) <= departure_tolerance and abs(voltages[index] - approach_voltage) > departure_tolerance:
-            start_index = index
-            break
+    target_tolerance = max(0.005, abs(vertex1 - vertex2) * 0.03)
     end_index = active[-1]
+    start_index = _cv_start_index(
+        voltages, cv_start, vertex1, end_index, active_tolerance, target_tolerance,
+    )
+    if start_index is None:
+        return []
     cycles: list[CVCycle] = []
     cursor = cycle_start = start_index
     for cycle_number in range(1, requested_cycles + 1):
@@ -184,7 +210,10 @@ def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
         cycle_end: int | None = None
         for target in (vertex1, vertex2, cv_start):
             direction = 1 if target > previous_target else -1 if target < previous_target else 0
-            found = _target_index(voltages, cursor, end_index, target, direction, active_tolerance)
+            found = _target_index(
+                voltages, cursor, end_index, target, direction,
+                active_tolerance, target_tolerance,
+            )
             if found is None:
                 return cycles
             cycle_end = found

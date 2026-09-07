@@ -100,7 +100,24 @@ class AnalysisTests(unittest.TestCase):
         )
         cycles = extract_cv_cycles(dataset)
         self.assertEqual(len(cycles), 1)
+        self.assertEqual(cycles[0].potential_v[0], -0.2)
         self.assertEqual(cycles[0].potential_v[-1], -0.2)
+
+    def test_incomplete_cv_that_reverses_before_vertices_is_rejected(self) -> None:
+        voltages = (-0.2, 0.0, 0.2, 0.1, 0.0, -0.1, -0.2)
+        dataset = AnalysisDataset(
+            Path("incomplete_cv.csv"),
+            ("elapsed_s", "voltage1_v", "current1_na"),
+            [
+                {"elapsed_s": float(index), "voltage1_v": voltage, "current1_na": voltage}
+                for index, voltage in enumerate(voltages)
+            ],
+            {"experiment": "CV", "parameters": {
+                "start_v": -0.2, "vertex1_v": 0.6, "vertex2_v": -0.4, "cycles": 1,
+            }},
+        )
+
+        self.assertEqual(extract_cv_cycles(dataset), [])
 
     def test_scan_cvs_are_separated_per_pixel(self) -> None:
         rows = []
