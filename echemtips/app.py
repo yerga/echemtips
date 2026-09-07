@@ -61,7 +61,17 @@ def _smoke_test(app: EChemTipsApp) -> None:
         raise RuntimeError("Standalone CV UI did not complete and populate its voltammogram")
 
     standalone_approach = app.pages["Approach"]
-    app.approach_experiment.start(ApproachParameters(10, 90, 3, 10, .1, "Current 1", 2, True, True))
+    app.approach_experiment.start(ApproachParameters(
+        start_z_um=10,
+        end_z_um=90,
+        approach_rate_um_s=3,
+        retract_rate_um_s=10,
+        approach_voltage_v=.1,
+        feedback_channel="Current 1",
+        feedback_threshold=2,
+        greater_than=True,
+        retract_after=True,
+    ))
     standalone_approach.on_samples([
         Sample(0, 50, 50, 10, .1, 0, 0, 0),
         Sample(1, 50, 50, 68, .1, 0, 3, 0),
