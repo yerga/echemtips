@@ -15,6 +15,48 @@ from echemtips.ui import EChemTipsApp
 
 
 class AcquisitionOrderingTests(unittest.TestCase):
+    def test_stop_is_sent_before_a_snapshot_processing_failure(self):
+        calls: list[str] = []
+        experiment = SimpleNamespace(active=True, state=ExperimentState.CV, detail="", params=None)
+        worker = SimpleNamespace(
+            pause_and_snapshot=lambda: AcquisitionDrain([], None, 0),
+            resume=lambda: None,
+        )
+        app = SimpleNamespace(
+            experiments={"scan_cv": experiment},
+            _acquisition=worker,
+            backend=SimpleNamespace(
+                hardware_approach_cv_required=True,
+                stop_motion=lambda: calls.append("stop"),
+            ),
+            _consume_acquired=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+            recorder=SimpleNamespace(active=False),
+            finish_recording=lambda *_args, **_kwargs: None,
+            show_error=lambda error: calls.append(str(error)),
+            _sync_action_states=lambda: None,
+        )
+
+        EChemTipsApp.stop_experiment(app, "scan_cv")
+
+        self.assertEqual(calls, ["stop", "disk full"])
+
+    def test_emergency_stop_is_sent_before_a_snapshot_processing_failure(self):
+        calls: list[str] = []
+        worker = SimpleNamespace(pause_and_snapshot=lambda: AcquisitionDrain([], None, 0))
+        app = SimpleNamespace(
+            _acquisition=worker,
+            backend=SimpleNamespace(
+                connected=True,
+                emergency_stop=lambda: calls.append("emergency-stop"),
+            ),
+            _consume_acquired=lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+            show_error=lambda error: calls.append(str(error)),
+        )
+
+        EChemTipsApp.emergency_stop(app)
+
+        self.assertEqual(calls, ["emergency-stop", "disk full"])
+
     def test_acquisition_error_finishes_recording_even_if_stop_fails(self):
         with TemporaryDirectory() as folder:
             settings = AppSettings(save_directory=folder)

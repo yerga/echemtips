@@ -1864,10 +1864,15 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not experiment.active: return
         worker = self._acquisition
         try:
+            before = AcquisitionDrain([], None, 0)
             if worker is not None:
-                before = worker.pause_and_snapshot(); self._consume_acquired(before.samples, finalize=False)
-                if before.error is not None: raise BackendError(f"Acquisition failed before cancellation: {before.error}") from before.error
-            hardware = self.backend.hardware_approach_cv_required; self.backend.stop_motion()
+                before = worker.pause_and_snapshot()
+            # Stopping the physical program takes priority over plotting and
+            # recording the snapshot: either operation may fail independently.
+            hardware = self.backend.hardware_approach_cv_required
+            self.backend.stop_motion()
+            self._consume_acquired(before.samples, finalize=False)
+            if before.error is not None: raise BackendError(f"Acquisition failed before cancellation: {before.error}") from before.error
             if not hardware: experiment.state = ExperimentState.ABORTED; experiment.detail = "Experiment stopped by operator"
             if worker is not None:
                 after = worker.pause_and_snapshot(); self._consume_acquired(after.samples, finalize=False)
@@ -1893,9 +1898,15 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             self._sync_action_states()
 
     def emergency_stop(self) -> None:
+        worker = self._acquisition
+        before = AcquisitionDrain([], None, 0)
         try:
-            worker = self._acquisition; before = worker.pause_and_snapshot() if worker is not None else AcquisitionDrain([], None, 0); self._consume_acquired(before.samples, finalize=False)
+            if worker is not None:
+                before = worker.pause_and_snapshot()
+            # Assert the emergency controls before touching data or widgets.
+            # A disk or rendering error must never suppress the stop request.
             if self.backend.connected: self.backend.emergency_stop()
+            self._consume_acquired(before.samples, finalize=False)
             after = worker.pause_and_snapshot() if worker is not None else AcquisitionDrain([], None, 0); self._consume_acquired(after.samples, finalize=False)
             if before.error or after.error: raise BackendError(f"Emergency-stop acquisition drain failed: {before.error or after.error}")
             for experiment in self.experiments.values():
