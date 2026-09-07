@@ -84,12 +84,16 @@ class WECSPMDriver:
         self._hardware_complete = False
         self._ending_waypoint = False
         self._end_request_line = 0
+        self._end_request_deadline: float | None = None
         self._framing_valid = True
         self._retained_samples: list[Sample] = []
+        self._deferred_samples: list[Sample] = []
         self._last_snapshot_remainder = 0
         self._program_deadline: float | None = None
+        self._pause_started_at: float | None = None
         self._expected_duration_s = 0.0
         self._pending_scalers: tuple[int, ...] = ()
+        self._program_waypoints: list[Waypoint] = []
         self._cancelled = False
         self._cancel_detail = ""
         self._approach_threshold_na = 0.0
@@ -227,10 +231,14 @@ class WECSPMDriver:
             # allow another program to resume that uncertain queue.
             self._stopped = True
             self._program_deadline = None
+            self._pause_started_at = None
             raise
         self._program_total = len(waypoints)
+        self._program_waypoints = list(waypoints)
         self._hardware_complete = False
         self._ending_waypoint = False
+        self._end_request_deadline = None
+        self._pause_started_at = None
         self._cancelled = False
         self._cancel_detail = ""
         self._submitted = True
@@ -241,6 +249,140 @@ class WECSPMDriver:
         )
         self._execution_state = ExecutionState.RUNNING
         self._execution_detail = f"Submitted {self.streamer.submitted_waypoints}/{len(waypoints)} waypoints"
+
+    def _account_pause_state(self, paused: bool, *, now: float | None = None) -> None:
+        """Exclude acknowledged target pauses from the program watchdog."""
+        if not self._submitted:
+            self._pause_started_at = None
+            return
+        observed_at = time.monotonic() if now is None else now
+        if paused:
+            if self._pause_started_at is None:
+                self._pause_started_at = observed_at
+            return
+        if self._pause_started_at is None:
+            return
+        if self._program_deadline is not None:
+            self._program_deadline += max(0.0, observed_at - self._pause_started_at)
+        self._pause_started_at = None
+
+    def _latch_command_timeout(self, detail: str) -> None:
+        self._stopped = True
+        self._program_deadline = None
+        self._pause_started_at = None
+        self._execution_state = ExecutionState.ERROR
+        self._execution_detail = detail
+        try:
+            self._write_register("External Pause", True)
+        finally:
+            try:
+                self._write_register("EndCurrentLine", False)
+            except Exception:
+                pass
+
+    def _potential_target(self, channel: int, voltage: float) -> tuple[str, str, str, int]:
+        if channel not in (1, 2) or not math.isfinite(voltage) or not -10.0 <= voltage <= 10.0:
+            raise ValueError("Potential output must be channel 1 or 2 and within +/-10 V.")
+        if channel == 1 and abs(voltage * self.settings.command_voltage_ratio) > 10.0:
+            raise ValueError("Potential 1 exceeds AO3 after applying its command ratio.")
+        raw = voltage1_to_raw(voltage, self.settings.command_voltage_ratio if channel == 1 else 1.0)
+        return (
+            "Applied Voltage" if channel == 1 else "Applied Voltage 2",
+            "V on Fly" if channel == 1 else "V2 on Fly",
+            "Change V on Fly" if channel == 1 else "Change V on Fly 2",
+            raw,
+        )
+
+    def _wait_for_idle_potential(self, channel: int, target_raw: int) -> None:
+        applied_name = "Applied Voltage" if channel == 1 else "Applied Voltage 2"
+        deadline = time.monotonic() + self.settings.hardware_ready_timeout_s
+        while time.monotonic() < deadline:
+            self.service()
+            try:
+                self._deferred_samples.extend(self._read_complete_sample_snapshot())
+            except Exception:
+                self._latch_command_timeout("Potential command acquisition drain failed; reinitialize the target")
+                raise
+            if self._hardware_complete and int(self._read_register(applied_name)) == target_raw:
+                self._submitted = False
+                self._program_deadline = None
+                self._pause_started_at = None
+                self._execution_state = ExecutionState.COMPLETE
+                self._execution_detail = f"Potential {channel} command acknowledged by applied-output readback"
+                return
+            time.sleep(0.002)
+        detail = (
+            f"FPGA did not acknowledge Potential {channel} at the requested applied value within "
+            f"{self.settings.hardware_ready_timeout_s:g} s; reinitialize the target before continuing"
+        )
+        self._latch_command_timeout(detail)
+        raise TimeoutError(detail)
+
+    def set_voltage(self, channel: int, voltage: float) -> None:
+        """Apply an idle potential through an acknowledged jump waypoint."""
+        _applied_name, _value_name, _trigger_name, target_raw = self._potential_target(channel, voltage)
+        self._prepare_command()
+        current = self._current_targets()
+        plan = PhysicalWaypoint(
+            voltage1_v=voltage if channel == 1 else None,
+            voltage2_v=voltage if channel == 2 else None,
+            jump_voltage1=channel == 1,
+            jump_voltage2=channel == 2,
+        )
+        compiled = self.compiler.compile([plan], current)
+        self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
+        self._owner = f"potential-{channel}"
+        self._sequence = None
+        self._scan_sequence = None
+        self._enqueue(compiled.waypoints, compiled.expected_duration_s)
+        self._wait_for_idle_potential(channel, target_raw)
+
+    def set_live_potential(self, channel: int, voltage: float) -> None:
+        """Apply and acknowledge ChangeOnFly only inside its active axis loop."""
+        applied_name, value_name, trigger_name, target_raw = self._potential_target(channel, voltage)
+        if not self._submitted:
+            self.set_voltage(channel, voltage)
+            return
+        self._check_target_health()
+        if bool(self._read_register("External Pause")) or bool(self._read_register("Internal Pause")):
+            raise RuntimeError("Resume the FPGA program before applying an on-the-fly potential change.")
+        current_line = int(self._read_register("LineNumber"))
+        index = ((current_line - self._program_baseline) & ((1 << 64) - 1)) - 1
+        if not 0 <= index < len(self._program_waypoints):
+            raise RuntimeError("The FPGA has not acknowledged an active waypoint for an on-the-fly potential change.")
+        waypoint = self._program_waypoints[index]
+        moves_channel = waypoint.move_v if channel == 1 else waypoint.move_v2
+        if not moves_channel:
+            raise RuntimeError(f"Potential {channel} is not active in the current FPGA waypoint.")
+        if int(self._read_register(applied_name)) == target_raw:
+            return
+        self._write_register(value_name, target_raw)
+        self._write_register(trigger_name, True)
+        if not bool(self._read_register(trigger_name)):
+            raise RuntimeError(f"FPGA did not latch the Potential {channel} on-the-fly request.")
+        deadline = time.monotonic() + self.settings.hardware_ready_timeout_s
+        acknowledged = False
+        try:
+            while time.monotonic() < deadline:
+                self.service()
+                if int(self._read_register(applied_name)) == target_raw:
+                    acknowledged = True
+                    break
+                time.sleep(0.002)
+        finally:
+            self._write_register(trigger_name, False)
+        if bool(self._read_register(trigger_name)):
+            self._latch_command_timeout(
+                f"FPGA did not release the Potential {channel} on-the-fly request; reinitialize the target"
+            )
+            raise RuntimeError(self._execution_detail)
+        if not acknowledged:
+            detail = (
+                f"FPGA did not acknowledge Potential {channel} through its applied-output readback within "
+                f"{self.settings.hardware_ready_timeout_s:g} s; reinitialize the target before continuing"
+            )
+            self._latch_command_timeout(detail)
+            raise TimeoutError(detail)
 
     def wait_until_ready(self) -> None:
         """Require an initialized, empty target loop before enabling commands."""
@@ -333,6 +475,7 @@ class WECSPMDriver:
         except Exception:
             self._stopped = True
             self._program_deadline = None
+            self._pause_started_at = None
             try:
                 self._write_register("External Pause", True)
             except Exception:
@@ -341,7 +484,9 @@ class WECSPMDriver:
         self._submitted = False
         self._hardware_complete = False
         self._ending_waypoint = False
+        self._end_request_deadline = None
         self._program_deadline = None
+        self._pause_started_at = None
         self._cancelled = True
         self._framing_valid = False
         self._stopped = True
@@ -385,6 +530,15 @@ class WECSPMDriver:
             return
         advanced = ((current_line - self._end_request_line) & ((1 << 64) - 1)) > 0
         if not (advanced or waiting):
+            if self._end_request_deadline is not None and time.monotonic() > self._end_request_deadline:
+                detail = (
+                    "FPGA did not acknowledge EndCurrentLine through line advancement or its waiting state; "
+                    "reinitialize the target before continuing"
+                )
+                self._ending_waypoint = False
+                self._end_request_deadline = None
+                self._latch_command_timeout(detail)
+                raise TimeoutError(detail)
             return
         # WaitingForWayPoints or a changed line number proves that the active
         # axis loops consumed the level-held request. Only now may it be reset.
@@ -392,6 +546,7 @@ class WECSPMDriver:
             self._write_register("Internal Pause", False)
         self._write_register("EndCurrentLine", False)
         self._ending_waypoint = False
+        self._end_request_deadline = None
 
     def service(self) -> bool:
         """Observe completion; read_samples retires it after a final FIFO snapshot.
@@ -410,6 +565,7 @@ class WECSPMDriver:
                 except Exception as exc:
                     self._stopped = True
                     self._program_deadline = None
+                    self._pause_started_at = None
                     self._execution_state = ExecutionState.ERROR
                     self._execution_detail = f"Waypoint refill failed: {exc}"
                     self._write_register("External Pause", True)
@@ -419,14 +575,18 @@ class WECSPMDriver:
             if delta > self._program_total:
                 self._stopped = True
                 self._program_deadline = None
+                self._pause_started_at = None
                 self._write_register("External Pause", True)
                 raise RuntimeError(
                     f"FPGA line counter advanced by {delta} for a {self._program_total}-waypoint program. "
                     "Motion was paused because target/host state is inconsistent."
                 )
             waiting = bool(self._read_register("WaitingForWayPoints"))
+            paused_before_ack = bool(self._read_register("External Pause")) or bool(self._read_register("Internal Pause"))
+            self._account_pause_state(paused_before_ack)
             self._service_end_request(current, waiting)
             paused = bool(self._read_register("External Pause")) or bool(self._read_register("Internal Pause"))
+            self._account_pause_state(paused)
             # A paused target is not a successful completion even if its line
             # counter and queue happen to look finished. The host must observe
             # an unpaused, waiting target and then drain the final FIFO data.
@@ -442,6 +602,7 @@ class WECSPMDriver:
             if (
                 not self._hardware_complete
                 and self._program_deadline is not None
+                and not paused
                 and time.monotonic() > self._program_deadline
             ):
                 self._stopped = True
@@ -449,6 +610,7 @@ class WECSPMDriver:
                     self._write_register("External Pause", True)
                 finally:
                     self._program_deadline = None
+                    self._pause_started_at = None
                 raise TimeoutError(
                     f"FPGA program exceeded its {self._expected_duration_s:g} s expected duration plus "
                     f"the {self.settings.hardware_watchdog_margin_s:g} s safety margin. Motion was paused; "
@@ -1429,30 +1591,35 @@ class WECSPMDriver:
         tagging the samples returned here and any subsequent idle samples.
         """
         if not self._framing_valid:
+            deferred, self._deferred_samples = self._deferred_samples, []
             samples, self._retained_samples = self._retained_samples, []
-            return samples
+            return deferred + samples
         self.service()
         try:
             samples = self._read_complete_sample_snapshot()
         except Exception:
             self._stopped = True
             self._program_deadline = None
+            self._pause_started_at = None
             self._write_register("External Pause", True)
             raise
+        deferred, self._deferred_samples = self._deferred_samples, []
         if not samples:
             available = int(self.data_fifo.read(number_of_elements=0, timeout_ms=0).elements_remaining)
             if self._hardware_complete and available == 0:
                 self._submitted = False
                 self._program_deadline = None
+                self._pause_started_at = None
                 self._execution_state = ExecutionState.COMPLETE
                 self._execution_detail = "Program complete; final FIFO snapshot drained"
-            return []
+            return deferred
         if self._hardware_complete and self._last_snapshot_remainder == 0:
             self._submitted = False
             self._program_deadline = None
+            self._pause_started_at = None
             self._execution_state = ExecutionState.COMPLETE
             self._execution_detail = "Program complete; final FIFO snapshot drained"
-        return samples
+        return deferred + samples
 
     def execution_status(self) -> ExecutionSnapshot:
         current = int(self._read_register("LineNumber")) if self._started else self._program_baseline
@@ -1472,6 +1639,7 @@ class WECSPMDriver:
         self._write_register("External Pause", True)
         if not bool(self._read_register("External Pause")):
             raise RuntimeError("FPGA did not acknowledge pause")
+        self._account_pause_state(True)
         self._execution_state = ExecutionState.PAUSED
         self._execution_detail = "Paused by operator"
 
@@ -1485,6 +1653,7 @@ class WECSPMDriver:
         self._write_register("External Pause", False)
         if bool(self._read_register("External Pause")):
             raise RuntimeError("FPGA did not acknowledge resume")
+        self._account_pause_state(False)
         self._execution_state = ExecutionState.RUNNING
         self._execution_detail = "Resumed by operator"
 
@@ -1494,28 +1663,41 @@ class WECSPMDriver:
             raise RuntimeError("No FPGA waypoint is active.")
         if self._ending_waypoint:
             return
-        self._end_request_line = int(self._read_register("LineNumber"))
+        if bool(self._read_register("External Pause")):
+            raise RuntimeError("Resume the operator pause before ending the current FPGA waypoint.")
+        current_line = int(self._read_register("LineNumber"))
+        delta = (current_line - self._program_baseline) & ((1 << 64) - 1)
+        if not 1 <= delta <= self._program_total:
+            raise RuntimeError("The FPGA has not acknowledged an executing waypoint to end.")
+        self._end_request_line = current_line
         self._write_register("EndCurrentLine", True)
         if not bool(self._read_register("EndCurrentLine")):
             raise RuntimeError("FPGA did not latch the EndCurrentLine request.")
         self._ending_waypoint = True
+        self._end_request_deadline = time.monotonic() + self.settings.hardware_ready_timeout_s
         self._execution_detail = "Ending the current FPGA waypoint; awaiting target acknowledgement"
 
     def accept_approach(self) -> None:
         """End only an active approach and explicitly authorize its follow-up."""
         self._check_target_health()
         if self._approach_phase == "approach" and self._owner == "approach-cv":
-            self._approach_manually_accepted = True
-            self._approach_contact_observed = True
+            accepted = "approach"
         elif self._scan_phase == "approach" and self._owner == "scan-hopping-cv" and self._scan_point >= 0:
-            self._scan_manually_accepted.add(self._scan_point)
-            self._scan_contact_observed.add(self._scan_point)
+            accepted = "scan"
         elif self._method_phase == "approach" and self._owner in {"approach", "approach-it", "scan-hopping-it"}:
-            self._method_manually_accepted.add(self._method_point)
-            self._method_contact_observed.add(self._method_point)
+            accepted = "method"
         else:
             raise RuntimeError("No approach movement is currently active.")
         self.end_current_waypoint()
+        if accepted == "approach":
+            self._approach_manually_accepted = True
+            self._approach_contact_observed = True
+        elif accepted == "scan":
+            self._scan_manually_accepted.add(self._scan_point)
+            self._scan_contact_observed.add(self._scan_point)
+        else:
+            self._method_manually_accepted.add(self._method_point)
+            self._method_contact_observed.add(self._method_point)
         self._execution_detail = "Operator accepted the current Z as contact"
 
     def _feedback_hit(self, current_na: float, threshold_na: float, greater_than: bool) -> bool:
@@ -1595,6 +1777,7 @@ class WECSPMDriver:
         """Latch both host-side and FPGA-side stops and verify their controls."""
         self._stopped = True
         self._program_deadline = None
+        self._pause_started_at = None
         errors: list[str] = []
         for name in ("External Pause", "External Stop"):
             try:

@@ -144,6 +144,23 @@ class NIBackendSafetyTests(unittest.TestCase):
         backend.emergency_stop()
         self.assertEqual(calls, ["stop"])
 
+    def test_potential_commands_delegate_to_acknowledging_driver(self) -> None:
+        calls: list[tuple[str, int, float]] = []
+
+        class Driver:
+            def set_voltage(self, channel: int, voltage: float) -> None:
+                calls.append(("idle", channel, voltage))
+
+            def set_live_potential(self, channel: int, voltage: float) -> None:
+                calls.append(("live", channel, voltage))
+
+        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend.connected = True
+        backend._driver = Driver()
+        backend.set_voltage(1, 0.2)
+        backend.set_live_potential(2, -0.3)
+        self.assertEqual(calls, [("idle", 1, 0.2), ("live", 2, -0.3)])
+
 
 class DataTests(unittest.TestCase):
     def test_csv_and_metadata_are_written(self) -> None:

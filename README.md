@@ -91,7 +91,7 @@ This is research control software, not a certified safety system.
 
 - Opening the UI does not send an output.
 - Real sessions configure the target while externally paused.
-- Position, potential, calibration, feedback, and timing settings are validated before submission.
+- Position, potential, calibration, feedback, and timing settings are validated before submission; potential commands require FPGA execution and applied-output acknowledgement.
 - Contact-gated methods do not begin surface electrochemistry after an end-of-travel event.
 - Normal stop waits for target acknowledgement and drains remaining data.
 - Emergency stop latches the active driver; reconnection/reinitialization is required.

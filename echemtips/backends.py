@@ -21,7 +21,6 @@ from .ni_protocol import (
     raw_to_position,
     raw_to_voltage1,
     validate_wec_bitfile,
-    voltage1_to_raw,
 )
 
 
@@ -422,7 +421,7 @@ class NIFPGABackend(InstrumentBackend):
         return BackendCapabilities(
             supports("pause") and supports("resume"),
             supports("end_current_waypoint"),
-            True,
+            supports("set_voltage") and supports("set_live_potential"),
             self.full_rate_data_available,
             self.full_rate_data_available,
         )
@@ -755,17 +754,30 @@ class NIFPGABackend(InstrumentBackend):
     def set_voltage(self, channel: int, voltage: float) -> None:
         if channel not in (1, 2) or not -10 <= voltage <= 10:
             raise SafetyError("Voltage output must be channel 1 or 2 and within +/-10 V.")
-        raw = voltage1_to_raw(voltage, self.settings.command_voltage_ratio) if channel == 1 else int(
-            max(-32768, min(32767, round(voltage * 32768 / 10)))
-        )
         if channel == 1 and abs(voltage * self.settings.command_voltage_ratio) > 10:
             raise SafetyError("Voltage 1 exceeds the amplifier command range at this command ratio.")
-        value_name = "V on Fly" if channel == 1 else "V2 on Fly"
-        trigger_name = "Change V on Fly" if channel == 1 else "Change V on Fly 2"
-        self._register(value_name).write(raw)
-        trigger = self._register(trigger_name)
-        trigger.write(True)
-        trigger.write(False)
+        if self._driver is None or not callable(getattr(self._driver, "set_voltage", None)):
+            raise BackendError(
+                "The FPGA driver cannot apply an acknowledged idle potential waypoint. "
+                "Use the bundled eChemTips driver or a compatible site driver."
+            )
+        try:
+            self._driver.set_voltage(channel, voltage)
+        except Exception as exc:
+            raise BackendError(f"Could not apply Potential {channel}: {exc}") from exc
+
+    @_synchronized_io
+    def set_live_potential(self, channel: int, voltage: float) -> None:
+        if channel not in (1, 2) or not -10 <= voltage <= 10:
+            raise SafetyError("Potential output must be channel 1 or 2 and within +/-10 V.")
+        if channel == 1 and abs(voltage * self.settings.command_voltage_ratio) > 10:
+            raise SafetyError("Potential 1 exceeds the amplifier command range at this command ratio.")
+        if self._driver is None or not callable(getattr(self._driver, "set_live_potential", None)):
+            raise BackendError("The FPGA driver cannot acknowledge a controlled live-potential command.")
+        try:
+            self._driver.set_live_potential(channel, voltage)
+        except Exception as exc:
+            raise BackendError(f"Could not apply live Potential {channel}: {exc}") from exc
 
     @_synchronized_io
     def emergency_stop(self) -> None:

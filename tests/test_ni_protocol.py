@@ -129,6 +129,7 @@ class NativeDriverTests(unittest.TestCase):
             "Applied X", "Applied Y", "Applied Z", "Applied Voltage", "Applied Voltage 2", "ExpandVelScaller X",
             "ExpandVelScaller Y", "ExpandVelScaller Z", "ExpandVelScaller V", "FeedBackType", "Feedback_Threshold",
             "GreaterThan", "LineNumber", "WaitingForWayPoints",
+            "V on Fly", "V2 on Fly", "Change V on Fly", "Change V on Fly 2",
             "EndCurrentLine", "LineType", "Feedback1 Boolean", "Feedback1 Error", "Z END", "StopMoveZ",
             "ExpandVelScaller V2", "FeedBackType 2", "Feedback_Threshold 2", "GreaterThan 2", "P",
             "Upper limit Of dZ", "P2AvgWhole", "P2AvgMinus", "Feedback1 on  Hold",
@@ -159,9 +160,9 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.pause()
         self.assertTrue(self.session.registers["External Pause"].value)
         self.driver.move("Z", 20, 1)
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
         self.driver.end_current_waypoint()
         self.assertTrue(self.session.registers["EndCurrentLine"].value)
-        self.session.registers["LineNumber"].value = 1
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
         self.assertFalse(self.session.registers["EndCurrentLine"].value)
@@ -181,6 +182,47 @@ class NativeDriverTests(unittest.TestCase):
         self.assertFalse(self.session.registers["Feedback1 on  Hold"].value)
         self.assertEqual(self.session.registers["DistanceToBulk"].value, 0)
         self.assertEqual(self.driver._feedback_update_interval_us, 7)
+
+    def test_idle_potential_uses_jump_waypoint_and_applied_value_acknowledgement(self) -> None:
+        target = voltage1_to_raw(0.25, self.settings.command_voltage_ratio)
+        with patch.object(self.driver, "_wait_for_idle_potential") as wait:
+            self.driver.set_voltage(1, 0.25)
+        words = self.driver.positions_fifo.writes[-1]
+        self.assertEqual(len(words), 14)
+        self.assertEqual(words[9], target)
+        self.assertTrue(words[13] & (1 << 3))
+        self.assertTrue(words[13] & (1 << 4))
+        self.assertFalse(self.session.registers["Change V on Fly"].value)
+        wait.assert_called_once_with(1, target)
+
+        self.session.registers["Applied Voltage"].value = target
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+        self.session.registers["WaitingForWayPoints"].value = True
+        self.driver._wait_for_idle_potential(1, target)
+        self.driver.ensure_idle()
+
+    def test_live_potential_holds_trigger_until_applied_value_acknowledges(self) -> None:
+        self.driver.submit_waypoints([
+            PhysicalWaypoint(voltage1_v=0.5, voltage1_rate_v_s=0.1)
+        ], owner="live-potential-test")
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+        target = voltage1_to_raw(0.2, self.settings.command_voltage_ratio)
+
+        def acknowledge() -> bool:
+            self.assertTrue(self.session.registers["Change V on Fly"].value)
+            self.session.registers["Applied Voltage"].value = target
+            return False
+
+        with patch.object(self.driver, "service", side_effect=acknowledge):
+            self.driver.set_live_potential(1, 0.2)
+        self.assertEqual(self.session.registers["V on Fly"].value, target)
+        self.assertFalse(self.session.registers["Change V on Fly"].value)
+
+    def test_live_potential_rejects_inactive_voltage_axis(self) -> None:
+        self.driver.move("Z", 20, 1)
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+        with self.assertRaisesRegex(RuntimeError, "not active"):
+            self.driver.set_live_potential(1, 0.2)
 
     def test_standalone_cv_respects_ramp_at_start_and_reports_context(self) -> None:
         self.driver.start_method("cv", CVParameters(cycles=1, jump_at_start=False))
@@ -470,6 +512,7 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
         writes = self.session.fifos["Host_To_FPGA_Positions"].writes
         before = len(writes)
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.driver.accept_approach()
         self.session.registers["LineNumber"].value = self.driver._program_baseline + 2
         self.session.registers["WaitingForWayPoints"].value = True
@@ -481,6 +524,7 @@ class NativeDriverTests(unittest.TestCase):
 
     def test_operator_can_accept_hardware_scan_approaches(self) -> None:
         self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.driver.accept_approach()
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.session.registers["WaitingForWayPoints"].value = True
@@ -492,6 +536,7 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.read_samples()
         self.driver.scan_hopping_cv_status()
         self.driver.start_method("scan_hopping_it", ScanHoppingITParameters(x_points=1, y_points=1))
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.driver.accept_approach()
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.session.registers["WaitingForWayPoints"].value = True
@@ -741,6 +786,48 @@ class NativeDriverTests(unittest.TestCase):
         with self.assertRaisesRegex(TimeoutError, "safety margin"):
             self.driver.service()
         self.assertTrue(self.session.registers["External Pause"].value)
+        with self.assertRaisesRegex(ValueError, "stopped"):
+            self.driver.ensure_idle()
+
+    def test_acknowledged_operator_pause_is_excluded_from_watchdog_time(self) -> None:
+        self.driver.move("Z", 20, 1)
+        self.driver._program_deadline = 10.0
+        with patch("echemtips.ni_driver.time.monotonic", return_value=5.0):
+            self.driver.pause()
+        with patch("echemtips.ni_driver.time.monotonic", return_value=20.0):
+            self.driver.service()
+        self.assertEqual(self.driver._program_deadline, 10.0)
+        with patch("echemtips.ni_driver.time.monotonic", return_value=25.0):
+            self.driver.resume()
+        self.assertEqual(self.driver._program_deadline, 30.0)
+        with patch("echemtips.ni_driver.time.monotonic", return_value=29.0):
+            self.driver.service()
+        self.assertFalse(self.driver._stopped)
+
+    def test_internal_feedback_pause_is_excluded_from_watchdog_time(self) -> None:
+        self.driver.move("Z", 20, 1)
+        self.driver._program_deadline = 10.0
+        self.session.registers["Internal Pause"].value = True
+        with patch("echemtips.ni_driver.time.monotonic", return_value=5.0):
+            self.driver.service()
+        with patch("echemtips.ni_driver.time.monotonic", return_value=20.0):
+            self.driver.service()
+        self.session.registers["Internal Pause"].value = False
+        with patch("echemtips.ni_driver.time.monotonic", return_value=25.0):
+            self.driver.service()
+        self.assertEqual(self.driver._program_deadline, 30.0)
+        self.assertFalse(self.driver._stopped)
+
+    def test_end_waypoint_missing_acknowledgement_latches_driver(self) -> None:
+        self.driver.move("Z", 20, 1)
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+        with patch("echemtips.ni_driver.time.monotonic", return_value=0.0):
+            self.driver.end_current_waypoint()
+        with patch("echemtips.ni_driver.time.monotonic", return_value=10.0):
+            with self.assertRaisesRegex(TimeoutError, "did not acknowledge EndCurrentLine"):
+                self.driver.service()
+        self.assertTrue(self.session.registers["External Pause"].value)
+        self.assertFalse(self.session.registers["EndCurrentLine"].value)
         with self.assertRaisesRegex(ValueError, "stopped"):
             self.driver.ensure_idle()
 

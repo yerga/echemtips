@@ -71,6 +71,8 @@ Emergency stop asserts both `External Pause` and `External Stop`, verifies their
 
 The application refuses to attach to an already running FPGA. `no_run=True` prevents a new Run request but does not stop an existing VI. Opening a different bitfile can download it, and initialization can change outputs; keep actuators disabled during this step.
 
+An idle Potential 1/2 change is sent as a one-waypoint FPGA jump, not as a host pulse: success requires the target line counter and waiting state to complete that waypoint and the corresponding `Applied Voltage` indicator to equal the requested raw value. An on-the-fly change is accepted only while that voltage axis is executing, remains asserted until the same applied-value acknowledgement, and is then cleared by the host. A missing acknowledgement pauses and latches the session for reinitialization. Operator and FPGA feedback pauses continue to receive health checks, but their acknowledged duration is excluded from the physical-motion watchdog deadline.
+
 - The NI session is opened with `no_run=True`; the target is configured and paused before it is run.
 - FIFO waypoints are initially filled while paused; long programs continue through bounded, complete-frame host-side refills after execution starts.
 - Contact completion uses the existing `EndCurrentLine`, `WaitingForWayPoints`, `LineNumber`, and `Internal Pause` controls without stopping acquisition.
