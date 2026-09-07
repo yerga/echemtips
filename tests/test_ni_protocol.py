@@ -523,6 +523,29 @@ class NativeDriverTests(unittest.TestCase):
         self.assertIn("Operator accepted", status["detail"])
         self.assertEqual(len(writes), before + 1)
 
+    def test_operator_cannot_accept_contact_during_approach_cv_preposition(self) -> None:
+        self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+
+        self.assertEqual(self.driver.approach_cv_status()["stage"], "preposition")
+        with self.assertRaisesRegex(RuntimeError, "still positioning"):
+            self.driver.accept_approach()
+
+    def test_operator_cannot_accept_contact_during_scan_positioning(self) -> None:
+        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+
+        with self.assertRaisesRegex(RuntimeError, "still positioning"):
+            self.driver.accept_approach()
+
+    def test_operator_cannot_accept_contact_during_shared_method_preposition(self) -> None:
+        self.driver.start_method("approach", ApproachParameters())
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
+
+        self.assertEqual(self.driver.method_status()["stage"], "preposition")
+        with self.assertRaisesRegex(RuntimeError, "still positioning"):
+            self.driver.accept_approach()
+
     def test_operator_can_accept_hardware_scan_approaches(self) -> None:
         self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total

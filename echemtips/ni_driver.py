@@ -971,10 +971,14 @@ class WECSPMDriver:
                 self._cancelled = True
                 self._cancel_detail = "End Z was reached without a confirmed contact; CV was not submitted"
                 return {"stage": "aborted", "detail": self._cancel_detail, "progress": 0.4}
-            index = min(max(0, completed), sequence.total - 1)
-            if index == 0:
+            context = self.approach_context(current_line)
+            if context != "approach":
                 return {"stage": "preposition", "detail": "Moving Z to the approach start", "progress": 0.2}
-            return {"stage": "approaching", "detail": "FPGA is watching Current 1 for contact", "progress": 0.4}
+            return {
+                "stage": "approaching",
+                "detail": f"FPGA is watching {self._approach_feedback_channel} for contact",
+                "progress": 0.4,
+            }
         if not self._submitted and self._hardware_complete:
             return {"stage": "complete", "detail": "FPGA approach, CV, and retract complete", "progress": 1.0}
         index = min(max(0, completed), sequence.total - 1)
@@ -1599,7 +1603,9 @@ class WECSPMDriver:
         local = self.execution_status().progress
         progress = local if self._method_name != "scan_hopping_it" else min(0.99, (max(0, self._method_point) + local) / total_points)
         stage = "approaching" if self._method_phase == "approach" else "retracting" if self._method_phase == "retract" else self._method_phase
-        if point_stage == "retract":
+        if point_stage in {"preposition", "positioning"}:
+            stage = "preposition"
+        elif point_stage == "retract":
             stage = "retracting"
         elif point_stage == "settling":
             stage = "settling"
@@ -1716,6 +1722,17 @@ class WECSPMDriver:
             accepted = "method"
         else:
             raise RuntimeError("No approach movement is currently active.")
+        current_line = int(self._read_register("LineNumber"))
+        if accepted == "approach":
+            executing_approach = self.approach_context(current_line) == "approach"
+        elif accepted == "scan":
+            point, stage = self.scan_context(current_line)
+            executing_approach = point == self._scan_point and stage == "approach"
+        else:
+            point, stage = self.method_context(current_line)
+            executing_approach = point == self._method_point and stage == "approach"
+        if not executing_approach:
+            raise RuntimeError("The FPGA is still positioning the probe; contact can be accepted only during Z approach.")
         self.end_current_waypoint()
         if accepted == "approach":
             self._approach_manually_accepted = True
