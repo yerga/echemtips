@@ -8,7 +8,7 @@ This audit covers the reusable functionality formerly spread across `FPGA Host.v
 |---|---|---|
 | Execution ownership and state | `WECSPMDriver`, `ExecutionSnapshot`, `ExecutionState` | One owner at a time; queued, executed, pending, drain, completion, abort, pause, and error state are reported. |
 | FIFO submission/refill | `WaypointStreamer` | Complete 14-word frames; 512-frame initial fill and 128-frame bounded refills; failed/uncertain writes latch the session. The old 585-frame limit is removed. |
-| Safe completion/cancellation | `WECSPMDriver.service`, `cancel_program`, `read_samples` | Completion requires line-count agreement, unpaused waiting state, and final data drain. Normal cancellation acknowledges the target and permits a later program. |
+| Safe completion/cancellation | `WECSPMDriver.service`, `end_current_waypoint`, `cancel_program`, `read_samples` | Completion requires line-count agreement, unpaused waiting state, and final data drain. Contact transitions use a level-held, acknowledged `EndCurrentLine` request and keep acquisition running. True cancellation retires the possibly partial stream and requires reconnection. |
 | Waypoint scaling/compilation | `WaypointCompiler`, `PhysicalWaypoint` | X/Y/Z/V1/V2 targets and rates, concurrent axes, potential ramps/jumps, timed/indefinite holds, relative Z retracts, feedback actions, update interval, and hold-feedback. Picomotor commands are deliberately outside the current application scope. |
 | Common CV generation | `cyclic_voltammetry_plan` | Standalone CV, Approach + CV, and Scan Hopping + CV use the same start/vertex 1/vertex 2/start jump-or-ramp plan builder and compiler. |
 | Common I-t generation | `potential_step_plan` | Approach + I-t and Scan Hopping + I-t share initial/pulse/return steps; long holds are split into adjacent signed-I16 microsecond timer frames. |
@@ -20,6 +20,6 @@ This audit covers the reusable functionality formerly spread across `FPGA Host.v
 
 ## Verified boundary
 
-The deployed USB-7856R `.lvbitx` contract is checked by datatype, access role, FIFO direction, and compiled target depth. Automated fake-session tests cover long-stream refill, every feedback action code and packed flag, simultaneous compilation, holds, relative Z, completion/cancellation/reuse, feedback writes, final acquisition drain, and plotting decimation. The offline checker validates a separately supplied instrument bitfile.
+The deployed USB-7856R `.lvbitx` contract is checked by datatype, access role, FIFO direction, and compiled target depth. Automated fake-session tests cover long-stream refill, every feedback action code and packed flag, simultaneous compilation, holds, relative Z, acknowledged contact completion, cancellation stream retirement, baseline-to-absolute feedback translation, final acquisition drain, and plotting decimation. The offline checker validates a separately supplied instrument bitfile.
 
 The generic driver limit is 65,535 waypoints in one submitted program. This is not a FIFO capacity limit. Scan plans use a stricter 32,767-tag guard until the target's U64-to-signed-I16 narrowing is confirmed, protecting unambiguous pixel assignment. Physical calibration, polarity, motion direction, and feedback response still require staged commissioning on the USB-7856R instrument PC.

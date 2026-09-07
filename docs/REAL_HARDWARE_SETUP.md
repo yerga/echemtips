@@ -61,7 +61,7 @@ Completed programs can be followed by another program in the same connection. Co
 
 Programs are no longer limited to the target FIFO's 585 complete frames. The host configures 1,048,576 elements of host-side DMA memory, initially submits 512 complete 14-word frames, and refills in 128-frame chunks while tracking submitted and executed lines. The generic driver ceiling is 65,535 frames. Scan plans retain a stricter 32,767-tag guard because acquired samples expose a signed-I16 line tag and target narrowing above its positive range has not been physically confirmed. The total Scan Hopping + CV plan uses one initial Z-only retract plus `4 + 3 × cycles` waypoints per pixel, and still stages approach separately from CV so end-of-travel can never start electrochemistry without confirmed contact.
 
-Normal Stop asserts the target stop control, waits for `WaitingForWayPoints`, clears the stop/pause handshake, drains final acquisition data, and leaves the initialized session reusable. If that acknowledgement times out, or after an uncertain FIFO write, target fault, or Emergency Stop, disable the actuators, disconnect Python, reset/reinitialize the FPGA using NI MAX/LabVIEW, then reconnect.
+Normal contact completion does not assert `External Stop`: Python holds `EndCurrentLine` until the target acknowledges it through `WaitingForWayPoints` or line advancement, drains the completed acquisition snapshot, and only then submits the follow-up. A true Stop can interrupt the target between fields of its 14-word acquisition frame. Python therefore retains complete pre-stop samples, discards all post-stop residual words, leaves `External Stop` asserted, and requires disconnection plus FPGA reinitialization before another command. This conservative boundary avoids silently decoding misaligned measurements without requiring a new bitfile.
 
 The experiment-local **Accept current Z as contact and continue** button is an explicit operator override for an active approach. It records the current Z as manually accepted contact and submits the gated CV or I–t continuation only after the approach FIFO is fully drained. The toolbar **End waypoint** button does not confirm contact and must not be used as a substitute. Use manual acceptance only while independently observing a safe probe state.
 
@@ -73,7 +73,8 @@ The application refuses to attach to an already running FPGA. `no_run=True` prev
 
 - The NI session is opened with `no_run=True`; the target is configured and paused before it is run.
 - FIFO waypoints are initially filled while paused; long programs continue through bounded, complete-frame host-side refills after execution starts.
-- Stop safely cancels and permits another submission only after the FPGA waiting-state acknowledgement. It does not reset the FPGA or promise to zero outputs.
+- Contact completion uses the existing `EndCurrentLine`, `WaitingForWayPoints`, `LineNumber`, and `Internal Pause` controls without stopping acquisition.
+- Stop safely cancels physical motion but deliberately retires that acquisition stream; reinitialize and reconnect before another submission. It does not promise to zero outputs.
 - Emergency Stop asserts the FPGA `External Stop` control.
 - The host checks all position ranges, voltages, and positive velocities before encoding a waypoint.
 

@@ -79,7 +79,8 @@ def _contact_mode(choice: Choice) -> str:
 
 def _contact_help() -> QtWidgets.QLabel:
     text = label(
-        "Baseline-relative mode compares Δi with a self-referenced baseline at approach start. "
+        "Baseline-relative mode compares Δi with a stationary baseline measured at approach start. "
+        "On NI hardware, Python translates that change into the FPGA's absolute contact threshold. "
         "Enter the threshold magnitude. A zero settling time proceeds immediately.",
         "muted",
         word_wrap=True,
@@ -1578,7 +1579,13 @@ class MovePiezoPage(BasePage):
         except (ValueError, BackendError) as exc: self.app.show_error(str(exc))
 
     def stop(self) -> None:
-        try: self.app.backend.stop_motion(); self.status_label.setText("Motion stopped")
+        try:
+            self.app.backend.stop_motion()
+            message = (
+                "Motion stopped safely; reinitialize and reconnect the FPGA before another command"
+                if self.app.backend.hardware_approach_cv_required else "Motion stopped"
+            )
+            self.status_label.setText(message)
         except BackendError as exc: self.app.show_error(str(exc))
 
     def on_sample(self, sample: Sample) -> None:
@@ -1853,8 +1860,18 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if worker is not None:
                 after = worker.pause_and_snapshot(); self._consume_acquired(after.samples, finalize=False)
                 if after.error is not None: raise BackendError(f"Final acquisition drain failed: {after.error}") from after.error
-            if experiment.active: experiment.state = ExperimentState.ABORTED; experiment.detail = "Experiment stopped by operator"
-            self.finish_recording(experiment.params, status="aborted"); self.toast("Stop acknowledged; final data drained and partial recording saved", "warning")
+            if experiment.active:
+                experiment.state = ExperimentState.ABORTED
+                experiment.detail = (
+                    "Experiment stopped safely; reinitialize and reconnect the FPGA before another command"
+                    if hardware else "Experiment stopped by operator"
+                )
+            self.finish_recording(experiment.params, status="aborted")
+            message = (
+                "Stop acknowledged; partial recording saved. Reinitialize and reconnect the FPGA before another command"
+                if hardware else "Stop acknowledged; final data drained and partial recording saved"
+            )
+            self.toast(message, "warning")
         except (BackendError, OSError, ValueError, RuntimeError) as exc:
             if experiment.active: experiment.state = ExperimentState.ABORTED
             if self.recorder.active: self.finish_recording(experiment.params, status="error")

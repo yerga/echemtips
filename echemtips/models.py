@@ -404,7 +404,7 @@ class ApproachITParameters(ApproachParameters):
                 max(1, math.ceil(duration * 1_000_000 / 32767))
                 for _potential, duration, _label in self.it_steps()
             )
-            total_tags = 2 + hold_frames + int(self.retract_after)
+            total_tags = 2 + int(self.feedback_mode == "baseline_relative") + hold_frames + int(self.retract_after)
             if total_tags > 32767:
                 errors.append(
                     f"This I-t method needs {total_tags} waypoint tags, beyond the verified signed-I16 acquisition tag range."
@@ -569,7 +569,10 @@ class ScanHoppingCVParameters:
             self.cv_start_v, self.cv_vertex1_v, self.cv_vertex2_v
         ):
             errors.append("Map potential must lie inside the CV potential range.")
-        waypoints = 1 + self.point_count * (4 + 3 * self.cycles + hold_frame_count(self.settling_time_s))
+        waypoints = 1 + self.point_count * (
+            4 + int(self.feedback_mode == "baseline_relative")
+            + 3 * self.cycles + hold_frame_count(self.settling_time_s)
+        )
         if settings.mode == "NI FPGA" and waypoints > 32767:
             errors.append(
                 f"This scan needs {waypoints} waypoint tags; the deployed FIFO streams them, but the "
@@ -714,7 +717,10 @@ class ScanHoppingITParameters:
             if any(not 0 <= target <= settings.z_range_um for target in targets):
                 errors.append("Contact-relative retract would move Z outside the configured range.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
-        total_tags = 1 + self.point_count * (3 + hold_frames + hold_frame_count(self.settling_time_s))
+        total_tags = 1 + self.point_count * (
+            3 + int(self.feedback_mode == "baseline_relative")
+            + hold_frames + hold_frame_count(self.settling_time_s)
+        )
         if settings.mode == "NI FPGA" and total_tags > 32767:
             errors.append(f"This scan needs {total_tags} waypoint tags, beyond the conservative signed-I16 scan limit.")
         return errors
