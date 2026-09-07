@@ -67,8 +67,8 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertEqual(threshold.unit_label.text(), "pA")
                 self.assertAlmostEqual(float(threshold.variable.get()), 2000.0)
                 page = window.pages[page_name]
-                self.assertEqual(tuple(page.feedback_mode.itemText(index) for index in range(page.feedback_mode.count())),
-                                 ("Absolute current", "Change from approach baseline"))
+                self.assertFalse(hasattr(page, "feedback_mode"))
+                self.assertEqual(page.parameters().feedback_mode, "absolute")
                 self.assertAlmostEqual(page.parameters().settling_time_s, 0.5)
                 self.assertEqual(
                     window.pages[page_name].accept_approach_button.text(),
