@@ -15,6 +15,7 @@ from echemtips.ni_protocol import (
     ANALOG_OUTPUT_CHANNELS,
     FEEDBACK_ACTION_CODES,
     FEEDBACK_SIGNAL_CODES,
+    FPGA_TICKS_PER_US,
     SAMPLE_WORDS,
     SampleDecoder,
     Waypoint,
@@ -123,7 +124,7 @@ class _FIFO:
 class NativeDriverTests(unittest.TestCase):
     def setUp(self) -> None:
         names = {
-            "Buffer Loop Wait Time (tICKS)", "2^(-n)", "External Stop", "External Pause", "Internal Pause",
+            "Buffer Loop Wait Time (tICKS)", "HoldTimerScale", "2^(-n)", "External Stop", "External Pause", "Internal Pause",
             "Internal Stop",
             "Applied X", "Applied Y", "Applied Z", "Applied Voltage", "Applied Voltage 2", "ExpandVelScaller X",
             "ExpandVelScaller Y", "ExpandVelScaller Z", "ExpandVelScaller V", "FeedBackType", "Feedback_Threshold",
@@ -144,6 +145,7 @@ class NativeDriverTests(unittest.TestCase):
 
     def test_configures_timing_and_manual_move_frame(self) -> None:
         self.assertEqual(self.session.registers["Buffer Loop Wait Time (tICKS)"].value, 160)
+        self.assertEqual(self.session.registers["HoldTimerScale"].value, FPGA_TICKS_PER_US)
         self.assertEqual(self.session.registers["2^(-n)"].value, 8)
         self.driver.move("Z", 25.0, 2.0)
         words = self.session.fifos["Host_To_FPGA_Positions"].writes[-1]
@@ -182,7 +184,8 @@ class NativeDriverTests(unittest.TestCase):
         first = words[:14]
         self.assertTrue(first[13] & (1 << 3))
         self.assertFalse(first[13] & (1 << 4))
-        self.assertEqual(self.driver.method_context(0), (-1, "cv"))
+        self.assertEqual(self.driver.method_context(0), (-1, ""))
+        self.assertEqual(self.driver.method_context(1), (-1, "cv"))
         self.assertEqual(self.driver.method_status()["stage"], "cv")
 
     def test_standalone_approach_contact_can_finish_without_retract(self) -> None:
@@ -215,9 +218,10 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["WaitingForWayPoints"].value = True
         self.assertEqual(self.driver.method_status()["stage"], "contact")
         self.assertEqual(len(self.driver.positions_fifo.writes[-1]), 4 * 14)
-        self.assertEqual(self.driver.method_context(2), (-1, "it:initial"))
-        self.assertEqual(self.driver.method_context(3), (-1, "it:pulse"))
-        self.assertEqual(self.driver.method_context(5), (-1, "retract"))
+        self.assertEqual(self.driver.method_context(2), (-1, "approach"))
+        self.assertEqual(self.driver.method_context(3), (-1, "it:initial"))
+        self.assertEqual(self.driver.method_context(4), (-1, "it:pulse"))
+        self.assertEqual(self.driver.method_context(6), (-1, "retract"))
 
     def test_approach_it_end_of_travel_retracts_without_surface_steps(self) -> None:
         params = ApproachITParameters(
@@ -232,7 +236,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.method_status()["stage"], "retracting")
         self.assertEqual(len(self.driver.positions_fifo.writes), 2)
         self.assertEqual(len(self.driver.positions_fifo.writes[-1]), 14)
-        self.assertEqual(self.driver.method_context(2), (-1, "retract"))
+        self.assertEqual(self.driver.method_context(3), (-1, "retract"))
 
         self.session.registers["External Pause"].value = False
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
@@ -250,9 +254,10 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.start_method("scan_hopping_it", params)
         words = self.driver.positions_fifo.writes[-1]
         self.assertEqual(len(words), 3 * 14)
-        self.assertEqual(self.driver.method_context(0), (0, "retract"))
-        self.assertEqual(self.driver.method_context(1), (0, "positioning"))
-        self.assertEqual(self.driver.method_context(2), (0, "approach"))
+        self.assertEqual(self.driver.method_context(0), (-1, ""))
+        self.assertEqual(self.driver.method_context(1), (0, "retract"))
+        self.assertEqual(self.driver.method_context(2), (0, "positioning"))
+        self.assertEqual(self.driver.method_context(3), (0, "approach"))
 
     def test_it_methods_reject_signed_tag_wrap_before_fifo_write(self) -> None:
         self.session.registers["LineNumber"].value = 32765
@@ -280,9 +285,10 @@ class NativeDriverTests(unittest.TestCase):
             self.session.registers["Internal Pause"].value = True
             self.session.registers["WaitingForWayPoints"].value = True
             self.assertEqual(self.driver.method_status()["stage"], "contact")
-            self.assertEqual(self.driver.method_context(approach_end), (point, "it:initial"))
-            self.assertEqual(self.driver.method_context(approach_end + 1), (point, "it:pulse"))
-            self.assertEqual(self.driver.method_context(approach_end + 3), (point, "retract"))
+            self.assertEqual(self.driver.method_context(approach_end), (point, "approach"))
+            self.assertEqual(self.driver.method_context(approach_end + 1), (point, "it:initial"))
+            self.assertEqual(self.driver.method_context(approach_end + 2), (point, "it:pulse"))
+            self.assertEqual(self.driver.method_context(approach_end + 4), (point, "retract"))
             retract = self.driver.positions_fifo.writes[-1][-14:]
             self.assertEqual(retract[8], position_to_raw(58, self.settings.z_range_um, self.settings.z_bipolar))
 
@@ -311,7 +317,7 @@ class NativeDriverTests(unittest.TestCase):
         )
         self.assertEqual(self.session.registers["FeedBackType"].value, 2)
         self.driver._observe_contacts([
-            Sample(0, 50, 50, 68, 0.1, 0, 9.0, 2.0, line_number=1),
+            Sample(0, 50, 50, 68, 0.1, 0, 9.0, 2.0, line_number=2),
         ])
         self.assertIn(-1, self.driver._method_contact_observed)
 
@@ -445,17 +451,18 @@ class NativeDriverTests(unittest.TestCase):
     def test_approach_context_identifies_fifo_sample_segments(self) -> None:
         self.session.registers["LineNumber"].value = 40
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1, retract_after=True))
-        self.assertEqual(self.driver.approach_context(40), "preposition")
-        self.assertEqual(self.driver.approach_context(41), "approach")
+        self.assertEqual(self.driver.approach_context(40), "")
+        self.assertEqual(self.driver.approach_context(41), "preposition")
+        self.assertEqual(self.driver.approach_context(42), "approach")
         self.session.registers["LineNumber"].value = 42
         self.session.registers["Feedback1 Boolean"].value = True
         self.session.registers["Internal Pause"].value = True
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.approach_cv_status()
-        self.assertEqual(self.driver.approach_context(42), "cv")
-        self.assertEqual(self.driver.approach_context(45), "cv")
-        self.assertEqual(self.driver.approach_context(46), "retract")
-        self.assertEqual(self.driver.approach_context(47), "")
+        self.assertEqual(self.driver.approach_context(43), "cv")
+        self.assertEqual(self.driver.approach_context(46), "cv")
+        self.assertEqual(self.driver.approach_context(47), "retract")
+        self.assertEqual(self.driver.approach_context(48), "")
 
     def test_scan_hopping_submits_cv_only_after_each_confirmed_contact(self) -> None:
         params = ScanHoppingCVParameters(x_points=2, y_points=2, cycles=1)
@@ -469,8 +476,9 @@ class NativeDriverTests(unittest.TestCase):
         self.assertTrue(frames[1][13] & (1 << 1))
         self.assertEqual(frames[2][0], 1)
         self.assertTrue(frames[2][13] & (1 << 2))
-        self.assertEqual(self.driver.scan_context(0), (0, "retract"))
-        self.assertEqual(self.driver.scan_context(2), (0, "approach"))
+        self.assertEqual(self.driver.scan_context(0), (-1, ""))
+        self.assertEqual(self.driver.scan_context(1), (0, "retract"))
+        self.assertEqual(self.driver.scan_context(3), (0, "approach"))
         self.session.registers["LineNumber"].value = 3
         self.session.registers["Feedback1 Boolean"].value = True
         self.session.registers["Internal Pause"].value = True
@@ -478,8 +486,8 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.scan_hopping_cv_status()["stage"], "cv")
         cv_words = self.session.fifos["Host_To_FPGA_Positions"].writes[-1]
         self.assertEqual(len(cv_words), 5 * 14)
-        self.assertEqual(self.driver.scan_context(3), (0, "cv"))
-        self.assertEqual(self.driver.scan_context(7), (0, "retract"))
+        self.assertEqual(self.driver.scan_context(4), (0, "cv"))
+        self.assertEqual(self.driver.scan_context(8), (0, "retract"))
 
     def test_fast_program_completion_requires_counter_and_final_drain(self) -> None:
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
@@ -526,7 +534,7 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
         self.session.registers["External Pause"].value = False
         self.session.registers["Feedback1 Boolean"].value = True
-        self.assertEqual(self.driver.scan_context(22), (0, "approach"))
+        self.assertEqual(self.driver.scan_context(23), (0, "approach"))
         self.session.registers["LineNumber"].value = baseline + 3
         self.session.registers["Internal Pause"].value = True
         self.session.registers["WaitingForWayPoints"].value = True
@@ -535,7 +543,7 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
         self.assertEqual(self.driver.scan_hopping_cv_status()["stage"], "complete")
-        self.assertEqual(self.driver.scan_context(22), (0, "approach"))
+        self.assertEqual(self.driver.scan_context(23), (0, "approach"))
 
     def test_scan_rejects_unverified_i16_tag_overflow_without_writes(self) -> None:
         self.session.registers["LineNumber"].value = 32765

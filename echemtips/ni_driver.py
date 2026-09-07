@@ -12,7 +12,7 @@ from .models import (
     hold_frame_count,
 )
 from .ni_protocol import (
-    FPGA_CLOCK_HZ,
+    FPGA_TICKS_PER_US,
     FEEDBACK_ACTION_CODES,
     FEEDBACK_SIGNAL_CODES,
     HOST_TO_TARGET_FIFO,
@@ -131,9 +131,15 @@ class WECSPMDriver:
         return self.session.registers[name].read()
 
     @staticmethod
-    def _sample_line_delta(current_i16: int, baseline_u64: int) -> int:
-        """Map the FIFO's I16 line tag onto the low word of the U64 register."""
-        return (int(current_i16) - (int(baseline_u64) & 0xFFFF)) & 0xFFFF
+    def _sample_waypoint_index(sample_line_i16: int, baseline_u64: int) -> int:
+        """Map an FPGA sample tag to its zero-based waypoint descriptor.
+
+        FPGA Target.vi increments LineNumber after reading a waypoint and
+        before capturing its samples.  The idle tag therefore equals the
+        submission baseline, and the first waypoint is tagged baseline + 1.
+        """
+        delta = (int(sample_line_i16) - (int(baseline_u64) & 0xFFFF)) & 0xFFFF
+        return delta - 1 if delta else -1
 
     def configure(self) -> None:
         for fifo in (self.positions_fifo, self.data_fifo):
@@ -148,7 +154,13 @@ class WECSPMDriver:
         self.data_fifo.configure(requested_depth=max(32768, SAMPLE_WORDS * 8192))
         self.positions_fifo.start()
         self.data_fifo.start()
-        self._write_register("Buffer Loop Wait Time (tICKS)", self.settings.sample_time_us * 40)
+        self._write_register("Buffer Loop Wait Time (tICKS)", self.settings.sample_time_us * FPGA_TICKS_PER_US)
+        # Waypoint hold values are encoded as microseconds.  The target
+        # multiplies each I16 hold word by this U64 scale before starting its
+        # 40 MHz tick timer, so never rely on the bitfile's serialized default.
+        self._write_register("HoldTimerScale", FPGA_TICKS_PER_US)
+        if int(self._read_register("HoldTimerScale")) != FPGA_TICKS_PER_US:
+            raise RuntimeError("FPGA rejected the required 40 ticks/us hold-timer scale.")
         average_exponent = int(math.ceil(math.log2(self.settings.samples_per_point)))
         self._write_register("2^(-n)", average_exponent)
         self._write_register("External Stop", False)
@@ -636,8 +648,8 @@ class WECSPMDriver:
     def approach_context(self, line_number: int) -> str:
         """Map a FIFO sample line number back to its programmed segment."""
         for baseline, contexts in reversed(self._approach_history):
-            index = self._sample_line_delta(line_number, baseline)
-            if index < len(contexts):
+            index = self._sample_waypoint_index(line_number, baseline)
+            if 0 <= index < len(contexts):
                 return contexts[index]
         return ""
 
@@ -775,8 +787,8 @@ class WECSPMDriver:
 
     def scan_context(self, line_number: int) -> tuple[int, str]:
         for sequence in reversed(self._scan_history):
-            index = self._sample_line_delta(line_number, sequence.baseline_line)
-            if index < len(sequence.descriptors):
+            index = self._sample_waypoint_index(line_number, sequence.baseline_line)
+            if 0 <= index < len(sequence.descriptors):
                 return sequence.descriptors[index]
         return -1, ""
 
@@ -830,16 +842,20 @@ class WECSPMDriver:
             sequence = self._scan_sequence
             current_line = int(self._read_register("LineNumber"))
             completed = 0
-        point_index, point_stage = self.scan_context(current_line)
+        point_index, point_stage = self._scan_point, ""
+        index = self._sample_waypoint_index(current_line, sequence.baseline_line)
+        if 0 <= index < len(sequence.descriptors):
+            point_index, point_stage = sequence.descriptors[index]
         stage = ("approaching" if point_stage == "approach" else "settling" if point_stage == "settling"
-                 else "cv" if point_stage == "cv" else "retracting" if point_stage == "retract" else "preposition")
+                 else "cv" if point_stage == "cv" else "retracting" if point_stage == "retract"
+                 else "preposition" if self._scan_phase == "approach" else self._scan_phase)
         phase_fraction = min(0.9, completed / max(1, len(sequence.descriptors)))
         return {
             "stage": stage,
-            "detail": f"Point {point_index + 1} of {point_total} · {point_stage}",
+            "detail": f"Point {point_index + 1} of {point_total} · {point_stage or stage}",
             "progress": min(0.99, (max(0, point_index) + phase_fraction) / max(1, point_total)),
             "point_index": point_index,
-            "point_stage": point_stage,
+            "point_stage": point_stage or stage,
         }
 
     # Shared method interface used by standalone CV/Approach/IT and hopping IT.
@@ -1054,8 +1070,8 @@ class WECSPMDriver:
 
     def method_context(self, line_number: int) -> tuple[int, str]:
         for sequence in reversed(self._method_history):
-            index = self._sample_line_delta(line_number, sequence.baseline_line)
-            if index < len(sequence.descriptors):
+            index = self._sample_waypoint_index(line_number, sequence.baseline_line)
+            if 0 <= index < len(sequence.descriptors):
                 return sequence.descriptors[index]
         return -1, ""
 
@@ -1105,7 +1121,13 @@ class WECSPMDriver:
                 )
                 self._method_detail = label
 
-        point, point_stage = self.method_context(int(self._read_register("LineNumber")))
+        point, point_stage = self._method_point, ""
+        if self._method_sequence is not None:
+            index = self._sample_waypoint_index(
+                int(self._read_register("LineNumber")), self._method_sequence.baseline_line
+            )
+            if 0 <= index < len(self._method_sequence.descriptors):
+                point, point_stage = self._method_sequence.descriptors[index]
         total_points = max(1, len(self._method_grid))
         local = self.execution_status().progress
         progress = local if self._method_name != "scan_hopping_it" else min(0.99, (max(0, self._method_point) + local) / total_points)

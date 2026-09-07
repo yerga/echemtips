@@ -9,6 +9,7 @@ from .models import AppSettings, Sample
 
 
 FPGA_CLOCK_HZ = 40_000_000
+FPGA_TICKS_PER_US = FPGA_CLOCK_HZ // 1_000_000
 WAYPOINT_WORDS = 14
 SAMPLE_WORDS = 14
 HOST_TO_TARGET_FIFO = "Host_To_FPGA_Positions"
@@ -43,6 +44,7 @@ REQUIRED_REGISTERS = frozenset(
         "Internal Pause",
         "Internal Stop",
         "Buffer Loop Wait Time (tICKS)",
+        "HoldTimerScale",
         "2^(-n)",
         "ExpandVelScaller X",
         "ExpandVelScaller Y",
@@ -95,6 +97,7 @@ REGISTER_CONTRACT = {
     "Internal Pause": ("Boolean", False),
     "Internal Stop": ("Boolean", True),
     "Buffer Loop Wait Time (tICKS)": ("U32", False),
+    "HoldTimerScale": ("U64", False),
     "2^(-n)": ("I16", False),
     "ExpandVelScaller X": ("I16", False),
     "ExpandVelScaller Y": ("I16", False),
