@@ -1972,10 +1972,13 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 terminal = bool(self.recorder.active and key is not None and EChemTipsApp._experiments_for(self)[key].state in (ExperimentState.COMPLETE, ExperimentState.ABORTED))
                 if terminal and worker is not None:
                     final = worker.pause_and_snapshot(); EChemTipsApp._consume_acquired(self, final.samples, finalize=False); samples += final.samples; acquisition_error = acquisition_error or final.error; worker.resume()
+                # A batch may contain valid final samples and an acquisition
+                # error. Preserve those samples, but never mark that recording
+                # complete before handling the error.
+                if acquisition_error is not None: raise BackendError(str(acquisition_error)) from acquisition_error
                 EChemTipsApp._finalize_experiments(self, bool(samples)); status_fn = getattr(self.backend, "execution_status", None)
                 if callable(status_fn) and hasattr(self, "execution_label"):
                     status = status_fn(); self.execution_label.setText(f"{status.owner or 'host'} · {status.state.value} · {status.executed_waypoints}/{status.total_waypoints}")
-                if acquisition_error is not None: raise BackendError(str(acquisition_error)) from acquisition_error
             except (BackendError, OSError, ValueError, RuntimeError) as exc:
                 worker = getattr(self, "_acquisition", None)
                 if worker is not None: worker.stop(); self._acquisition = None

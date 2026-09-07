@@ -15,6 +15,59 @@ from echemtips.ui import EChemTipsApp
 
 
 class AcquisitionOrderingTests(unittest.TestCase):
+    def test_terminal_batch_with_acquisition_error_is_saved_as_error(self):
+        with TemporaryDirectory() as folder:
+            settings = AppSettings(save_directory=folder)
+            recorder = DataRecorder()
+            params = ScanHoppingCVParameters(x_points=1, y_points=1)
+            recorder.start("Scan Hopping CV", settings, params)
+            sample = Sample(1, 35, 35, 68, .2, 0, 3, 0)
+            scan = SimpleNamespace(state=ExperimentState.CV, active=True, params=params)
+
+            def process(samples):
+                for row in samples:
+                    row.scan_pixel = 0
+                scan.state = ExperimentState.COMPLETE
+                scan.active = False
+
+            class Worker:
+                def drain(self):
+                    return AcquisitionDrain([sample], RuntimeError("FIFO acquisition failed"), 1)
+
+                def pause_and_snapshot(self):
+                    return AcquisitionDrain([], None, 1)
+
+                def resume(self):
+                    pass
+
+                def stop(self):
+                    return AcquisitionDrain([], None, 0)
+
+            errors: list[str] = []
+            app = SimpleNamespace(
+                backend=SimpleNamespace(connected=True, stop_motion=lambda: None, disconnect=lambda: None),
+                _acquisition=Worker(),
+                pages={"Scan hopping + CV": SimpleNamespace(on_samples=process)},
+                recorder=recorder,
+                experiments={"scan_cv": scan},
+                experiment=SimpleNamespace(active=False),
+                finish_recording=lambda parameters, status="complete": recorder.finish(settings, parameters, status=status),
+                toast=lambda *_args: None,
+                _set_connection_ui=lambda _connected: None,
+                show_error=errors.append,
+                active_parameters=params,
+                after=lambda *_args: None,
+                _poll=lambda: None,
+            )
+
+            EChemTipsApp._poll(app)
+
+            assert recorder.output_path is not None
+            metadata = json.loads(recorder.output_path.with_suffix(".json").read_text())
+            self.assertEqual(metadata["status"], "error")
+            self.assertEqual(metadata["sample_count"], 1)
+            self.assertEqual(errors, ["FIFO acquisition failed"])
+
     def test_stop_is_sent_before_a_snapshot_processing_failure(self):
         calls: list[str] = []
         experiment = SimpleNamespace(active=True, state=ExperimentState.CV, detail="", params=None)
