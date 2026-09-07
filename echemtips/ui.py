@@ -74,13 +74,19 @@ def _feedback_current(sample: Sample, channel: str) -> float:
 
 def _contact_help() -> QtWidgets.QLabel:
     text = label(
-        "Contact is detected when the selected current crosses the absolute threshold in the chosen direction. "
-        "The approach then ends automatically and the experiment continues. A zero settling time proceeds immediately.",
+        "Contact: selected current crosses the threshold.\n"
+        "The approach ends and the next step starts automatically.",
         "muted",
         word_wrap=True,
     )
+    text.setObjectName("contactHelp")
+    text.setToolTip(
+        "Select Current 1 or Current 2, the threshold in pA, and whether contact occurs above or below it. "
+        "After contact, the experiment continues automatically. Settling time may be zero."
+    )
     text.setMaximumWidth(330)
-    text.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
+    text.setMinimumHeight(text.fontMetrics().lineSpacing() * 2 + 6)
+    text.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum)
     return text
 
 

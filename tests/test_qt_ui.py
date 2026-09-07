@@ -69,6 +69,10 @@ class QtLayoutTests(unittest.TestCase):
                 page = window.pages[page_name]
                 self.assertFalse(hasattr(page, "feedback_mode"))
                 self.assertEqual(page.parameters().feedback_mode, "absolute")
+                contact_help = page.findChild(QtWidgets.QLabel, "contactHelp")
+                self.assertIsNotNone(contact_help)
+                self.assertIn("next step starts automatically", contact_help.text())
+                self.assertGreaterEqual(contact_help.minimumHeight(), contact_help.fontMetrics().lineSpacing() * 2)
                 self.assertAlmostEqual(page.parameters().settling_time_s, 0.5)
                 self.assertEqual(
                     window.pages[page_name].accept_approach_button.text(),
