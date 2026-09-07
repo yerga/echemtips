@@ -1010,10 +1010,6 @@ class ScanHoppingITExperiment:
         self._tag(sample, point)
         if stage == "approach":
             self._last_approach_z[point] = sample.z_um
-            value = sample.current1_na
-            hit = value >= self.params.feedback_threshold if self.params.greater_than else value <= self.params.feedback_threshold
-            if hit:
-                self.contact_z.setdefault(self._key(point), sample.z_um)
         elif stage == "settling" or stage.startswith("it:"):
             # The FPGA may have observed the threshold between host samples.
             # Entering the I-t program itself proves that contact was confirmed.
@@ -1022,8 +1018,6 @@ class ScanHoppingITExperiment:
             if stage == "it:pulse":
                 self._pulse_samples.setdefault(point, []).append(sample.current1_na)
         elif stage == "retract":
-            if point in self._last_approach_z and point not in self._pulse_samples:
-                self.contact_z.setdefault(self._key(point), self._last_approach_z[point])
             self._finish_pulse_map(point)
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:

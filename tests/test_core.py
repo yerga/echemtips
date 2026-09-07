@@ -610,6 +610,38 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.current_at_potential[(0, 0)], 3.25)
         self.assertEqual(samples[1].scan_pixel, 0)
 
+    def test_hardware_hopping_it_does_not_map_an_unconfirmed_contact(self) -> None:
+        class HardwareITBackend(SimulationBackend):
+            @property
+            def hardware_approach_cv_required(self) -> bool:
+                return True
+
+            def hardware_program_available(self, name: str) -> bool:
+                return name == "scan_hopping_it"
+
+            def start_hardware_program(self, _name: str, _params: object) -> None:
+                pass
+
+            def hardware_program_context(self, line_number: int) -> tuple[int, str]:
+                return {1: (0, "approach"), 2: (0, "retract")}.get(line_number, (-1, ""))
+
+            def hardware_program_status(self) -> HardwareSequenceUpdate:
+                return HardwareSequenceUpdate("aborted", "No contact", 0.0, 0, "aborted")
+
+        settings = AppSettings()
+        backend = HardwareITBackend(settings)
+        backend.connect()
+        experiment = ScanHoppingITExperiment(backend, settings)
+        experiment.start(ScanHoppingITParameters(x_points=1, y_points=1))
+
+        experiment.tick_samples([
+            Sample(0, 35, 35, 80, 0.1, 0, 9, 9, line_number=1),
+            Sample(1, 35, 35, 55, 0.1, 0, 9, 9, line_number=2),
+        ])
+
+        self.assertEqual(experiment.state, ExperimentState.ABORTED)
+        self.assertNotIn((0, 0), experiment.contact_z)
+
     def test_hardware_scan_contact_transition_remains_active_until_cv(self) -> None:
         class HardwareScanBackend(SimulationBackend):
             def __init__(self, settings: AppSettings) -> None:
