@@ -69,7 +69,7 @@ python run_hardware_check.py --bitfile "/path/to/target.lvbitx"
 python run_hardware_check.py --bitfile "/path/to/target.lvbitx" --connect --resource RIO0
 ```
 
-The commissioned profile is an NI USB-7856R with:
+The currently supported target profile is an NI USB-7856R with:
 
 - AO0, AO1, AO2: X, Y, Z piezo commands
 - AO3, AO4: Voltage 1 and Voltage 2

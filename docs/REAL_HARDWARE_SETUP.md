@@ -26,7 +26,7 @@ In NI MAX, confirm that the device appears under Remote Systems/Devices and Inte
 
 ## USB-7856R target image
 
-The commissioned `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx` reports target class `USB-7856R` and signature `8229BC0D5A4935D854D1286878CEE54A`. It matches the native driver's WEC-SPM host interface but is not distributed in this repository. eChemTips uses `ECHEMTIPS_BITFILE` when set and also detects that filename in a sibling `WEC_SPM/FPGA Bitfiles` archive; otherwise select the private target explicitly in Settings. The older `FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx` is a PCIe-7852R image and must not be selected for the USB device.
+The supported `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx` reports target class `USB-7856R` and signature `8229BC0D5A4935D854D1286878CEE54A`. It matches the native driver's WEC-SPM host interface in offline protocol tests but is not distributed in this repository. Do not call a particular installation commissioned until it has completed the physical checks below. eChemTips uses `ECHEMTIPS_BITFILE` when set and also detects that filename in a sibling `WEC_SPM/FPGA Bitfiles` archive; otherwise select the private target explicitly in Settings. The older `FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx` is a PCIe-7852R image and must not be selected for the USB device.
 
 ## Connection changes physical outputs
 
@@ -59,7 +59,7 @@ The Python app validates target family, required register datatypes/access roles
 6. With actuators still disabled, verify Watch Current and Voltage 1 scaling. A known amplifier test signal is strongly recommended.
 7. Enable one piezo axis at a time. Command a small, slow move and verify direction and travel externally. Then commission Z with the probe far from the surface.
 8. Only after those checks, run Approach + CV with a conservative Z limit, slow approach, and a verified Current 1 threshold/polarity. Thresholds are entered in pA in the UI and converted to the nA protocol unit before submission.
-9. Commission Scan Hopping + CV first as a 1 x 1 scan, then 2 x 2 with a small XY range. **Initial approach Z** is used only to position the first hop. Confirm that each normal retract target equals the FPGA's applied contact Z moved away from the surface by **Retract distance from contact**. Confirm the saved `scan_pixel`, `scan_row`, and `scan_column` columns agree with physical movement before expanding the grid. Test serpentine first; when commissioning raster, verify that **Raster flyback extra retract** is added at the end of each line before allowing the longer X flyback.
+9. Commission Scan Hopping + CV first as a 1 x 1 scan, then 2 x 2 with a small XY range. **Initial approach Z** is used only to position the first hop. Confirm that each normal retract target equals the FPGA's applied contact Z moved away from the surface by **Retract distance from contact**. Confirm that the CSV `scan_pixel` values and the JSON sidecar's ordered `scan_grid` records agree with physical row, column, X, and Y movement before expanding the grid. Test serpentine first; when commissioning raster, verify that **Raster flyback extra retract** is added at the end of each line before allowing the longer X flyback.
 
 ## Commissioning limitations and stop behavior
 

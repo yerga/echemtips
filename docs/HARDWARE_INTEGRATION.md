@@ -8,7 +8,7 @@ This document records the boundary between the Python host and the existing WEC-
 
 ## Supplied target
 
-The commissioned target filename is shown below for identification. The binary
+The supported target filename is shown below for identification. The binary
 is private instrument firmware and is not included in this repository:
 
 `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx`
