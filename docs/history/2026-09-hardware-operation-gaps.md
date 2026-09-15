@@ -1,5 +1,11 @@
 # Three priority hardware-operation gaps
 
+> **Historical implementation note (September 2026).** These three gaps were
+> closed during the initial hardware-safety work and are not the current issue
+> backlog. For current behavior use the hardware integration, commissioning,
+> and troubleshooting documents. Physical USB-7856R commissioning remained
+> outstanding when this note was written.
+
 This review focused on failure modes that can affect the USB-7856R, piezo positioner, or electrode output rather than on adding more experiment types.
 
 ## 1. Emergency stop was not latched across host commands

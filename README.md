@@ -127,6 +127,8 @@ See the [Architecture and extension guide](docs/ARCHITECTURE.md) for runtime dat
 
 The historical LabVIEW project, compiled FPGA binaries, local settings, and experimental data are intentionally excluded from this repository.
 
+The [documentation index](docs/README.md) groups operator, hardware, data-analysis, developer, and historical references by audience.
+
 ## License
 
 [MIT](LICENSE)

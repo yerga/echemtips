@@ -1,5 +1,10 @@
 # Three priority LabVIEW-to-Python gaps
 
+> **Historical implementation note (September 2026).** This records three
+> migration gaps that were closed during early eChemTips development. It is not
+> a current capability specification or open-work list. Use the operator,
+> architecture, data-format, and shared-host documents for current behavior.
+
 These were prioritized over additional specialized scan methods because they affect data integrity, repeat measurements, and access to existing experiments.
 
 ## 1. Recording during acquisition
