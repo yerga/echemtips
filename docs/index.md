@@ -4,7 +4,7 @@ Choose the path that matches what you are doing.
 
 ## Use the simulator or operate an experiment
 
-1. Start with the project [README](../README.md).
+1. Start with the project [README](https://github.com/yerga/echemtips#readme).
 2. Follow the [Operator guide](OPERATOR_GUIDE.md) for controls, experiment
    sequences, plots, contact decisions, scan paths, and stopping.
 3. Use the [Settings reference](SETTINGS_REFERENCE.md) for every persisted
@@ -30,7 +30,7 @@ the commissioning template.
 
 ## Develop or review the code
 
-1. Read [CONTRIBUTING](../CONTRIBUTING.md).
+1. Read the [public contribution guide](https://github.com/yerga/echemtips/blob/main/CONTRIBUTING.md).
 2. Read the [Architecture and extension guide](ARCHITECTURE.md).
 3. Consult [Hardware integration](HARDWARE_INTEGRATION.md) before changing
    protocol code and [Recording data format](DATA_FORMAT.md) before changing

@@ -1,0 +1,31 @@
+# Changelog
+
+All notable changes to eChemTips are recorded here. The project follows
+[Semantic Versioning](https://semver.org/) while its public API is pre-1.0.
+
+## Unreleased
+
+### Added
+
+- Task-oriented operator guide for every current control and experiment.
+- Versioned recording-schema, settings, calibration, real-hardware
+  commissioning, troubleshooting, architecture, and contributor references.
+- Public docstrings across application modules, models, services, protocol,
+  backends, state machines, and UI components.
+- Automated documentation-link, schema-reference, public-docstring, strict
+  MkDocs, and GitHub Pages checks.
+
+### Changed
+
+- Resolved migration-gap reports are preserved as dated historical notes
+  rather than presented as active backlog documents.
+- Hardware terminology distinguishes an offline-supported target profile from
+  a physically commissioned instrument.
+
+## 0.1.0 - 2026-09-06
+
+### Added
+
+- Initial public eChemTips release with PySide6/PyQtGraph control and analysis
+  applications, deterministic simulation, NI USB-7856R host protocol support,
+  full-rate recording, CV/approach/I–t/hopping methods, and MIT license.

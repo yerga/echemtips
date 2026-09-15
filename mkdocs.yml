@@ -1,0 +1,44 @@
+site_name: eChemTips
+site_description: Control, analysis, and hardware documentation for scanning electrochemistry
+site_url: https://yerga.github.io/echemtips/
+repo_url: https://github.com/yerga/echemtips
+repo_name: yerga/echemtips
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    primary: teal
+    accent: teal
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+nav:
+  - Start here: index.md
+  - Operator guide: OPERATOR_GUIDE.md
+  - Settings: SETTINGS_REFERENCE.md
+  - Data format: DATA_FORMAT.md
+  - Real hardware:
+      - Commissioning: REAL_HARDWARE_SETUP.md
+      - Calibration: CALIBRATION.md
+      - Troubleshooting: TROUBLESHOOTING.md
+      - FPGA integration: HARDWARE_INTEGRATION.md
+      - Shared host services: SHARED_HOST_SERVICES.md
+  - Developers:
+      - Architecture and extensions: ARCHITECTURE.md
+      - Releases and compatibility: RELEASES.md
+  - Historical notes:
+      - Hardware-operation gaps: history/2026-09-hardware-operation-gaps.md
+      - LabVIEW-parity gaps: history/2026-09-labview-parity-gaps.md
+strict: true
