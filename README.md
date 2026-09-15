@@ -115,6 +115,8 @@ The suite covers settings, simulation dynamics, experiment state machines, recor
 
 ## Architecture
 
+See the [Architecture and extension guide](docs/ARCHITECTURE.md) for runtime data flow, experiment lifecycle, ownership rules, extension steps, and test boundaries. Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md).
+
 - `echemtips/ui.py`, `qt_common.py`: PySide6 operator interface and PyQtGraph rendering
 - `echemtips/experiments.py`: device-independent experiment state machines
 - `echemtips/backends.py`: simulator and NI-FPGA backend boundary
