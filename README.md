@@ -85,7 +85,7 @@ The currently supported target profile is an NI USB-7856R with:
 - AI5, AI6, AI7: unused
 - FPGA-side approach feedback and waypoint execution
 
-Before enabling actuators, follow [the real-hardware commissioning guide](docs/REAL_HARDWARE_SETUP.md). Verify the bitfile target, register/FIFO contract, wiring, polarity, scaling, travel, current-amplifier sensitivity, and physical interlocks on the specific instrument. Use the [hardware troubleshooting guide](docs/TROUBLESHOOTING.md) for symptom-based diagnosis and conservative recovery.
+Before enabling actuators, follow [the real-hardware commissioning guide](docs/REAL_HARDWARE_SETUP.md) and [calibration procedure](docs/CALIBRATION.md). Verify the bitfile target, register/FIFO contract, wiring, polarity, scaling, travel, current-amplifier sensitivity, and physical interlocks on the specific instrument. Use the [hardware troubleshooting guide](docs/TROUBLESHOOTING.md) for symptom-based diagnosis and conservative recovery.
 
 The host supports reusable execution ownership, state reporting, framed contact transitions, safe cancellation with stream retirement, FIFO streaming/refilling beyond the target's initial FIFO capacity, pause/resume, complete-frame acquisition, display-only decimation, waypoint compilation, and Current 1/2 contact feedback. See the [hardware integration](docs/HARDWARE_INTEGRATION.md) and [shared host services](docs/SHARED_HOST_SERVICES.md) documentation.
 
