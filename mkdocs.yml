@@ -39,6 +39,7 @@ plugins:
 nav:
   - Start here: index.md
   - Operator guide: OPERATOR_GUIDE.md
+  - Interface tour: USER_INTERFACE.md
   - Settings: SETTINGS_REFERENCE.md
   - Terminology: GLOSSARY.md
   - Data format: DATA_FORMAT.md
