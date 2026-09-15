@@ -1,3 +1,5 @@
+"""Backend-independent experiment state machines and contact gating."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from .models import (
 
 
 class ExperimentState(str, Enum):
+    """Operator-visible stages shared by simulated and hardware methods."""
     IDLE = "Ready"
     PREPOSITION = "Moving to start"
     APPROACHING = "Approaching surface"
@@ -25,12 +28,14 @@ class ExperimentState(str, Enum):
 
 @dataclass(slots=True)
 class ExperimentUpdate:
+    """One state-machine result for status and progress rendering."""
     state: ExperimentState
     detail: str
     progress: float
 
 
 def feedback_value(sample: Sample, channel: str) -> float:
+    """Return the selected Current 1 or Current 2 measurement in nA."""
     return {
         "Current 1": sample.current1_na,
         "Current 2": sample.current2_na,
@@ -55,6 +60,7 @@ def contact_threshold_hit(
 
 
 class ApproachCVExperiment:
+    """Run optional positioning, confirmed approach, settling, CV, and retract."""
     def __init__(self, backend: InstrumentBackend, settings: AppSettings) -> None:
         self.backend = backend
         self.settings = settings
@@ -73,6 +79,7 @@ class ApproachCVExperiment:
 
     @property
     def active(self) -> bool:
+        """Return whether the method owns an unfinished operational stage."""
         return self.state in {
             ExperimentState.PREPOSITION,
             ExperimentState.APPROACHING,
@@ -83,6 +90,7 @@ class ApproachCVExperiment:
         }
 
     def start(self, params: ApproachCVParameters) -> None:
+        """Validate and start either the FPGA sequence or host simulation."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -117,11 +125,13 @@ class ApproachCVExperiment:
         self.progress = 0.02
 
     def abort(self) -> None:
+        """Stop backend motion and mark this experiment aborted."""
         self.backend.stop_motion()
         self.state = ExperimentState.ABORTED
         self.detail = "Experiment stopped by operator"
 
     def accept_approach(self, sample: Sample) -> None:
+        """Treat current Z as deliberate contact only during approach."""
         if self.state != ExperimentState.APPROACHING:
             raise RuntimeError("The probe is not currently approaching.")
         if self._hardware_sequence:
@@ -153,6 +163,7 @@ class ApproachCVExperiment:
         self.detail = f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def tick(self, sample: Sample) -> ExperimentUpdate:
+        """Advance simulated stages or normalize current hardware status."""
         if self._hardware_sequence and self.active:
             update = self.backend.hardware_approach_cv_status()
             state_by_stage = {
@@ -283,6 +294,7 @@ class ScanHoppingCVExperiment:
 
     @property
     def active(self) -> bool:
+        """Return whether the hopping scan owns an operational stage."""
         return self.state in {
             ExperimentState.PREPOSITION,
             ExperimentState.APPROACHING,
@@ -293,6 +305,7 @@ class ScanHoppingCVExperiment:
         }
 
     def start(self, params: ScanHoppingCVParameters) -> None:
+        """Validate/reset maps and start hardware or simulated hopping CV."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -323,11 +336,13 @@ class ScanHoppingCVExperiment:
             self._start_simulated_point()
 
     def abort(self) -> None:
+        """Stop motion and mark the hopping scan aborted."""
         self.backend.stop_motion()
         self.state = ExperimentState.ABORTED
         self.detail = "Scan stopped by operator"
 
     def accept_approach(self, sample: Sample) -> None:
+        """Accept current Z for the actively approaching scan pixel."""
         if self.state != ExperimentState.APPROACHING:
             raise RuntimeError("The probe is not currently approaching.")
         if self._hardware:
@@ -526,6 +541,7 @@ class ScanHoppingCVExperiment:
         self._hardware_stage = stage
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
+        """Ingest an acquisition batch and advance/map the hopping-CV state."""
         if not self.active:
             return None
         if self._hardware:
@@ -556,6 +572,7 @@ class ScanHoppingCVExperiment:
 
 
 class CVExperiment:
+    """Standalone CV runner sharing waveform semantics with approach methods."""
     def __init__(self, backend: InstrumentBackend, settings: AppSettings) -> None:
         self.backend, self.settings = backend, settings
         self.params = CVParameters()
@@ -570,9 +587,11 @@ class CVExperiment:
 
     @property
     def active(self) -> bool:
+        """Return whether CV execution is unfinished."""
         return self.state == ExperimentState.CV
 
     def start(self, params: CVParameters) -> None:
+        """Validate and start FPGA or host-simulated cyclic voltammetry."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -600,11 +619,13 @@ class CVExperiment:
         self.detail = f"CV cycle 1 of {params.cycles}"
 
     def abort(self) -> None:
+        """Stop the backend and mark standalone CV aborted."""
         self.backend.stop_motion()
         self.state = ExperimentState.ABORTED
         self.detail = "CV stopped by operator"
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
+        """Advance from the newest sample or normalize hardware method status."""
         if not self.active:
             return None
         if self._hardware:
@@ -642,6 +663,7 @@ class CVExperiment:
 
 
 class ApproachExperiment:
+    """Standalone contact approach with optional settling and retract."""
     def __init__(self, backend: InstrumentBackend, settings: AppSettings) -> None:
         self.backend, self.settings = backend, settings
         self.params = ApproachParameters()
@@ -656,10 +678,12 @@ class ApproachExperiment:
 
     @property
     def active(self) -> bool:
+        """Return whether an approach stage still owns the instrument."""
         return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT,
                               ExperimentState.SETTLING, ExperimentState.RETRACTING}
 
     def start(self, params: ApproachParameters) -> None:
+        """Validate and start hardware or simulated standalone approach."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -682,10 +706,12 @@ class ApproachExperiment:
         self.detail, self.progress = "Moving to approach start", 0.0
 
     def abort(self) -> None:
+        """Stop movement and mark the standalone approach aborted."""
         self.backend.stop_motion()
         self.state, self.detail = ExperimentState.ABORTED, "Approach stopped by operator"
 
     def accept_approach(self, sample: Sample) -> None:
+        """Deliberately accept current Z as contact during approach."""
         if self.state != ExperimentState.APPROACHING:
             raise RuntimeError("The probe is not currently approaching.")
         if self._hardware:
@@ -711,6 +737,7 @@ class ApproachExperiment:
         self.state, self.detail = ExperimentState.SETTLING, f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
+        """Ingest samples and advance contact, settling, or retract state."""
         if not self.active:
             return None
         if self._hardware:
@@ -761,6 +788,7 @@ class ApproachExperiment:
 
 
 class ApproachITExperiment:
+    """Confirmed approach followed by a timed initial/pulse/return program."""
     def __init__(self, backend: InstrumentBackend, settings: AppSettings) -> None:
         self.backend, self.settings = backend, settings
         self.params = ApproachITParameters()
@@ -779,10 +807,12 @@ class ApproachITExperiment:
 
     @property
     def active(self) -> bool:
+        """Return whether Approach + I–t has an unfinished active stage."""
         return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT,
                               ExperimentState.SETTLING, ExperimentState.IT, ExperimentState.RETRACTING}
 
     def start(self, params: ApproachITParameters) -> None:
+        """Validate and start hardware or simulated Approach + I–t."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -807,10 +837,12 @@ class ApproachITExperiment:
         self.detail = "Moving to approach start"
 
     def abort(self) -> None:
+        """Stop movement/output progression and mark the method aborted."""
         self.backend.stop_motion()
         self.state, self.detail = ExperimentState.ABORTED, "Approach + I-t stopped by operator"
 
     def accept_approach(self, sample: Sample) -> None:
+        """Accept current Z and proceed to settling/I–t when approaching."""
         if self.state != ExperimentState.APPROACHING:
             raise RuntimeError("The probe is not currently approaching.")
         if self._hardware:
@@ -836,6 +868,7 @@ class ApproachITExperiment:
         self.state, self.detail = ExperimentState.IT, f"I-t segment 1/{len(self._steps)} · {label}"
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
+        """Ingest samples and advance approach, I–t holds, and retract."""
         if not self.active:
             return None
         if self._hardware:
@@ -900,6 +933,7 @@ class ApproachITExperiment:
 
 
 class ScanHoppingITExperiment:
+    """Contact-gated initial/pulse/return acquisition at every grid point."""
     def __init__(self, backend: InstrumentBackend, settings: AppSettings) -> None:
         self.backend, self.settings = backend, settings
         self.params = ScanHoppingITParameters()
@@ -925,10 +959,12 @@ class ScanHoppingITExperiment:
 
     @property
     def active(self) -> bool:
+        """Return whether hopping I–t owns an operational stage."""
         return self.state in {ExperimentState.PREPOSITION, ExperimentState.APPROACHING, ExperimentState.CONTACT,
                               ExperimentState.SETTLING, ExperimentState.IT, ExperimentState.RETRACTING}
 
     def start(self, params: ScanHoppingITParameters) -> None:
+        """Validate/reset maps and start hardware or simulated hopping I–t."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -949,10 +985,12 @@ class ScanHoppingITExperiment:
             self._start_point()
 
     def abort(self) -> None:
+        """Stop movement and mark hopping I–t aborted."""
         self.backend.stop_motion()
         self.state, self.detail = ExperimentState.ABORTED, "Hopping I-t scan stopped by operator"
 
     def accept_approach(self, sample: Sample) -> None:
+        """Accept current Z for the actively approaching hopping-I–t pixel."""
         if self.state != ExperimentState.APPROACHING:
             raise RuntimeError("The probe is not currently approaching.")
         if self._hardware:
@@ -1020,6 +1058,7 @@ class ScanHoppingITExperiment:
             self._finish_pulse_map(point)
 
     def tick_samples(self, samples: list[Sample]) -> ExperimentUpdate | None:
+        """Ingest a batch and advance/map the hopping-I–t state machine."""
         if not self.active:
             return None
         if self._hardware:

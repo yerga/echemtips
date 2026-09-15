@@ -1,3 +1,5 @@
+"""Thread-safe simulator and NI backends behind one instrument contract."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -35,6 +37,7 @@ class SafetyError(BackendError):
 
 @dataclass(frozen=True, slots=True)
 class HardwareSequenceUpdate:
+    """Normalized method stage, detail, progress, and optional scan context."""
     stage: str
     detail: str
     progress: float
@@ -44,6 +47,7 @@ class HardwareSequenceUpdate:
 
 @dataclass(frozen=True, slots=True)
 class BackendCapabilities:
+    """Feature flags used to enable only controls supported by a backend."""
     pause_resume: bool
     end_current_waypoint: bool
     live_potential: bool
@@ -61,6 +65,7 @@ def _synchronized_io(method):
 
 
 class InstrumentBackend(ABC):
+    """Abstract physical-unit API consumed by experiments and acquisition."""
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
         self.connected = False
@@ -68,26 +73,32 @@ class InstrumentBackend(ABC):
 
     @property
     def motion_available(self) -> bool:
+        """Return whether bounded X/Y/Z commands can be submitted."""
         return True
 
     @property
     def hardware_approach_cv_required(self) -> bool:
+        """Return whether contact-gated methods must execute as FPGA programs."""
         return False
 
     @property
     def approach_cv_available(self) -> bool:
+        """Return whether the complete Approach + CV contract is supported."""
         return True
 
     @property
     def scan_hopping_cv_available(self) -> bool:
+        """Return whether hardware or host can execute hopping CV."""
         return not self.hardware_approach_cv_required
 
     @property
     def full_rate_data_available(self) -> bool:
+        """Return whether FIFO batches rather than register snapshots are read."""
         return True
 
     @property
     def capabilities(self) -> BackendCapabilities:
+        """Return UI-facing backend capabilities."""
         return BackendCapabilities(
             True, True, True, True,
             self.full_rate_data_available,
@@ -95,6 +106,7 @@ class InstrumentBackend(ABC):
 
     @property
     def position_readback_label(self) -> str:
+        """Describe whether displayed position is measured or only commanded."""
         return "Measured/simulated position"
 
     @property
@@ -109,18 +121,22 @@ class InstrumentBackend(ABC):
     @property
     @abstractmethod
     def label(self) -> str:
+        """Return the human-readable connected-device label."""
         raise NotImplementedError
 
     @abstractmethod
     def connect(self, *, allow_startup_actuation: bool = False) -> None:
+        """Open the backend, requiring explicit authorization for startup output."""
         raise NotImplementedError
 
     @abstractmethod
     def disconnect(self) -> None:
+        """Close resources and make later I/O reject until reconnection."""
         raise NotImplementedError
 
     @abstractmethod
     def read_sample(self) -> Sample:
+        """Return one current calibrated measurement."""
         raise NotImplementedError
 
     @_synchronized_io
@@ -130,14 +146,17 @@ class InstrumentBackend(ABC):
 
     @abstractmethod
     def move(self, axis: str, target: float, speed: float) -> None:
+        """Command one physical axis to a bounded target at positive speed."""
         raise NotImplementedError
 
     @abstractmethod
     def stop_motion(self) -> None:
+        """Stop current movement according to backend cancellation semantics."""
         raise NotImplementedError
 
     @abstractmethod
     def set_voltage(self, channel: int, voltage: float) -> None:
+        """Set E1 or E2 in requested physical volts."""
         raise NotImplementedError
 
     def set_live_potential(self, channel: int, voltage: float) -> None:
@@ -145,9 +164,11 @@ class InstrumentBackend(ABC):
         self.set_voltage(channel, voltage)
 
     def start_hardware_approach_cv(self, params: ApproachCVParameters) -> None:
+        """Start the backend-resident staged Approach + CV implementation."""
         raise BackendError("This backend does not execute FPGA waypoint sequences.")
 
     def hardware_approach_cv_status(self) -> HardwareSequenceUpdate:
+        """Return normalized status for hardware Approach + CV."""
         raise BackendError("This backend does not report FPGA waypoint sequence state.")
 
     def hardware_approach_context(self, line_number: int) -> str:
@@ -155,33 +176,43 @@ class InstrumentBackend(ABC):
         return ""
 
     def start_hardware_scan_hopping_cv(self, params: ScanHoppingCVParameters) -> None:
+        """Start backend-resident contact-gated hopping CV."""
         raise BackendError("This backend does not execute FPGA scan-hopping sequences.")
 
     def hardware_scan_hopping_cv_status(self) -> HardwareSequenceUpdate:
+        """Return normalized status for hardware hopping CV."""
         raise BackendError("This backend does not report FPGA scan-hopping state.")
 
     def hardware_scan_context(self, line_number: int) -> tuple[int, str]:
+        """Map an FPGA sample tag to hopping-CV pixel and stage."""
         return -1, ""
 
     def hardware_program_available(self, name: str) -> bool:
+        """Return whether a named shared FPGA method contract is present."""
         return False
 
     def start_hardware_program(self, name: str, parameters: object) -> None:
+        """Start a named shared FPGA method with validated parameters."""
         raise BackendError(f"This backend cannot execute the FPGA method {name!r}.")
 
     def hardware_program_status(self) -> HardwareSequenceUpdate:
+        """Return normalized status for the active shared FPGA method."""
         raise BackendError("This backend does not report shared FPGA method state.")
 
     def hardware_program_context(self, line_number: int) -> tuple[int, str]:
+        """Map an FPGA sample tag to shared-method pixel and stage."""
         return -1, ""
 
     def pause(self) -> None:
+        """Pause execution when the backend exposes operator pause ownership."""
         raise BackendError("Pause is not supported by this backend.")
 
     def resume(self) -> None:
+        """Resume a prior operator pause without overriding feedback ownership."""
         raise BackendError("Resume is not supported by this backend.")
 
     def end_current_waypoint(self) -> None:
+        """Request acknowledged completion of the active FPGA waypoint."""
         raise BackendError("Ending the current waypoint is not supported by this backend.")
 
     def accept_approach(self) -> None:
@@ -189,6 +220,7 @@ class InstrumentBackend(ABC):
         raise BackendError("Manual approach acceptance is not supported by this backend.")
 
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
+        """Apply supported feedback fields; simple backends need no action."""
         del config
 
     def set_diagnostic_circuit(self, mode: str, resistance_mohm: float | None = None) -> None:
@@ -198,9 +230,11 @@ class InstrumentBackend(ABC):
         del resistance_mohm
 
     def execution_status(self) -> ExecutionSnapshot:
+        """Return a UI-safe execution snapshot."""
         return ExecutionSnapshot("", ExecutionState.IDLE, 0, 0, 0, 0, "No FPGA program")
 
     def emergency_stop(self) -> None:
+        """Perform the backend's strongest software stop operation."""
         self.stop_motion()
         self.set_voltage(1, 0.0)
         self.set_voltage(2, 0.0)
@@ -245,6 +279,7 @@ class SimulationBackend(InstrumentBackend):
         self._last_sample_elapsed = 0.0
 
     def surface_z_at(self, x_um: float, y_um: float) -> float:
+        """Return deterministic simulated surface height at physical XY."""
         sx = (x_um / self.settings.x_range_um - 0.5) * math.tau
         sy = (y_um / self.settings.y_range_um - 0.5) * math.tau
         return self.settings.z_range_um * 0.68 + 2.4 * math.sin(sx) * math.cos(sy) + 0.7 * math.sin(2 * sy)
@@ -255,6 +290,7 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def connect(self, *, allow_startup_actuation: bool = False) -> None:
+        """Reset simulator timing and mark it connected without physical output."""
         self.connected = True
         self._started = self._last_tick = time.monotonic()
         self._paused = False
@@ -262,6 +298,7 @@ class SimulationBackend(InstrumentBackend):
         self._paused_duration_s = 0.0
 
     def experiment_time(self) -> float:
+        """Return a monotonic clock with simulator pause durations removed."""
         now = time.monotonic()
         current_pause = now - self._paused_at if self._paused_at is not None else 0.0
         return now - self._paused_duration_s - current_pause
@@ -288,6 +325,7 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def read_sample(self) -> Sample:
+        """Advance motion and synthesize calibrated position/current channels."""
         if not self.connected:
             raise BackendError("Simulator is not connected.")
         self._tick()
@@ -331,6 +369,7 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def move(self, axis: str, target: float, speed: float) -> None:
+        """Set a validated simulator target or delegate a potential command."""
         self._validate_output(axis, target, speed)
         if axis == "Voltage 1":
             self.set_voltage(1, target)
@@ -344,24 +383,28 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def stop_motion(self) -> None:
+        """Freeze all simulated axes at their current positions."""
         self._tick()
         self._targets = dict(self._positions)
         self._speeds = {"X": 0.0, "Y": 0.0, "Z": 0.0}
 
     @_synchronized_io
     def set_voltage(self, channel: int, voltage: float) -> None:
+        """Set one simulated potential output after channel/range checks."""
         if channel not in (1, 2) or not -10 <= voltage <= 10:
             raise SafetyError("Voltage output must be channel 1 or 2 and within +/-10 V.")
         self._voltage[channel] = voltage
 
     @_synchronized_io
     def pause(self) -> None:
+        """Freeze simulated movement and experiment-time progression."""
         if not self._paused:
             self._paused = True
             self._paused_at = time.monotonic()
 
     @_synchronized_io
     def resume(self) -> None:
+        """Resume simulated time while accounting for paused duration."""
         now = time.monotonic()
         if self._paused_at is not None:
             self._paused_duration_s += max(0.0, now - self._paused_at)
@@ -371,12 +414,14 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def end_current_waypoint(self) -> None:
+        """Complete every simulated axis target and increment its line tag."""
         self._positions.update(self._targets)
         self._speeds = {"X": 0.0, "Y": 0.0, "Z": 0.0}
         self._line_number += 1
 
     @_synchronized_io
     def set_diagnostic_circuit(self, mode: str, resistance_mohm: float | None = None) -> None:
+        """Select deterministic open/resistor/pipette response synthesis."""
         super().set_diagnostic_circuit(mode, resistance_mohm)
         if resistance_mohm is not None:
             if not math.isfinite(resistance_mohm) or resistance_mohm <= 0:
@@ -484,6 +529,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def connect(self, *, allow_startup_actuation: bool = False) -> None:
+        """Validate/open/run the target and verify its unavoidable startup state."""
         settings_errors = self.settings.validate()
         if settings_errors:
             raise BackendError("Invalid instrument settings: " + "; ".join(settings_errors))
@@ -541,6 +587,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def disconnect(self) -> None:
+        """Pause and close the NI session, clearing driver and verification state."""
         if self._session is not None:
             try:
                 self._session.registers["External Pause"].write(True)
@@ -579,6 +626,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def read_sample(self) -> Sample:
+        """Read a low-rate calibrated snapshot from applied/register values."""
         read = lambda name: int(self._register(name).read())
         return Sample(
             elapsed_s=time.monotonic() - self._started,
@@ -594,6 +642,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def read_samples(self) -> list[Sample]:
+        """Drain all complete FIFO frames and attach non-time-aligned AO snapshots."""
         if not self.full_rate_data_available:
             return [self.read_sample()]
         try:
@@ -616,36 +665,42 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def pause(self) -> None:
+        """Delegate acknowledged operator pause to the active driver."""
         if self._driver is None or not callable(getattr(self._driver, "pause", None)):
             raise BackendError("This FPGA driver does not support pause.")
         self._driver.pause()
 
     @_synchronized_io
     def resume(self) -> None:
+        """Delegate resume while preserving FPGA feedback-owned pauses."""
         if self._driver is None or not callable(getattr(self._driver, "resume", None)):
             raise BackendError("This FPGA driver does not support resume.")
         self._driver.resume()
 
     @_synchronized_io
     def end_current_waypoint(self) -> None:
+        """Delegate framed EndCurrentLine acknowledgement to the driver."""
         if self._driver is None or not callable(getattr(self._driver, "end_current_waypoint", None)):
             raise BackendError("This FPGA driver does not support EndCurrentLine.")
         self._driver.end_current_waypoint()
 
     @_synchronized_io
     def accept_approach(self) -> None:
+        """Explicitly accept current Z only while an approach stage owns motion."""
         if self._driver is None or not callable(getattr(self._driver, "accept_approach", None)):
             raise BackendError("This FPGA driver does not support manual approach acceptance.")
         self._driver.accept_approach()
 
     @_synchronized_io
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
+        """Delegate supported Current 1/2 feedback configuration."""
         if self._driver is None or not callable(getattr(self._driver, "configure_feedback", None)):
             raise BackendError("This FPGA driver does not expose advanced feedback controls.")
         self._driver.configure_feedback(config)
 
     @_synchronized_io
     def execution_status(self) -> ExecutionSnapshot:
+        """Return native driver counters or an idle fallback snapshot."""
         if self._driver is None or not callable(getattr(self._driver, "execution_status", None)):
             return super().execution_status()
         return self._driver.execution_status()
@@ -659,6 +714,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def move(self, axis: str, target: float, speed: float) -> None:
+        """Validate, claim idle driver ownership, and submit one piezo move."""
         self._validate_output(axis, target, speed)
         self._require_idle_driver()
         if axis == "Voltage 1":
@@ -680,6 +736,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def stop_motion(self) -> None:
+        """Pause and cancel motion, retiring uncertain hardware framing."""
         if not self.connected:
             return
         self._register("External Pause").write(True)
@@ -691,6 +748,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def start_hardware_approach_cv(self, params: ApproachCVParameters) -> None:
+        """Claim the idle NI driver and start contact-gated Approach + CV."""
         if not self.approach_cv_available:
             raise BackendError(
                 "Approach + CV requires a site driver with FPGA waypoint sequence support "
@@ -707,6 +765,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def hardware_approach_cv_status(self) -> HardwareSequenceUpdate:
+        """Validate and normalize native Approach + CV status fields."""
         if not self.approach_cv_available:
             raise BackendError("The site driver cannot report approach + CV sequence state.")
         try:
@@ -727,6 +786,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def hardware_approach_context(self, line_number: int) -> str:
+        """Return the native stage associated with an approach sample tag."""
         if not self.approach_cv_available:
             return ""
         context = getattr(self._driver, "approach_context", None)
@@ -739,6 +799,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def start_hardware_scan_hopping_cv(self, params: ScanHoppingCVParameters) -> None:
+        """Claim the idle NI driver and start hopping CV."""
         if not self.scan_hopping_cv_available:
             raise BackendError("Scan Hopping + CV requires the native eChemTips scan waypoint interface.")
         self._require_idle_driver()
@@ -752,6 +813,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def hardware_scan_hopping_cv_status(self) -> HardwareSequenceUpdate:
+        """Normalize hopping-CV stage, point, detail, and progress."""
         if not self.scan_hopping_cv_available:
             raise BackendError("The FPGA driver cannot report Scan Hopping + CV state.")
         try:
@@ -768,6 +830,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def hardware_scan_context(self, line_number: int) -> tuple[int, str]:
+        """Return native hopping-CV pixel/stage context for a sample tag."""
         if not self.scan_hopping_cv_available:
             return -1, ""
         try:
@@ -778,6 +841,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def start_hardware_program(self, name: str, parameters: object) -> None:
+        """Start CV, Approach, Approach + I–t, or hopping I–t on the driver."""
         if not self.hardware_program_available(name):
             raise BackendError(f"The FPGA driver does not expose the {name!r} shared method.")
         self._require_idle_driver()
@@ -791,6 +855,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def hardware_program_status(self) -> HardwareSequenceUpdate:
+        """Normalize status for the currently active shared hardware method."""
         if self._driver is None or not callable(getattr(self._driver, "method_status", None)):
             raise BackendError("The FPGA driver cannot report shared method state.")
         try:
@@ -805,6 +870,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def hardware_program_context(self, line_number: int) -> tuple[int, str]:
+        """Return native shared-method pixel/stage context for a sample tag."""
         if self._driver is None or not callable(getattr(self._driver, "method_context", None)):
             return -1, ""
         try:
@@ -815,6 +881,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def set_voltage(self, channel: int, voltage: float) -> None:
+        """Submit and wait for an idle potential jump acknowledgement."""
         if channel not in (1, 2) or not -10 <= voltage <= 10:
             raise SafetyError("Voltage output must be channel 1 or 2 and within +/-10 V.")
         if channel == 1 and abs(voltage * self.settings.command_voltage_ratio) > 10:
@@ -831,6 +898,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def set_live_potential(self, channel: int, voltage: float) -> None:
+        """Request ChangeOnFly and wait for applied-value acknowledgement."""
         if channel not in (1, 2) or not -10 <= voltage <= 10:
             raise SafetyError("Potential output must be channel 1 or 2 and within +/-10 V.")
         if channel == 1 and abs(voltage * self.settings.command_voltage_ratio) > 10:
@@ -844,6 +912,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @_synchronized_io
     def emergency_stop(self) -> None:
+        """Latch the driver and verify External Pause plus External Stop."""
         if not self.connected:
             return
         if self._driver is not None and callable(getattr(self._driver, "emergency_stop", None)):
@@ -868,6 +937,7 @@ class NIFPGABackend(InstrumentBackend):
 
 
 def create_backend(settings: AppSettings, driver_module: str | None = None) -> InstrumentBackend:
+    """Construct the selected backend without connecting or changing outputs."""
     if settings.mode == "NI FPGA":
         return NIFPGABackend(settings, driver_module=driver_module)
     return SimulationBackend(settings)
