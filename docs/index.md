@@ -9,7 +9,9 @@ Choose the path that matches what you are doing.
    sequences, plots, contact decisions, scan paths, and stopping.
 3. Use the [Settings reference](SETTINGS_REFERENCE.md) for every persisted
    option and unit.
-4. Read the [Recording data format](DATA_FORMAT.md) before building an analysis
+4. Use the [Glossary](GLOSSARY.md) when a method, signal, or protocol term is
+   unfamiliar.
+5. Read the [Recording data format](DATA_FORMAT.md) before building an analysis
    workflow.
 
 ## Commission or maintain real hardware
