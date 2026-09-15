@@ -24,6 +24,18 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            members_order: source
+            show_root_heading: true
+            show_source: true
+            filters:
+              - "!^_"
 nav:
   - Start here: index.md
   - Operator guide: OPERATOR_GUIDE.md
@@ -37,6 +49,7 @@ nav:
       - Shared host services: SHARED_HOST_SERVICES.md
   - Developers:
       - Architecture and extensions: ARCHITECTURE.md
+      - Python API reference: API_REFERENCE.md
       - Releases and compatibility: RELEASES.md
   - Historical notes:
       - Hardware-operation gaps: history/2026-09-hardware-operation-gaps.md

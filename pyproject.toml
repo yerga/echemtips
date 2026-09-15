@@ -26,7 +26,11 @@ classifiers = [
 [project.optional-dependencies]
 fpga = ["nifpga>=22.0.0"]
 analysis = ["nptdms>=1.7"]
-docs = ["mkdocs>=1.6,<2", "mkdocs-material>=9.6,<10"]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.6,<10",
+    "mkdocstrings[python]>=0.29,<1",
+]
 
 [project.scripts]
 echemtips = "echemtips.app:main"
