@@ -15,6 +15,7 @@ from .qt_common import COLORS, Card, XYPlot, button, label
 
 
 class AnalysisWindow(QtWidgets.QMainWindow):
+    """Browse recordings, inspect raw data, separate CVs, and export cycles."""
     def __init__(self, initial_path: Path | str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("eChemTips — Data Analysis")
@@ -168,6 +169,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.metadata_text, "Metadata")
 
     def refresh_files(self) -> None:
+        """Rescan the selected folder for supported recording formats."""
         self.folder_label.setText(str(self.data_folder))
         self.folder_label.setToolTip(str(self.data_folder))
         supported = {".csv", ".tdms", ".tsv", ".set"}
@@ -182,12 +184,14 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.file_list.blockSignals(False)
 
     def choose_folder(self) -> None:
+        """Prompt for a recording folder and refresh its file list."""
         chosen = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose eChemTips data folder", str(self.data_folder))
         if chosen:
             self.data_folder = Path(chosen).resolve()
             self.refresh_files()
 
     def open_file(self) -> None:
+        """Prompt for one recording and load it into every analysis tab."""
         chosen, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Open eChemTips recording", str(self.data_folder),
             "eChemTips recordings (*.csv *.tdms *.tsv *.set);;All files (*)",
@@ -200,6 +204,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.load_recording(self.file_paths[row])
 
     def load_recording(self, path: Path) -> None:
+        """Load, normalize, and extract complete CV cycles from ``path``."""
         try:
             self.dataset = AnalysisDataset.load(path)
             self.cycles = extract_cv_cycles(self.dataset)
@@ -317,6 +322,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         form.addRow(actions)
 
         def apply_values() -> None:
+            """Validate the manual legacy waveform and rerun cycle extraction."""
             try:
                 values = {key: float(edits[key].text().strip()) for _caption, key, _unit in fields if key != "cycles"}
                 cycle_value = float(edits["cycles"].text().strip())
@@ -338,6 +344,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         dialog.exec()
 
     def export_cycles(self) -> None:
+        """Export every separated CV row with explicit pixel/cycle/point IDs."""
         if self.dataset is None or not self.cycles:
             return
         suggested = self.dataset.path.with_name(f"{self.dataset.path.stem}_separated_cvs.csv")

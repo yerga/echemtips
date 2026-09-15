@@ -1,3 +1,5 @@
+"""Explicit offline/connection checker for the private NI FPGA target."""
+
 from __future__ import annotations
 
 import argparse
@@ -36,6 +38,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Validate bitfile metadata and optionally open a no-run NI session."""
     args = _parser().parse_args(argv)
     transport = {"usb": "USB R Series", "pcie": "PCIe/PXI R Series", "auto": "Auto"}[args.transport]
     try:

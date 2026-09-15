@@ -93,6 +93,7 @@ def application_stylesheet() -> str:
 
 
 def button(text: str, slot=None, role: str = "") -> QtWidgets.QPushButton:
+    """Create a themed push button and optionally connect its click handler."""
     result = QtWidgets.QPushButton(text)
     if role:
         result.setProperty("role", role)
@@ -102,6 +103,7 @@ def button(text: str, slot=None, role: str = "") -> QtWidgets.QPushButton:
 
 
 def label(text: str = "", role: str = "", *, word_wrap: bool = False) -> QtWidgets.QLabel:
+    """Create a themed label with an optional object role and wrapping."""
     result = QtWidgets.QLabel(text)
     if role:
         result.setObjectName(role)
@@ -116,38 +118,47 @@ class TextValue:
         self.edit = edit
 
     def get(self) -> str:
+        """Return the current edit text."""
         return self.edit.text()
 
     def set(self, value: object) -> None:
+        """Replace the edit text with a string representation."""
         self.edit.setText(str(value))
 
 
 class Choice(QtWidgets.QComboBox):
+    """Combo box with small get/set helpers used by parameter pages."""
     def __init__(self, values: Iterable[str], value: str) -> None:
         super().__init__()
         self.addItems(list(values))
         self.setCurrentText(value)
 
     def get(self) -> str:
+        """Return the selected text."""
         return self.currentText()
 
     def set(self, value: str) -> None:
+        """Select the matching text when present."""
         self.setCurrentText(value)
 
 
 class Check(QtWidgets.QCheckBox):
+    """Check box with explicit boolean get/set helpers."""
     def __init__(self, text: str, value: bool = False) -> None:
         super().__init__(text)
         self.setChecked(value)
 
     def get(self) -> bool:
+        """Return the checked state."""
         return self.isChecked()
 
     def set(self, value: bool) -> None:
+        """Set the checked state."""
         self.setChecked(value)
 
 
 class Field(QtWidgets.QFrame):
+    """Labelled line edit with optional physical-unit suffix and parsers."""
     def __init__(self, label_text: str, value: str, unit: str = "") -> None:
         super().__init__()
         self.setObjectName("transparent")
@@ -169,26 +180,32 @@ class Field(QtWidgets.QFrame):
         layout.addLayout(row)
 
     def float(self) -> float:
+        """Parse the current text as a floating-point value."""
         return float(self.entry.text().strip())
 
     def integer(self) -> int:
+        """Parse the current text as an integer."""
         return int(self.entry.text().strip())
 
     def optional_float(self) -> float | None:
+        """Parse a float, returning ``None`` when the field is blank."""
         value = self.entry.text().strip()
         return float(value) if value else None
 
     def set_unit(self, unit: str) -> None:
+        """Change the suffix and hide it when empty."""
         self.unit_label.setText(unit)
         self.unit_label.setVisible(bool(unit))
 
 
 def add_field(layout: QtWidgets.QGridLayout, field: Field, row: int, column: int, column_span: int = 1) -> Field:
+    """Insert and return a field for compact page construction."""
     layout.addWidget(field, row, column, 1, column_span)
     return field
 
 
 class Card(QtWidgets.QFrame):
+    """Themed title/subtitle container exposing a child body frame."""
     def __init__(self, title: str, subtitle: str = "") -> None:
         super().__init__()
         self.setObjectName("card")
@@ -243,14 +260,17 @@ class Plot(QtWidgets.QWidget):
         self.setMinimumHeight(190)
 
     def clear(self) -> None:
+        """Clear this plot's display buffer and rendered curves."""
         self.buffer.clear()
         self.redraw()
 
     def append(self, x: float, *values: float, redraw: bool = True) -> None:
+        """Append one display point and optionally redraw immediately."""
         if self.buffer.append(x, values) and redraw:
             self.redraw()
 
     def redraw(self) -> None:
+        """Apply rolling-window pruning and update every graph curve."""
         if self.rolling_window_s is not None and self.x_values:
             cutoff = self.x_values[-1] - self.rolling_window_s
             first_visible = bisect_left(self.x_values, cutoff)
@@ -263,6 +283,7 @@ class Plot(QtWidgets.QWidget):
             curve.setData(x, np.asarray(values, dtype=float), connect="finite")
 
     def configure(self, *, height: int | None = None, **_kwargs: object) -> None:
+        """Apply compatibility layout options used by experiment pages."""
         if height is not None:
             self.setMinimumHeight(height)
 
@@ -291,10 +312,12 @@ class TimedXYPlot(Plot):
         self.clock_values: list[float] = []
 
     def clear(self) -> None:
+        """Clear plotted values and the independent acquisition-time clock."""
         self.clock_values.clear()
         super().clear()
 
     def append_timed(self, clock_s: float, x: float, y: float, *, redraw: bool = True) -> None:
+        """Append XY data whose expiry is determined by a separate time value."""
         if not all(math.isfinite(value) for value in (clock_s, x, y)):
             return
         self.clock_values.append(clock_s)
@@ -328,6 +351,7 @@ class TimedXYPlot(Plot):
             self.series[0][:] = [self.series[0][index] for index in indices]
 
     def redraw(self) -> None:
+        """Prune/compact against time before updating the XY curve."""
         self._prune_and_compact()
         super().redraw()
 
@@ -353,6 +377,7 @@ class ProgramDiagram(QtWidgets.QWidget):
         self.setFixedHeight(150)
 
     def set_profile(self, values: list[float], names: list[str], *, stepped: bool = False) -> None:
+        """Render labelled ramped or stepped parameter values."""
         for item in self.labels:
             self.graph.removeItem(item)
         self.labels.clear()
@@ -454,6 +479,7 @@ class Heatmap(QtWidgets.QWidget):
         self.set_data({}, 1, 1)
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        """Restore the range summary when the pointer leaves the map."""
         if watched is self.view and event.type() == QtCore.QEvent.Type.Leave:
             self.footer_stack.setCurrentWidget(self.summary)
         return super().eventFilter(watched, event)
@@ -482,6 +508,7 @@ class Heatmap(QtWidgets.QWidget):
         view_mode: str | None = None,
         footprint_diameter_um: float | None = None,
     ) -> None:
+        """Render finite grid values in physical coordinates and update range text."""
         self.values = dict(values)
         self.rows = max(1, rows)
         self.columns = max(1, columns)
@@ -549,7 +576,7 @@ class Heatmap(QtWidgets.QWidget):
 
 
 class XYPlot(QtWidgets.QWidget):
-    """General multi-series analysis plot."""
+    """Interactive multi-series plot for already collected analysis data."""
 
     def __init__(self, x_label: str, y_label: str) -> None:
         super().__init__()
@@ -571,15 +598,18 @@ class XYPlot(QtWidgets.QWidget):
         self.redraw()
 
     def set_data(self, series: Iterable[tuple[str, list[float], list[float], str]]) -> None:
+        """Replace all named XY curves with the supplied series."""
         self.series = list(series)
         self.redraw()
 
     def set_message(self, message: str) -> None:
+        """Clear curves and show a centered explanatory message."""
         self.series = []
         self.message = message
         self.redraw()
 
     def redraw(self) -> None:
+        """Rebuild legend and curves from the most recently supplied series."""
         self.graph.clear()
         self.graph.addLegend(offset=(8, 8), brush=pg.mkBrush(255, 255, 255, 220))
         self.graph.setLabel("bottom", self.x_label, color=COLORS["muted"])
@@ -601,6 +631,7 @@ class XYPlot(QtWidgets.QWidget):
 
 
 def scroll_area(widget: QtWidgets.QWidget, *, minimum_width: int = 0) -> QtWidgets.QScrollArea:
+    """Wrap a resizable widget in a frameless vertical scroll area."""
     area = QtWidgets.QScrollArea()
     area.setObjectName("pageScroll")
     area.setWidgetResizable(True)
@@ -613,4 +644,5 @@ def scroll_area(widget: QtWidgets.QWidget, *, minimum_width: int = 0) -> QtWidge
 
 
 def configure_pyqtgraph() -> None:
+    """Apply process-wide foreground, background, and antialias defaults."""
     pg.setConfigOptions(antialias=True, foreground=COLORS["text"], background=COLORS["panel"])

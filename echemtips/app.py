@@ -1,3 +1,5 @@
+"""Control-application entry point and comprehensive simulation smoke test."""
+
 from __future__ import annotations
 
 import argparse
@@ -178,6 +180,7 @@ def _smoke_test(app: EChemTipsApp) -> None:
 
 
 def main() -> None:
+    """Launch the control UI or execute its noninteractive smoke test."""
     parser = argparse.ArgumentParser(description="eChemTips scanning electrochemistry control interface")
     parser.add_argument("--smoke-test", action="store_true", help="build and exercise the UI, then exit")
     parser.add_argument(

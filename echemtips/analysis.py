@@ -19,6 +19,7 @@ __all__ = (
 
 
 def main() -> None:
+    """Launch the analysis window or run its noninteractive smoke test."""
     parser = argparse.ArgumentParser(description="Analyze eChemTips current and CV recordings")
     parser.add_argument("recording", nargs="?", help="recording to open")
     parser.add_argument("--smoke-test", action="store_true", help="build and exercise the analysis UI, then exit")

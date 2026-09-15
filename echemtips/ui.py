@@ -154,6 +154,7 @@ def _program_card(
     _vbox(card.body).addWidget(diagram)
 
     def refresh(*_args: object) -> None:
+        """Rebuild the explanatory profile from its current field values."""
         try:
             values = [field.float() for field in fields]
         except ValueError:
@@ -184,6 +185,7 @@ def _scan_summary_card(parameter_factory, triggers: list[QtCore.QObject]) -> tup
     layout.addWidget(duration_label)
 
     def refresh(*_args: object) -> None:
+        """Recalculate scan spacing and deterministic-duration summary."""
         try:
             parameters = parameter_factory()
             dx, dy = parameters.spacing_um
@@ -225,6 +227,7 @@ def _install_map_view_selector(tabs: QtWidgets.QTabWidget, map_index: int, selec
     tabs.setCornerWidget(toolbar, QtCore.Qt.Corner.TopRightCorner)
 
     def update_visibility(index: int) -> None:
+        """Show map controls only while the map tab is selected."""
         toolbar.setVisible(index == map_index)
 
     tabs.currentChanged.connect(update_visibility)
@@ -233,6 +236,7 @@ def _install_map_view_selector(tabs: QtWidgets.QTabWidget, map_index: int, selec
 
 
 class BasePage(QtWidgets.QWidget):
+    """Common page shell with a title, wrapped description, and body area."""
     def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
         super().__init__()
         self.app = app
@@ -246,9 +250,11 @@ class BasePage(QtWidgets.QWidget):
         outer.addWidget(self.body, 1)
 
     def on_sample(self, _sample: Sample) -> None:
+        """Receive the newest sample; subclasses override when interested."""
         pass
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Default batch handler forwards only the newest sample."""
         if samples:
             self.on_sample(samples[-1])
 
@@ -297,12 +303,14 @@ class DiagnosticWorkflowPage(BasePage):
         self.app._sync_action_states()
 
     def sync_actions(self, connected: bool, another_busy: bool) -> None:
+        """Enable diagnostic actions only when this workflow may own hardware."""
         for action in self.action_buttons:
             action.setEnabled(connected and not self.is_busy and not another_busy and not self.app.recorder.active)
         self.stop_button.setEnabled(self.is_busy)
         self.save_button.setEnabled(not self.is_busy and bool(self.report["results"]))
 
     def stop(self) -> None:
+        """Abort the current diagnostic and restore the normal fixture mode."""
         if not self.is_busy:
             return
         if self._cv_runner.active:
@@ -326,6 +334,7 @@ class DiagnosticWorkflowPage(BasePage):
             self._set_busy(False)
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Accumulate, plot, and complete the active timed/sweep diagnostic."""
         if not self.is_busy:
             return
         if samples:
@@ -348,6 +357,7 @@ class DiagnosticWorkflowPage(BasePage):
             self._complete()
 
     def save_report(self) -> None:
+        """Save accumulated diagnostic results with the current settings."""
         try:
             payload = {**self.report, "settings": asdict(self.app.settings)}
             path = save_json_report(self.app.settings.save_directory, self.report_prefix, payload)
@@ -356,13 +366,16 @@ class DiagnosticWorkflowPage(BasePage):
             self.app.show_error(str(exc))
 
     def analyze_capture(self, kind: str, samples: list[Sample]) -> dict[str, Any]:
+        """Convert one capture to report data; concrete workflows implement it."""
         raise NotImplementedError
 
     def format_report(self) -> str:
+        """Return human-readable accumulated results for the page."""
         raise NotImplementedError
 
 
 class PreflightPage(DiagnosticWorkflowPage):
+    """Guided noise, open-input, and known-resistor electrical checks."""
     report_prefix = "guided_preflight"
 
     def __init__(self, app: "EChemTipsApp") -> None:
@@ -395,18 +408,22 @@ class PreflightPage(DiagnosticWorkflowPage):
         self._set_busy(False)
 
     def run_noise(self) -> None:
+        """Begin the configured zero-current noise capture."""
         try: self._begin_timed("noise", self.duration.float(), 0.0, "normal"); self.status_label.setText("Step 1/3 · measuring baseline noise at E1 = 0 V")
         except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
 
     def run_open(self) -> None:
+        """Begin the configured open-input triangular sweep."""
         try: self._begin_sweep("open", self.sweep_start.float(), self.sweep_end.float(), self.sweep_rate.float(), "open"); self.status_label.setText("Step 2/3 · open-input triangular sweep")
         except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
 
     def run_resistor(self) -> None:
+        """Begin the known-resistor triangular sweep."""
         try: self._begin_sweep("resistor", self.sweep_start.float(), self.sweep_end.float(), self.sweep_rate.float(), "resistor", self.resistor.float()); self.status_label.setText("Step 3/3 · known-resistor response")
         except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
 
     def analyze_capture(self, kind: str, samples: list[Sample]) -> dict[str, Any]:
+        """Calculate noise, capacitance, or resistor metrics for one capture."""
         channel = self.channel.get()
         if kind == "noise":
             stats = signal_statistics(samples, channel)
@@ -417,6 +434,7 @@ class PreflightPage(DiagnosticWorkflowPage):
         return {"test": kind, "expected_resistance_mohm": expected, "measured_resistance_mohm": measured, "error_percent": 100 * (measured - expected) / expected, "fit": asdict(fit)}
 
     def format_report(self) -> str:
+        """Format completed preflight checks for the result panel."""
         lines = []
         for result in self.report["results"]:
             if result["test"] == "noise": lines.append(f"Noise · RMS {result['statistics']['rms_noise_pa']:.2f} pA · suggested Δi threshold {result['suggested_delta_i_threshold_pa']:.1f} pA")
@@ -426,6 +444,7 @@ class PreflightPage(DiagnosticWorkflowPage):
 
 
 class PipetteCharacterizationPage(DiagnosticWorkflowPage):
+    """Guided stability and I–E workflow for one immersed pipette."""
     report_prefix = "pipette_characterization"
 
     def __init__(self, app: "EChemTipsApp") -> None:
@@ -456,14 +475,17 @@ class PipetteCharacterizationPage(DiagnosticWorkflowPage):
         self.report["pipette_id"] = self.pipette_id.entry.text(); self._set_busy(False)
 
     def run_stability(self) -> None:
+        """Begin the immersed-pipette stability capture."""
         try: self._begin_timed("stability", self.duration.float(), self.stability_potential.float(), "pipette"); self.status_label.setText("Measuring immersed-pipette stability")
         except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
 
     def run_sweep(self) -> None:
+        """Begin the immersed-pipette I–E sweep."""
         try: self._begin_sweep("pipette_sweep", self.sweep_start.float(), self.sweep_end.float(), self.sweep_rate.float(), "pipette"); self.status_label.setText("Measuring pipette I–E response")
         except (ValueError, RuntimeError, BackendError) as exc: self.app.show_error(str(exc))
 
     def analyze_capture(self, kind: str, samples: list[Sample]) -> dict[str, Any]:
+        """Calculate stability or resistance/aperture estimates."""
         self.report["pipette_id"] = self.pipette_id.entry.text().strip() or "unnamed"
         channel = self.channel.get()
         if kind == "stability": return {"test": kind, "potential_v": self.stability_potential.float(), "statistics": asdict(signal_statistics(samples, channel))}
@@ -472,6 +494,7 @@ class PipetteCharacterizationPage(DiagnosticWorkflowPage):
         return {"test": kind, "resistance_mohm": resistance, "estimated_radius_nm": radius, "conductivity_s_m": self.conductivity.float(), "half_angle_deg": self.half_angle.float(), "fit": asdict(fit)}
 
     def format_report(self) -> str:
+        """Format the pipette identity and completed characterization results."""
         lines = [f"Pipette · {self.report['pipette_id']}"]
         for result in self.report["results"]:
             if result["test"] == "stability": lines.append(f"Stability · mean {result['statistics']['mean_na']:.4g} nA · RMS {result['statistics']['rms_noise_pa']:.2f} pA · drift {result['statistics']['drift_pa_s']:+.3f} pA/s")
@@ -480,6 +503,7 @@ class PipetteCharacterizationPage(DiagnosticWorkflowPage):
 
 
 class StatusCard(Card):
+    """Shared method state, detail, progress, start, and stop controls."""
     def __init__(self, title: str, detail: str, start_text: str, start_slot, stop_slot) -> None:
         super().__init__(title)
         layout = _vbox(self.body, spacing=8)
@@ -502,6 +526,7 @@ class StatusCard(Card):
         layout.addWidget(actions)
 
     def update_status(self, update: object | None) -> None:
+        """Render a state-machine update and restore actions at terminal state."""
         if update is None:
             return
         self.state_label.setText(update.state.value)
@@ -551,17 +576,20 @@ class InstrumentReadoutBar(QtWidgets.QFrame):
             self.value_labels[attribute] = value_label
 
     def set_sample(self, sample: Sample) -> None:
+        """Update every persistent readback cell from the newest sample."""
         for attribute, _caption, unit in self._CHANNELS:
             value = getattr(sample, attribute)
             sign = "+" if attribute in {"voltage1_v", "voltage2_v", "current1_na", "current2_na"} else ""
             self.value_labels[attribute].setText(f"{value:{sign}.3f} {unit}")
 
     def clear(self) -> None:
+        """Replace every persistent readback value with an unavailable marker."""
         for attribute, _caption, unit in self._CHANNELS:
             self.value_labels[attribute].setText(f"— {unit}")
 
 
 class WatchPage(BasePage):
+    """Opt-in Current 1/2 live view, potential control, and recording page."""
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Watch current", "Monitor Current 1 and Current 2, control the potential outputs, and record without blocking the display.")
         layout = QtWidgets.QHBoxLayout(self.body)
@@ -614,10 +642,12 @@ class WatchPage(BasePage):
         self.plot = self.current1_plot
 
     def clear_plots(self) -> None:
+        """Clear both current display buffers without affecting recording."""
         self.current1_plot.clear()
         self.current2_plot.clear()
 
     def apply_voltage(self) -> None:
+        """Validate and apply idle E1/E2 commands through the backend."""
         try:
             self.app.require_connection()
             if self.app.any_experiment_active:
@@ -644,6 +674,7 @@ class WatchPage(BasePage):
         return True
 
     def start_recording(self) -> None:
+        """Claim the recorder for Watch Current and start plotting new data."""
         if not self._can_control_recording():
             return
         try:
@@ -657,6 +688,7 @@ class WatchPage(BasePage):
             self.app.show_error(f"Could not start the recording: {exc}")
 
     def stop_recording(self) -> None:
+        """Barrier-drain acquisition and finalize the Watch Current files."""
         if not self._can_control_recording():
             return
         try:
@@ -670,9 +702,11 @@ class WatchPage(BasePage):
             self.app.show_error(f"Could not stop the recording: {exc}")
 
     def toggle_recording(self) -> None:
+        """Compatibility action that starts or stops Watch Current recording."""
         self.stop_recording() if self.app.recorder.active else self.start_recording()
 
     def toggle_live_view(self) -> None:
+        """Start or stop opt-in plotting without changing recorder ownership."""
         if self.live_enabled:
             self.set_live_view(False)
             self.app.toast("Live view stopped")
@@ -687,6 +721,7 @@ class WatchPage(BasePage):
             self.app.show_error(str(exc))
 
     def set_live_view(self, enabled: bool, *, clear_on_start: bool = True) -> None:
+        """Set opt-in current rendering and reset its local time origin."""
         enabled = bool(enabled)
         if enabled and not self.live_enabled and clear_on_start:
             self.clear_plots()
@@ -703,9 +738,11 @@ class WatchPage(BasePage):
         )
 
     def on_sample(self, sample: Sample) -> None:
+        """Forward one sample through the batch-aware current renderer."""
         self.on_samples([sample])
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Plot new current samples only while the explicit live view is active."""
         if not samples or not self.live_enabled:
             return
         latest = samples[-1]
@@ -723,6 +760,7 @@ class WatchPage(BasePage):
 
 
 class WatchPositionPage(BasePage):
+    """Opt-in independent X/Y/Z position live view and recording page."""
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Watch position", "Monitor the measured X, Y, and Z piezo positions as a dedicated time trace.")
         layout = QtWidgets.QHBoxLayout(self.body)
@@ -762,6 +800,7 @@ class WatchPositionPage(BasePage):
         self.plot = self.x_plot
 
     def clear_plots(self) -> None:
+        """Clear X, Y, and Z display buffers without affecting recording."""
         for plot in (self.x_plot, self.y_plot, self.z_plot):
             plot.clear()
 
@@ -776,6 +815,7 @@ class WatchPositionPage(BasePage):
         return True
 
     def start_recording(self) -> None:
+        """Claim the recorder for Watch Position and start plotting new data."""
         if not self._can_control_recording():
             return
         try:
@@ -789,6 +829,7 @@ class WatchPositionPage(BasePage):
             self.app.show_error(f"Could not start the recording: {exc}")
 
     def stop_recording(self) -> None:
+        """Barrier-drain and finalize the Watch Position recording."""
         if not self._can_control_recording():
             return
         try:
@@ -802,6 +843,7 @@ class WatchPositionPage(BasePage):
             self.app.show_error(f"Could not stop the recording: {exc}")
 
     def toggle_live_view(self) -> None:
+        """Start or stop opt-in position plotting."""
         if self.live_enabled:
             self.set_live_view(False)
             self.app.toast("Position live view stopped")
@@ -816,6 +858,7 @@ class WatchPositionPage(BasePage):
             self.app.show_error(str(exc))
 
     def set_live_view(self, enabled: bool, *, clear_on_start: bool = True) -> None:
+        """Set position rendering and reset the view-local time origin."""
         enabled = bool(enabled)
         if enabled and not self.live_enabled and clear_on_start:
             self.clear_plots()
@@ -825,6 +868,7 @@ class WatchPositionPage(BasePage):
         self.live_status_label.setText("Plotting samples acquired from now." if enabled else "Live view is off. Start it to plot new samples.")
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Append new X/Y/Z samples only while live position view is active."""
         if not samples or not self.live_enabled:
             return
         for sample in samples:
@@ -840,15 +884,18 @@ class WatchPositionPage(BasePage):
 
 
 class ManagedExperimentPage(BasePage):
+    """Base for pages that own one state machine and one recorder lifecycle."""
     experiment_key = ""
     recording_name = ""
     manual_approach = False
 
     @property
     def experiment(self):
+        """Return the state machine registered for this page's key."""
         return self.app.experiments[self.experiment_key]
 
     def build_status(self, title: str, start_text: str) -> StatusCard:
+        """Build shared method actions and optional manual-contact control."""
         self.status = StatusCard(title, "Configure the method, then start.", start_text, self.start, self.stop)
         self.state_label = self.status.state_label
         self.detail_label = self.status.detail_label
@@ -897,6 +944,7 @@ class ManagedExperimentPage(BasePage):
         return max(0.0, sample.elapsed_s - origin)
 
     def accept_approach(self) -> None:
+        """Forward explicit current-Z contact acceptance to the state machine."""
         try:
             if not self.manual_approach or self.accept_approach_button is None:
                 raise BackendError("This method does not contain an approach step.")
@@ -910,6 +958,7 @@ class ManagedExperimentPage(BasePage):
             self.app.show_error(str(exc))
 
     def stop(self) -> None:
+        """Request controlled application-level cancellation when active."""
         if self.experiment.active:
             self.app.stop_experiment(self.experiment_key)
 
@@ -921,6 +970,7 @@ class ManagedExperimentPage(BasePage):
 
 
 class StandaloneCVPage(ManagedExperimentPage):
+    """Standalone CV controls with separate time and voltammogram displays."""
     experiment_key = "cv"
     recording_name = "CV"
 
@@ -967,9 +1017,11 @@ class StandaloneCVPage(ManagedExperimentPage):
         root.addWidget(right, 1)
 
     def parameters(self) -> CVParameters:
+        """Parse the standalone CV fields into a validated parameter model."""
         return CVParameters(self.start_v.float(), self.vertex1.float(), self.vertex2.float(), self.rate.float(), self.cycles.integer(), self.jump.get())
 
     def start(self) -> None:
+        """Clear CV displays, claim recording, and start standalone CV."""
         try:
             params = self.parameters()
             for plot in (self.cv_plot, self.voltage_plot, self.current_plot):
@@ -980,6 +1032,7 @@ class StandaloneCVPage(ManagedExperimentPage):
             self.app.show_error(str(exc))
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Advance standalone CV and append time/CV points from the batch."""
         if not self.experiment.active:
             return
         for sample in samples:
@@ -993,6 +1046,7 @@ class StandaloneCVPage(ManagedExperimentPage):
 
 
 class StandaloneApproachPage(ManagedExperimentPage):
+    """Standalone approach controls, contact status, traces, and curves."""
     experiment_key = "approach"
     recording_name = "Approach"
     manual_approach = True
@@ -1049,6 +1103,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         right_layout.addWidget(tabs, 1); root.addWidget(right, 1)
 
     def parameters(self) -> ApproachParameters:
+        """Parse approach, contact, retract, and optional XY fields."""
         return ApproachParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             retract_rate_um_s=self.retract_rate.float(), approach_voltage_v=self.potential.float(),
@@ -1059,6 +1114,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         )
 
     def start(self) -> None:
+        """Clear approach displays, claim recording, and start the method."""
         try:
             params = self.parameters(); self.z_plot.clear(); self.current_plot.clear(); self.approach_curve.clear(); self.approach_history.clear(); self._begin(params)
             self.app.toast("Approach started", "success")
@@ -1066,6 +1122,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
             self.app.show_error(str(exc))
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Advance standalone approach and render traces/approach curves."""
         if not self.experiment.active:
             return
         update = None
@@ -1085,6 +1142,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
 
 
 class ApproachCVPage(ManagedExperimentPage):
+    """Contact-gated Approach + CV controls and stage-specific plots."""
     experiment_key = "approach_cv"
     recording_name = "Approach then CV"
     manual_approach = True
@@ -1147,6 +1205,7 @@ class ApproachCVPage(ManagedExperimentPage):
         self.plot = self.current_plot
 
     def parameters(self) -> ApproachCVParameters:
+        """Parse positioning, contact, settling, CV, and retract controls."""
         return ApproachCVParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
@@ -1158,6 +1217,7 @@ class ApproachCVPage(ManagedExperimentPage):
         )
 
     def start(self) -> None:
+        """Clear stage plots, claim recording, and start Approach + CV."""
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve, self.approach_history): plot.clear()
@@ -1165,12 +1225,15 @@ class ApproachCVPage(ManagedExperimentPage):
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
     def poll_status(self, sample: Sample) -> None:
+        """Poll a hardware sequence when a cycle yields no FIFO samples."""
         self._show_update(self.experiment.tick(sample) if self.experiment.active else None)
 
     def on_sample(self, sample: Sample) -> None:
+        """Forward one sample through the batch-aware Approach + CV handler."""
         self.on_samples([sample])
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Advance stages and route samples to trace, CV, and approach plots."""
         experiment = self.experiment
         if not samples or not experiment.active: return
         hardware = experiment._hardware_sequence; update = None; cv_changed = False
@@ -1193,6 +1256,7 @@ class ApproachCVPage(ManagedExperimentPage):
 
 
 class ApproachITPage(ManagedExperimentPage):
+    """Contact-gated Approach + I–t controls and stage-specific plots."""
     experiment_key = "approach_it"
     recording_name = "Approach then IT"
     manual_approach = True
@@ -1247,6 +1311,7 @@ class ApproachITPage(ManagedExperimentPage):
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
 
     def parameters(self) -> ApproachITParameters:
+        """Parse positioning, contact, settling, I–t, and retract controls."""
         return ApproachITParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
@@ -1257,6 +1322,7 @@ class ApproachITPage(ManagedExperimentPage):
         )
 
     def start(self) -> None:
+        """Clear stage plots, claim recording, and start Approach + I–t."""
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.clear()
@@ -1264,6 +1330,7 @@ class ApproachITPage(ManagedExperimentPage):
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Advance stages and route samples to traces, I–t, and approach plots."""
         experiment = self.experiment
         if not experiment.active: return
         update = None
@@ -1288,6 +1355,7 @@ class ApproachITPage(ManagedExperimentPage):
 
 
 class ScanHoppingCVPage(ManagedExperimentPage):
+    """Hopping-CV grid controls, traces, per-hop CV, and physical maps."""
     experiment_key = "scan_cv"
     recording_name = "Scan Hopping CV"
     manual_approach = True
@@ -1352,6 +1420,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingCVParameters:
+        """Parse grid, path, contact, CV, retraction, and map controls."""
         return ScanHoppingCVParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
@@ -1373,6 +1442,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
 
     def start(self) -> None:
+        """Reset maps/plots, claim recording, and start hopping CV."""
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve, self.approach_history): plot.clear()
@@ -1381,6 +1451,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Advance/tag scan data and refresh traces, latest CV, and maps."""
         experiment = self.experiment; hardware = experiment._hardware
         if not experiment.active or not samples: return
         point_before = experiment.point_index
@@ -1422,6 +1493,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
 
 
 class ScanHoppingITPage(ManagedExperimentPage):
+    """Hopping-I–t grid controls, traces, per-hop response, and maps."""
     experiment_key = "scan_it"
     recording_name = "Scan Hopping IT"
     manual_approach = True
@@ -1483,6 +1555,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingITParameters:
+        """Parse grid, path, contact, I–t, retraction, and map controls."""
         return ScanHoppingITParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
@@ -1503,6 +1576,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
 
     def start(self) -> None:
+        """Reset maps/plots, claim recording, and start hopping I–t."""
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.clear()
@@ -1511,6 +1585,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
     def on_samples(self, samples: list[Sample]) -> None:
+        """Advance/tag scan data and refresh traces, latest I–t, and maps."""
         experiment = self.experiment
         if not experiment.active: return
         update = experiment.tick_samples(samples) if experiment._hardware else None
@@ -1541,6 +1616,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
 
 
 class MovePiezoPage(BasePage):
+    """Bounded X/Y/Z movement with separate command and measured readback."""
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Move piezo", "Command bounded X/Y/Z piezo moves, with commanded and measured positions shown separately.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
@@ -1562,6 +1638,7 @@ class MovePiezoPage(BasePage):
         pl.addWidget(self.readback_source_label); pl.addWidget(self.status_label); pl.addStretch(1); root.addWidget(position, 1)
 
     def move(self) -> None:
+        """Validate and submit the selected X, Y, or Z move."""
         try:
             self.app.require_connection()
             if self.app.any_experiment_active: raise BackendError("Stop the experiment before commanding a manual move.")
@@ -1572,6 +1649,7 @@ class MovePiezoPage(BasePage):
         except (ValueError, BackendError) as exc: self.app.show_error(str(exc))
 
     def stop(self) -> None:
+        """Stop piezo movement and explain hardware reconnection semantics."""
         try:
             self.app.backend.stop_motion()
             message = (
@@ -1582,12 +1660,14 @@ class MovePiezoPage(BasePage):
         except BackendError as exc: self.app.show_error(str(exc))
 
     def on_sample(self, sample: Sample) -> None:
+        """Refresh measured and commanded position panels."""
         for axis, value in (("X", sample.x_um), ("Y", sample.y_um), ("Z", sample.z_um)): self.position_labels[axis].setText(f"{value:.3f}")
         for axis, value in (("X", sample.commanded_x_um), ("Y", sample.commanded_y_um), ("Z", sample.commanded_z_um)): self.commanded_position_labels[axis].setText(f"{value:.3f} µm" if math.isfinite(value) else "—")
         self.readback_source_label.setText(self.app.backend.position_readback_label)
 
 
 class SettingsPage(BasePage):
+    """Validated persisted connection, calibration, acquisition, and UI options."""
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Settings", "A capability-aware, validated configuration shared by every experiment.")
         content = QtWidgets.QWidget(); columns = QtWidgets.QHBoxLayout(content); columns.setContentsMargins(2, 2, 12, 18); columns.setSpacing(14)
@@ -1654,16 +1734,19 @@ class SettingsPage(BasePage):
         self.bitfile.setEnabled(hardware)
 
     def browse_bitfile(self) -> None:
+        """Choose a local `.lvbitx` path without opening the target."""
         chosen, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Choose NI FPGA bitfile", str(Path(self.bitfile.text()).expanduser().parent), "LabVIEW FPGA bitfile (*.lvbitx);;All files (*)")
         if chosen: self.bitfile.setText(str(Path(chosen).resolve()))
 
     def browse_data_folder(self) -> None:
+        """Choose the persistent experiment/report destination."""
         current = Path(self.save_directory.variable.get().strip() or ".").expanduser()
         chosen = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose eChemTips data folder", str(current))
         if chosen:
             self.save_directory.variable.set(Path(chosen).resolve())
 
     def values(self) -> AppSettings:
+        """Parse every visible control into an `AppSettings` instance."""
         data_folder = Path(self.save_directory.variable.get().strip()).expanduser()
         if not data_folder.is_absolute():
             data_folder = data_folder.resolve()
@@ -1676,6 +1759,7 @@ class SettingsPage(BasePage):
         )
 
     def save(self) -> None:
+        """Validate, persist, apply, and require reconnect for new settings."""
         try:
             settings = self.values(); errors = settings.validate()
             if errors: raise ValueError("\n".join(errors))
@@ -1684,6 +1768,7 @@ class SettingsPage(BasePage):
 
 
 class EChemTipsApp(QtWidgets.QMainWindow):
+    """Top-level owner of backend, acquisition, experiments, recorder, and pages."""
     PAGE_NAMES = ("Watch current", "Watch position", "Preflight", "Characterize pipette", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
 
     def __init__(self) -> None:
@@ -1726,26 +1811,32 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         for page in self.pages.values(): self.stack.addWidget(page)
 
     def show_page(self, name: str) -> None:
+        """Select a known page and synchronize its navigation button."""
         if not hasattr(self, "pages") or name not in self.pages: return
         self.stack.setCurrentWidget(self.pages[name]); self.nav_buttons[name].setChecked(True)
 
     def require_connection(self) -> None:
+        """Raise a user-facing backend error when offline."""
         if not self.backend.connected: raise BackendError("Connect to the simulator or NI FPGA first.")
 
     def pause_host(self) -> None:
+        """Request acknowledged operator pause and show the outcome."""
         try: self.require_connection(); self.backend.pause(); self.toast("Host execution paused", "warning")
         except (BackendError, RuntimeError, OSError) as exc: self.show_error(str(exc))
 
     def resume_host(self) -> None:
+        """Request resume without overriding FPGA feedback pause."""
         try: self.require_connection(); self.backend.resume(); self.toast("Host execution resumed", "success")
         except (BackendError, RuntimeError, OSError) as exc: self.show_error(str(exc))
 
     def end_current_waypoint(self) -> None:
+        """Request low-level waypoint completion, never contact acceptance."""
         try: self.require_connection(); self.backend.end_current_waypoint(); self.toast("Requested the next FPGA waypoint", "warning")
         except (BackendError, RuntimeError, OSError) as exc: self.show_error(str(exc))
 
     @property
     def any_experiment_active(self) -> bool:
+        """Return whether any method or diagnostic currently owns the device."""
         experiments_active = any(experiment.active for experiment in EChemTipsApp._experiments_for(self).values())
         diagnostics_active = hasattr(self, "pages") and any(
             getattr(self.pages.get(name), "is_busy", False) for name in ("Preflight", "Characterize pipette")
@@ -1763,10 +1854,12 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     @property
     def active_parameters(self) -> object | None:
+        """Return parameters associated with the recorder's active method."""
         key = {"CV": "cv", "Approach": "approach", "Approach then CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
         return self.experiments[key].params if key is not None else None
 
     def toggle_connection(self) -> None:
+        """Connect with startup authorization or safely disconnect all owners."""
         if self.backend.connected:
             for page_name in ("Preflight", "Characterize pipette"):
                 page = self.pages.get(page_name)
@@ -1830,6 +1923,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if isinstance(page, DiagnosticWorkflowPage): page.sync_actions(connected, diagnostic_busy and not page.is_busy)
 
     def apply_settings(self, settings: AppSettings) -> None:
+        """Persist settings, rebuild backend/methods, and disconnect old state."""
         if self.any_experiment_active: raise ValueError("Stop the experiment before changing instrument settings.")
         was_connected = self.backend.connected
         if was_connected: self.flush_acquisition()
@@ -1844,6 +1938,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if was_connected: self.toast("Settings applied; reconnect to use the new backend", "warning")
 
     def finish_recording(self, parameters: object = None, status: str = "complete") -> Path | None:
+        """Finalize the shared recorder and synchronize action availability."""
         path = self.recorder.finish(self.settings, parameters, status=status); self._sync_action_states(); return path
 
     def _start_acquisition(self) -> None: self._stop_acquisition(); self._acquisition = AcquisitionWorker(self.backend); self._acquisition.start()
@@ -1851,6 +1946,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         worker = self._acquisition; self._acquisition = None; return worker.stop() if worker is not None else AcquisitionDrain([], None, 0)
 
     def flush_acquisition(self) -> None:
+        """Barrier-drain the worker and surface errors without stopping it."""
         worker = self._acquisition
         if worker is None: return
         drained = worker.pause_and_snapshot()
@@ -1860,6 +1956,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         finally: worker.resume()
 
     def stop_experiment(self, which: str) -> None:
+        """Stop physical execution first, final-drain, and save an aborted run."""
         experiment = self.experiments[which]
         if not experiment.active: return
         worker = self._acquisition
@@ -1898,6 +1995,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             self._sync_action_states()
 
     def emergency_stop(self) -> None:
+        """Assert strongest backend stop before data/UI work, then disconnect."""
         worker = self._acquisition
         before = AcquisitionDrain([], None, 0)
         try:
@@ -1994,11 +2092,15 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not isinstance(self, EChemTipsApp) and hasattr(self, "after"): self.after(80, self._poll)
 
     def toast(self, message: str, level: str = "info") -> None:
+        """Show a short color-coded status-bar message."""
         color = {"success": COLORS["success"], "warning": COLORS["warning"], "danger": COLORS["danger"]}.get(level, COLORS["text"]); self.statusBar().setStyleSheet(f"QStatusBar {{ color:{color}; background:{COLORS['panel']}; font-weight:600; }}"); self.statusBar().showMessage(message, 4200)
 
-    def show_error(self, message: str) -> None: QtWidgets.QMessageBox.critical(self, "eChemTips", message)
+    def show_error(self, message: str) -> None:
+        """Display a modal operator error without changing hardware state."""
+        QtWidgets.QMessageBox.critical(self, "eChemTips", message)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        """Confirm active work, stop hardware, drain data, and close resources."""
         if self.any_experiment_active and QtWidgets.QMessageBox.question(self, "eChemTips", "An experiment is running. Stop it and close?") != QtWidgets.QMessageBox.StandardButton.Yes: event.ignore(); return
         try:
             worker = self._acquisition
@@ -2013,5 +2115,6 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
 
 def create_application(argv: list[str] | None = None) -> QtWidgets.QApplication:
+    """Return the process QApplication configured with eChemTips styling."""
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv or [])
     app.setApplicationName("eChemTips"); app.setOrganizationName("eChemTips"); app.setStyle("Fusion"); app.setStyleSheet(application_stylesheet()); return app
