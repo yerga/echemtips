@@ -35,6 +35,8 @@ echemtips
 
 Select **Simulation**, connect, and choose an experiment. The simulated surface is around 68% of the configured Z range, allowing approach-based methods and hopping scans to complete without hardware.
 
+For control meanings, experiment sequences, plot interpretation, contact behavior, scan paths, and safe stopping, see the [Operator guide](docs/OPERATOR_GUIDE.md).
+
 Use **Settings → Save as defaults and apply** to persist the selected backend, piezo ranges, bitfile, data folder, Current 1/2 sensitivities, command-voltage ratio, and acquisition options. Defaults are stored in the operating system's per-user application-settings folder and load regardless of the directory used to start eChemTips.
 
 Recordings are streamed to uniquely named CSV and JSON metadata files in `data/`, or in the directory selected in Settings. The complete data rate is written to disk while plots retain a bounded, decimated display buffer. Standard CSV rows contain measured time, X/Y/Z, E1/E2, i1/i2, and the FPGA line number. Scan recordings additionally contain `scan_pixel`; their ordered pixel-to-row/column/XY mapping is stored once in the JSON sidecar. Per-sample feedback type, redundant row/column values, and non-time-aligned commanded-position snapshots are intentionally omitted to keep long recordings smaller.
