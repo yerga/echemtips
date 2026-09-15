@@ -12,21 +12,96 @@ This Python host keeps `FPGA Target.vi` on the NI device. It implements the host
 
 ## Required instrument-PC software
 
-Use a Windows computer supported by the installed NI-RIO release and the exact USB R Series model. Install:
+Use a 64-bit Windows computer supported by the chosen NI-RIO release and the
+exact USB R Series model. Python 3.11 (64-bit) is the recommended initial
+commissioning environment because it is conservative and reproducible; a
+newer interpreter is not considered hardware-supported here until it has
+passed this entire procedure. Install and record:
 
-1. The NI-RIO driver and NI MAX.
-2. Python 3.10 or newer; PySide6 and PyQtGraph are installed with eChemTips.
-3. This project and the NI FPGA Python API:
+1. A compatible NI-RIO driver with NI MAX and FPGA Interface support. Reboot
+   when the NI installer requests it.
+2. Python 3.11 from python.org. Enable the launcher during installation.
+3. Git, then clone eChemTips into a permanent development folder.
+4. In PowerShell, create an isolated environment and install the project:
 
    ```powershell
-   py -m pip install -e ".[fpga]"
+   cd C:\path\to\echemtips
+   py -3.11 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   python -m pip install --upgrade pip
+   python -m pip install -e ".[fpga]"
+   python -m unittest discover -v
+   python run_echemtips.py --smoke-test
    ```
 
-In NI MAX, confirm that the device appears under Remote Systems/Devices and Interfaces and note its RIO resource name, normally `RIO0`.
+If PowerShell blocks environment activation, use
+`.venv\Scripts\python.exe` explicitly rather than weakening the machine's
+execution policy. PySide6 and PyQtGraph are installed by the project; the
+`fpga` extra installs `nifpga`. The Python package still requires the native NI
+driver and cannot replace it.
+
+In NI MAX, confirm that the device appears under Devices and Interfaces and
+note its RIO resource name, normally `RIO0`. Record the actual versions in the
+commissioning record below. NI documents the FPGA Interface Python API as the
+host interface for RIO devices and the USB R Series hardware setup at:
+
+- <https://www.ni.com/en/support/documentation/supplemental/16/python-resources-for-ni-hardware-and-software.html>
+- <https://knowledge.ni.com/KnowledgeArticleDetails?id=kA03q000000YHblCAG&l=en-US>
+- <https://download.ni.com/support/manuals/374974a.pdf>
 
 ## USB-7856R target image
 
 The supported `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx` reports target class `USB-7856R` and signature `8229BC0D5A4935D854D1286878CEE54A`. It matches the native driver's WEC-SPM host interface in offline protocol tests but is not distributed in this repository. Do not call a particular installation commissioned until it has completed the physical checks below. eChemTips uses `ECHEMTIPS_BITFILE` when set and also detects that filename in a sibling `WEC_SPM/FPGA Bitfiles` archive; otherwise select the private target explicitly in Settings. The older `FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx` is a PCIe-7852R image and must not be selected for the USB device.
+
+Copy the private image to a controlled local folder on the instrument PC. Do
+not add it to Git. To select it without relying on a remembered UI value:
+
+```powershell
+$env:ECHEMTIPS_BITFILE = "C:\instrument\private\wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx"
+python run_hardware_check.py --bitfile $env:ECHEMTIPS_BITFILE
+```
+
+Preserve the filename, signature printed by the checker, source, and date in
+the laboratory configuration record.
+
+## Cabling and channel worksheet
+
+The supported logical channel map is fixed in Python, but AO/AI names are not
+SCB screw-terminal numbers. Before wiring, identify the exact connector block
+model and use the USB-7856R manual plus its labelled terminal diagram. NI's USB
+R Series guide specifies the SHC68-68-RMIO cable and SCB-68A for the MIO
+connector. If the installed block is labelled only SCB-68 or has a different
+part number, stop and verify compatibility and terminal numbering.
+
+Complete this worksheet from the actual manuals and continuity checks. Never
+copy terminal numbers from another R Series model:
+
+| FPGA channel | Purpose | SCB terminal | Destination BNC/controller | Signal reference | Verified |
+| --- | --- | --- | --- | --- | --- |
+| AO0 | X piezo command | ___ | NanoDrive X command ___ | ___ | ☐ |
+| AO1 | Y piezo command | ___ | NanoDrive Y command ___ | ___ | ☐ |
+| AO2 | Z piezo command | ___ | NanoDrive Z command ___ | ___ | ☐ |
+| AO3 | E1 command | ___ | VA-10M command ___ | ___ | ☐ |
+| AO4 | E2 command | ___ | Reserved/current setup ___ | ___ | ☐ |
+| AI0 | X measured position | ___ | NanoDrive X monitor ___ | ___ | ☐ |
+| AI1 | Y measured position | ___ | NanoDrive Y monitor ___ | ___ | ☐ |
+| AI2 | Z measured position | ___ | NanoDrive Z monitor ___ | ___ | ☐ |
+| AI3 | i1 amplifier output | ___ | VA-10M current output ___ | ___ | ☐ |
+| AI4 | i2 amplifier output | ___ | Second current output ___ | ___ | ☐ |
+
+AO5–AO7 and AI5–AI7 remain disconnected and unused. eChemTips has no
+picomotor behavior. Label both ends of every cable. Verify whether each input
+is referenced single-ended, non-referenced single-ended, or differential and
+wire AIGND/AISENSE exactly as the NI manual requires. Do not create multiple
+unplanned ground paths through the computer, FPGA, positioner, amplifier, and
+electrochemical cell.
+
+For the Nano-3D200 mechanical range and controller connection, retain the exact
+instrument manual with the setup; the manufacturer product sheet is
+<https://www.madcitylabs.com/catalog/nano3d200.pdf>. For the VA-10M, use the
+manual matching the installed amplifier revision to verify command input span,
+current-output sensitivity, headstage limits, polarity, bandwidth, grounding,
+and overload behavior.
 
 ## Connection changes physical outputs
 
@@ -38,14 +113,36 @@ The Python app validates target family, required register datatypes/access roles
 
 ## Commissioning order
 
-1. Disconnect or disable the piezo high-voltage amplifier and keep the probe clear of the surface.
-2. Run the offline contract check with the private target path:
+Perform each stage separately and record evidence. A successful software test
+does not authorize the next physical stage unless the independent measurement
+also matches expectation.
+
+1. Back up the existing working LabVIEW configuration and record all controller
+   and amplifier settings. Remove the probe from collision range. Disconnect or
+   inhibit the piezo high-voltage outputs and disconnect the electrochemical
+   cell from the E1 command while retaining only connections required for the
+   current stage.
+2. With the USB-7856R disconnected, verify the Python environment:
+
+   ```powershell
+   .\.venv\Scripts\Activate.ps1
+   python -c "import PySide6, pyqtgraph, nifpga; print('Python dependencies OK')"
+   python -m unittest discover -v
+   python run_echemtips.py --smoke-test
+   ```
+
+3. Run the offline contract check with the private target path:
 
    ```powershell
    py run_hardware_check.py --bitfile "C:\path\to\target.lvbitx"
    ```
 
-3. With the NI USB FPGA connected, verify that NI-RIO can open the target without running the FPGA VI:
+   Confirm USB-7856R, signature
+   `8229BC0D5A4935D854D1286878CEE54A`, required register types/access, FIFO
+   directions, I16 element types, and frame divisibility. Do not continue on a
+   warning you do not understand.
+4. Connect USB and verify the device/resource in NI MAX. With physical outputs
+   inhibited, check that NI-RIO can open the target without running the FPGA VI:
 
    ```powershell
    py run_hardware_check.py --bitfile "C:\path\to\target.lvbitx" --connect --resource RIO0
@@ -53,13 +150,72 @@ The Python app validates target family, required register datatypes/access roles
 
    `--connect` downloads/opens the bitfile using `no_run=True`; it does not run a waypoint.
 
-4. Start `py run_echemtips.py`. In Settings select **NI FPGA** and confirm **USB R Series**, the NI MAX resource, and `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx`.
-5. Enter the measured X/Y/Z full travel, bipolar mode for each piezo controller, Current 1 sensitivity in V/nA, and Voltage 1 command ratio. Save and connect.
+5. With controller inputs still physically disconnected, start
+   `python run_echemtips.py`. In Settings select **NI FPGA** and confirm **USB R
+   Series**, the NI MAX resource, and the supported target. Enter the measured
+   X/Y/Z full travel, bipolar mode, Current 1/2 sensitivity in V/nA, E1 command
+   ratio, acquisition values, and a permanent data folder. Save defaults.
    The FPGA-ready timeout controls the startup handshake. The command-watchdog margin is added to the duration calculated from the requested motion distances, rates, and CV sweep.
-6. With actuators still disabled, verify Watch Current and Voltage 1 scaling. A known amplifier test signal is strongly recommended.
-7. Enable one piezo axis at a time. Command a small, slow move and verify direction and travel externally. Then commission Z with the probe far from the surface.
-8. Only after those checks, run Approach + CV with a conservative Z limit, slow approach, and a verified Current 1 threshold/polarity. Thresholds are entered in pA in the UI and converted to the nA protocol unit before submission.
-9. Commission Scan Hopping + CV first as a 1 x 1 scan, then 2 x 2 with a small XY range. **Initial approach Z** is used only to position the first hop. Confirm that each normal retract target equals the FPGA's applied contact Z moved away from the surface by **Retract distance from contact**. Confirm that the CSV `scan_pixel` values and the JSON sidecar's ordered `scan_grid` records agree with physical row, column, X, and Y movement before expanding the grid. Test serpentine first; when commissioning raster, verify that **Raster flyback extra retract** is added at the end of each line before allowing the longer X flyback.
+6. Prepare a meter/oscilloscope and accept the connection warning. Verify the
+   unavoidable startup levels at AO0–AO4 before attaching downstream devices.
+   Compare raw connector voltage with the GUI readback and expected command
+   conversion. Disconnect and investigate any wrong channel, sign, or level.
+7. Connect the VA-10M command and output with a controlled electrical load in
+   place of the cell. Begin at E1 = 0 V. Verify AO3:E1 command ratio at several
+   small positive and negative points, AI3 current scale/sign using a known
+   resistance or test signal, zero noise, saturation behavior, and safe Stop.
+   Repeat AI4 only if Current 2 is installed.
+8. Connect the NanoDrive command/monitor wiring while keeping its high-voltage
+   outputs mechanically safe. Enable one axis at a time. Command a small, slow
+   move and independently measure AO voltage, monitor-input direction, physical
+   direction, scale, and endpoint. Test X and Y first; test Z last with the
+   probe far from the surface.
+9. Run Guided preflight with the documented open and resistor fixtures. Save
+   its report. Characterize a sacrificial/known pipette before using a critical
+   probe.
+10. With a dummy contact signal or other controlled electrical load, test a
+    standalone Approach using a conservative Z interval and slow speed. Verify
+    both threshold directions, automatic contact, manual acceptance, no-contact
+    end-of-travel, settling, retract, controlled Stop, recording status, and the
+    requirement to reconnect after hardware cancellation.
+11. Only after the dummy-load protocol succeeds, prepare the electrochemical
+    cell and run an Approach + CV with independently justified potential limits,
+    approach direction, threshold, and physical travel. Confirm that CV never
+    begins after end-of-travel without contact.
+12. Commission hopping CV first as 1×1, then 2×2 over a small XY range.
+    **Initial approach Z** is used only for the first hop. Verify each retract
+    is away from measured contact by **Retract distance from contact**. Confirm
+    CSV `scan_pixel` and JSON `scan_grid` agree with observed movement. Test
+    serpentine before raster; verify extra end-of-line retraction before X
+    flyback. Repeat the same staged process for hopping I–t.
+
+## Commissioning record
+
+Copy this table into the instrument log and attach checker output, screenshots,
+scope/meter captures, preflight JSON, and representative recordings.
+
+| Item | Recorded value |
+| --- | --- |
+| Date, operator, instrument ID | ___ |
+| Windows edition/build, 64-bit | ___ |
+| NI-RIO and NI MAX versions | ___ |
+| USB-7856R serial and NI resource | ___ |
+| Python version and architecture | ___ |
+| eChemTips Git commit | ___ |
+| `nifpga`, PySide6, PyQtGraph versions | ___ |
+| Bitfile filename and reported signature | ___ |
+| SCB model/part number and cable/connector | ___ |
+| NanoDrive/Nano-3D200 IDs and ranges | ___ |
+| VA-10M/headstage IDs, revision, sensitivity, command span | ___ |
+| Grounding/reference configuration | ___ |
+| Startup AO0–AO4 measured values | ___ |
+| E1 command ratio/polarity evidence | ___ |
+| X/Y/Z command, readback, direction, scale evidence | ___ |
+| i1/i2 scale, sign, noise, overload evidence | ___ |
+| Stop/interlock evidence | ___ |
+| Dummy approach/contact result | ___ |
+| 1×1 and 2×2 scan recording names | ___ |
+| Deviations or unresolved restrictions | ___ |
 
 ## Commissioning limitations and stop behavior
 
@@ -87,3 +243,6 @@ An idle Potential 1/2 change is sent as a one-waypoint FPGA jump, not as a host 
 - The host checks all position ranges, voltages, and positive velocities before encoding a waypoint.
 
 This is research control software. The source protocol and conversions have automated tests, but the physical calibration, wiring polarity, FPGA compilation for the exact USB model, and hardware interlocks must be verified on the instrument.
+
+For symptom-based diagnosis and recovery, see
+[Hardware troubleshooting](TROUBLESHOOTING.md).
