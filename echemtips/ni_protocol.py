@@ -1,3 +1,5 @@
+"""Deployed USB-7856R bitfile contract, scaling, and FIFO wire formats."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -162,6 +164,7 @@ FIFO_CONTRACT = {
 
 @dataclass(frozen=True, slots=True)
 class BitfileInfo:
+    """Target identity and host-visible register/FIFO metadata from `.lvbitx`."""
     path: Path
     target_class: str
     signature: str
@@ -172,10 +175,12 @@ class BitfileInfo:
 
     @property
     def is_usb_target(self) -> bool:
+        """Return whether the compiled NI target class identifies USB hardware."""
         return "USB" in self.target_class.upper()
 
 
 def inspect_bitfile(path: str | Path) -> BitfileInfo:
+    """Parse an NI `.lvbitx` file without opening or running an FPGA session."""
     resolved = Path(path).expanduser().resolve()
     if not resolved.exists():
         raise ValueError(f"FPGA bitfile not found: {resolved}")
@@ -216,6 +221,7 @@ def inspect_bitfile(path: str | Path) -> BitfileInfo:
 
 
 def validate_wec_bitfile(info: BitfileInfo, transport: str = "Auto") -> list[str]:
+    """Return every mismatch from the deployed WEC-SPM host protocol."""
     errors: list[str] = []
     missing_registers = sorted(REQUIRED_REGISTERS - info.registers)
     missing_fifos = sorted({HOST_TO_TARGET_FIFO, TARGET_TO_HOST_FIFO} - info.fifos)
@@ -256,15 +262,18 @@ def validate_wec_bitfile(info: BitfileInfo, transport: str = "Auto") -> list[str
 
 
 def clamp_i16(value: float | int) -> int:
+    """Round a numeric value and saturate it to signed-I16 range."""
     return max(-32768, min(32767, int(round(value))))
 
 
 def raw_to_adc_voltage(raw: int) -> float:
+    """Convert signed-I16 ADC/AO representation to the ±10 V scale."""
     # The LabVIEW host conversion uses a signed I16 with +/-10 V full scale.
     return max(-10.0, min(10.0, float(raw) * 10.0 / 32768.0))
 
 
 def position_to_raw(position_um: float, span_um: float, bipolar: bool) -> int:
+    """Encode a calibrated physical position into the target's signed I16."""
     if span_um <= 0:
         raise ValueError("Piezo span must be positive.")
     normalized = (position_um - span_um / 2.0) / (span_um / 2.0) if bipolar else position_um / span_um
@@ -272,33 +281,40 @@ def position_to_raw(position_um: float, span_um: float, bipolar: bool) -> int:
 
 
 def raw_to_position(raw: int, span_um: float, bipolar: bool) -> float:
+    """Decode a signed-I16 position using the configured span and mode."""
     normalized = float(raw) / 32768.0
     return (normalized + 1.0) * span_um / 2.0 if bipolar else max(0.0, normalized * span_um)
 
 
 def voltage1_to_raw(voltage_v: float, command_ratio: float) -> int:
+    """Encode requested E1 after applying the AO3 command-voltage ratio."""
     # WEC-SPM ScaleWayPoints passes (10 / command ratio) to V_to_I16Dim.
     return clamp_i16(voltage_v * command_ratio * 32768.0 / 10.0)
 
 
 def raw_to_voltage1(raw: int, command_ratio: float) -> float:
+    """Decode AO3/applied raw value back to requested E1 volts."""
     return raw_to_adc_voltage(raw) / command_ratio
 
 
 def raw_to_current(raw: int, volts_per_na: float) -> float:
+    """Decode an amplifier-output raw value to nanoamperes."""
     return raw_to_adc_voltage(raw) / volts_per_na
 
 
 def current_to_raw(current_na: float, volts_per_na: float) -> int:
+    """Encode a current threshold using amplifier sensitivity in V/nA."""
     return clamp_i16(current_na * volts_per_na * 32768.0 / 10.0)
 
 
 def raw_position_velocity_per_tick(speed_um_s: float, span_um: float, bipolar: bool) -> float:
+    """Convert physical position speed to raw accumulator units per FPGA tick."""
     multiplier = 2.0 if bipolar else 1.0
     return abs(speed_um_s) * 32768.0 * multiplier / span_um / FPGA_CLOCK_HZ
 
 
 def raw_voltage1_velocity_per_tick(speed_v_s: float, command_ratio: float) -> float:
+    """Convert requested E1 scan rate to raw AO3 units per FPGA tick."""
     return abs(speed_v_s) * 32768.0 * command_ratio / 10.0 / FPGA_CLOCK_HZ
 
 
@@ -313,6 +329,7 @@ def select_velocity_exponent(raw_per_tick_values: list[float]) -> int:
 
 
 def scale_velocity(raw_per_tick: float, exponent: int) -> int:
+    """Encode one absolute velocity using the shared fixed-point exponent."""
     scaled = clamp_i16(abs(raw_per_tick) * (2**exponent))
     if raw_per_tick and not scaled:
         raise ValueError("Requested velocity is below the FPGA fixed-point resolution.")
@@ -321,6 +338,7 @@ def scale_velocity(raw_per_tick: float, exponent: int) -> int:
 
 @dataclass(slots=True)
 class Waypoint:
+    """One logical command encoded as the deployed 14-word host FIFO frame."""
     line_type: int = 0
     x_velocity: int = 0
     y_velocity: int = 0
@@ -347,6 +365,7 @@ class Waypoint:
     z_picomotor_direction: bool = False
 
     def flags(self) -> int:
+        """Pack movement, jump, hold, feedback, and reserved flag booleans."""
         values = (
             self.move_x,
             self.move_y,
@@ -363,6 +382,7 @@ class Waypoint:
         return sum(1 << bit for bit, enabled in enumerate(values) if enabled)
 
     def words(self) -> list[int]:
+        """Return the complete signed-I16 transport frame in FPGA field order."""
         words = [
             self.line_type,
             self.x_velocity,
@@ -383,6 +403,7 @@ class Waypoint:
 
 
 class SampleDecoder:
+    """Decode 14-word sample frames and unwrap their 40 MHz timestamp."""
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
         self._last_tick: int | None = None
@@ -405,6 +426,7 @@ class SampleDecoder:
         return (unwrapped - self._first_tick) / FPGA_CLOCK_HZ
 
     def decode(self, words: list[int] | tuple[int, ...]) -> Sample:
+        """Decode one exact-length FIFO frame to calibrated physical values."""
         if len(words) != SAMPLE_WORDS:
             raise ValueError(f"FPGA sample requires {SAMPLE_WORDS} words; got {len(words)}.")
         s = self.settings

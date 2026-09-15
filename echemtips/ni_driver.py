@@ -1,3 +1,5 @@
+"""Single-owner host driver for the deployed WEC-SPM FPGA program."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -165,6 +167,7 @@ class WECSPMDriver:
         return delta - 1 if delta else -1
 
     def configure(self) -> None:
+        """Initialize FIFOs, timing, averaging, controls, and neutral feedback."""
         for fifo in (self.positions_fifo, self.data_fifo):
             try:
                 fifo.stop()
@@ -449,6 +452,7 @@ class WECSPMDriver:
             raise RuntimeError(f"Hardware is not operational because {reason}. Reinitialize the target before continuing.")
 
     def ensure_idle(self) -> None:
+        """Reject commands after a latch/fault or while final drain is pending."""
         if self._stopped:
             raise ValueError("Motion was stopped. Reinitialize the target before another command.")
         self._check_target_health()
@@ -647,6 +651,7 @@ class WECSPMDriver:
         return not self._submitted
 
     def move(self, axis: str, target: float, speed: float) -> None:
+        """Compile and submit one bounded X, Y, or Z physical move."""
         if axis not in {"X", "Y", "Z"}:
             raise ValueError(f"Native WEC-SPM motion only supports X, Y, and Z; got {axis}.")
         span = getattr(self.settings, f"{axis.lower()}_range_um")
@@ -775,6 +780,7 @@ class WECSPMDriver:
         )
 
     def start_approach_cv(self, params: ApproachCVParameters) -> None:
+        """Start preposition/baseline/approach; gate CV on confirmed contact."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("; ".join(errors))
@@ -930,6 +936,7 @@ class WECSPMDriver:
         self._write_register("External Pause", False)
 
     def approach_cv_status(self) -> dict[str, str | float]:
+        """Service the staged Approach + CV program and report its UI state."""
         sequence = self._sequence
         if sequence is None:
             return {"stage": "aborted", "detail": "No active FPGA sequence", "progress": 0.0}
@@ -999,6 +1006,7 @@ class WECSPMDriver:
         return ""
 
     def start_scan_hopping_cv(self, params: ScanHoppingCVParameters) -> None:
+        """Start a contact-gated CV scan over the validated physical grid."""
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("; ".join(errors))
@@ -1169,6 +1177,7 @@ class WECSPMDriver:
         self._write_register("External Pause", False)
 
     def scan_context(self, line_number: int) -> tuple[int, str]:
+        """Map a sample tag to ``(scan_pixel, stage)`` across staged programs."""
         for sequence in reversed(self._scan_history):
             index = self._sample_waypoint_index(line_number, sequence.baseline_line)
             if 0 <= index < len(sequence.descriptors):
@@ -1176,6 +1185,7 @@ class WECSPMDriver:
         return -1, ""
 
     def scan_hopping_cv_status(self) -> dict[str, str | float | int]:
+        """Service hopping CV transitions and report point/stage progress."""
         sequence = self._scan_sequence
         if sequence is None:
             return {"stage": "aborted", "detail": "No active FPGA scan", "progress": 0.0, "point_index": -1}
@@ -1519,6 +1529,7 @@ class WECSPMDriver:
         self._submit_method_retract(params)
 
     def method_context(self, line_number: int) -> tuple[int, str]:
+        """Map a sample tag to pixel and stage for the shared method runner."""
         for sequence in reversed(self._method_history):
             index = self._sample_waypoint_index(line_number, sequence.baseline_line)
             if 0 <= index < len(sequence.descriptors):
@@ -1526,6 +1537,7 @@ class WECSPMDriver:
         return -1, ""
 
     def method_status(self) -> dict[str, str | float | int]:
+        """Service the active shared method and return normalized progress."""
         if not self._method_name:
             return {"stage": "aborted", "detail": "No shared FPGA method is active", "progress": 0.0, "point_index": -1}
         if self._cancelled:
@@ -1656,6 +1668,7 @@ class WECSPMDriver:
         return deferred + samples
 
     def execution_status(self) -> ExecutionSnapshot:
+        """Return owner, counters, pending frames, state, and current detail."""
         current = int(self._read_register("LineNumber")) if self._started else self._program_baseline
         executed = min(self._program_total, (current - self._program_baseline) & ((1 << 64) - 1))
         return ExecutionSnapshot(
@@ -1669,6 +1682,7 @@ class WECSPMDriver:
         )
 
     def pause(self) -> None:
+        """Assert and verify an operator-owned External Pause."""
         self._check_target_health()
         self._write_register("External Pause", True)
         if not bool(self._read_register("External Pause")):
@@ -1678,6 +1692,7 @@ class WECSPMDriver:
         self._execution_detail = "Paused by operator"
 
     def resume(self) -> None:
+        """Clear an operator pause without overriding FPGA feedback pause."""
         self._check_target_health()
         # Internal Pause belongs to FPGA feedback logic and is never cleared by
         # a generic resume command; EndCurrentLine or the method state machine
@@ -1692,6 +1707,7 @@ class WECSPMDriver:
         self._execution_detail = "Resumed by operator"
 
     def end_current_waypoint(self) -> None:
+        """Hold EndCurrentLine until the target acknowledges a framed boundary."""
         self._check_target_health()
         if not self._submitted:
             raise RuntimeError("No FPGA waypoint is active.")
@@ -1842,4 +1858,5 @@ class WECSPMDriver:
 
 
 def create_driver(session: Any, settings: AppSettings) -> WECSPMDriver:
+    """Create the native driver around an already-open NI FPGA session."""
     return WECSPMDriver(session, settings)
