@@ -31,6 +31,7 @@ class AnalysisError(RuntimeError):
 
 @dataclass(slots=True)
 class AnalysisDataset:
+    """Normalized numeric recording plus metadata used by the analysis UI."""
     path: Path
     columns: tuple[str, ...]
     rows: list[dict[str, float]]
@@ -38,6 +39,7 @@ class AnalysisDataset:
 
     @classmethod
     def load(cls, path: Path | str) -> "AnalysisDataset":
+        """Load eChemTips CSV/JSON or normalize one supported legacy file."""
         source_path = Path(path).expanduser().resolve()
         if not source_path.exists():
             raise AnalysisError(f"Recording not found: {source_path}")
@@ -81,6 +83,7 @@ class AnalysisDataset:
 
     @property
     def experiment(self) -> str:
+        """Return the metadata experiment name with a conservative legacy fallback."""
         value = self.metadata.get("experiment")
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -88,31 +91,38 @@ class AnalysisDataset:
 
     @property
     def duration_s(self) -> float:
+        """Return the measured time span of the dataset in seconds."""
         times = [row["elapsed_s"] for row in self.rows]
         return max(times) - min(times)
 
     def values(self, column: str) -> list[float]:
+        """Return values for a column from rows that contain it."""
         return [row[column] for row in self.rows if column in row]
 
 
 @dataclass(slots=True)
 class CVCycle:
+    """One complete extracted voltammogram, optionally associated with a pixel."""
     number: int
     rows: list[dict[str, float]]
     pixel: int = -1
 
     @property
     def label(self) -> str:
+        """Return a concise cycle label for selectors and exports."""
         return f"P{self.pixel + 1} · C{self.number}" if self.pixel >= 0 else str(self.number)
 
     @property
     def potential_v(self) -> list[float]:
+        """Return E1 samples in volts for this cycle."""
         return [row["voltage1_v"] for row in self.rows]
 
     def current_na(self, column: str) -> list[float]:
+        """Return the requested current channel in nanoamperes."""
         return [row[column] for row in self.rows]
 
     def peak_summary(self, column: str) -> tuple[float, float, float, float]:
+        """Return maximum/minimum current and their corresponding potentials."""
         currents, potentials = self.current_na(column), self.potential_v
         high_index = max(range(len(currents)), key=currents.__getitem__)
         low_index = min(range(len(currents)), key=currents.__getitem__)

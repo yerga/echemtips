@@ -1,3 +1,5 @@
+"""Reusable FPGA execution, FIFO streaming, and display-buffer services."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,6 +11,7 @@ from .ni_protocol import WAYPOINT_WORDS
 
 
 class ExecutionState(str, Enum):
+    """Host-visible lifecycle states for the single active FPGA program."""
     IDLE = "idle"
     RUNNING = "running"
     PAUSED = "paused"
@@ -21,6 +24,7 @@ class ExecutionState(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ExecutionSnapshot:
+    """Immutable execution counters and detail suitable for status rendering."""
     owner: str
     state: ExecutionState
     submitted_waypoints: int
@@ -31,6 +35,7 @@ class ExecutionSnapshot:
 
     @property
     def progress(self) -> float:
+        """Return executed/total progress clamped to the closed unit interval."""
         return min(1.0, self.executed_waypoints / max(1, self.total_waypoints))
 
 
@@ -64,13 +69,16 @@ class WaypointStreamer:
 
     @property
     def pending_waypoints(self) -> int:
+        """Return complete frames not yet written to the target FIFO."""
         return len(self._pending) // WAYPOINT_WORDS
 
     @property
     def complete(self) -> bool:
+        """Return whether every payload word has been submitted."""
         return not self._pending
 
     def start(self, payload: Iterable[int], *, timeout_ms: int = 100) -> None:
+        """Validate a framed payload and write the bounded initial FIFO chunk."""
         words = list(payload)
         if not words or len(words) % WAYPOINT_WORDS:
             raise ValueError("Waypoint stream must contain complete, non-empty 14-word frames.")
@@ -80,6 +88,7 @@ class WaypointStreamer:
         self._write(self.initial_waypoints, timeout_ms)
 
     def refill(self, *, timeout_ms: int = 20) -> int:
+        """Write one bounded refill chunk and return its waypoint count."""
         if not self._pending:
             return 0
         return self._write(self.refill_waypoints, timeout_ms)
@@ -94,6 +103,7 @@ class WaypointStreamer:
         return written
 
     def cancel(self) -> None:
+        """Forget unsent payload after the caller has retired target execution."""
         self._pending.clear()
 
 
@@ -108,11 +118,13 @@ class DisplayBuffer:
         self.series: list[list[float]] = [[] for _ in range(series_count)]
 
     def clear(self) -> None:
+        """Remove all displayed X and series values."""
         self.x.clear()
         for values in self.series:
             values.clear()
 
     def append(self, x: float, values: tuple[float, ...]) -> bool:
+        """Append one point and compact when the configured limit is exceeded."""
         if len(values) != len(self.series) or not math.isfinite(x) or any(not math.isfinite(v) for v in values):
             return False
         self.x.append(x)
@@ -123,6 +135,7 @@ class DisplayBuffer:
         return True
 
     def compact(self) -> None:
+        """Decimate all series together while preserving endpoints."""
         count = len(self.x)
         if count <= self.max_points:
             return

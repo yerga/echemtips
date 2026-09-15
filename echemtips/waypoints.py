@@ -1,3 +1,5 @@
+"""Compile physical-unit motion and potential plans into FPGA waypoints."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -44,6 +46,7 @@ class PhysicalWaypoint:
 
 @dataclass(frozen=True, slots=True)
 class CompiledWaypoints:
+    """Encoded waypoint sequence and its shared velocity-scaler registers."""
     waypoints: list[Waypoint]
     scaler_exponents: dict[str, int]
     expected_duration_s: float | None
@@ -130,6 +133,7 @@ class WaypointCompiler:
         self.settings = settings
 
     def compile(self, plan: list[PhysicalWaypoint], current_raw: dict[str, int]) -> CompiledWaypoints:
+        """Validate and encode a physical plan using one scaler per output axis."""
         if not plan:
             raise ValueError("A waypoint program cannot be empty.")
         required = {"X", "Y", "Z", "V", "V2"}

@@ -16,6 +16,7 @@ from .models import Sample
 
 @dataclass(frozen=True, slots=True)
 class SignalStatistics:
+    """Summary current, noise, and drift metrics for one diagnostic capture."""
     channel: str
     count: int
     duration_s: float
@@ -28,6 +29,7 @@ class SignalStatistics:
 
 @dataclass(frozen=True, slots=True)
 class LinearFit:
+    """Least-squares line parameters and coefficient of determination."""
     slope: float
     intercept: float
     r_squared: float
@@ -35,6 +37,7 @@ class LinearFit:
 
 
 def current_value(sample: Sample, channel: str) -> float:
+    """Return the selected Current 1 or Current 2 value in nanoamperes."""
     if channel == "Current 1":
         return sample.current1_na
     if channel == "Current 2":
@@ -43,6 +46,7 @@ def current_value(sample: Sample, channel: str) -> float:
 
 
 def linear_fit(x_values: Iterable[float], y_values: Iterable[float]) -> LinearFit:
+    """Fit ``y = slope*x + intercept`` and reject insufficient data."""
     pairs = [
         (float(x), float(y))
         for x, y in zip(x_values, y_values)
@@ -64,6 +68,7 @@ def linear_fit(x_values: Iterable[float], y_values: Iterable[float]) -> LinearFi
 
 
 def signal_statistics(samples: Iterable[Sample], channel: str) -> SignalStatistics:
+    """Calculate current mean, extrema, RMS noise, and linear drift."""
     rows = list(samples)
     if len(rows) < 2:
         raise ValueError("At least two samples are required.")
@@ -91,6 +96,7 @@ def suggested_baseline_threshold_pa(statistics: SignalStatistics) -> float:
 
 
 def resistance_fit(samples: Iterable[Sample], channel: str) -> tuple[LinearFit, float]:
+    """Fit current versus E1 and return the implied resistance in megaohms."""
     rows = list(samples)
     fit = linear_fit(
         (sample.voltage1_v for sample in rows),
@@ -136,6 +142,7 @@ def pipette_radius_nm(resistance_mohm: float, conductivity_s_m: float, half_angl
 
 
 def save_json_report(directory: str | Path, prefix: str, payload: dict[str, Any]) -> Path:
+    """Atomically save a uniquely named diagnostic JSON report."""
     folder = Path(directory).expanduser().resolve()
     folder.mkdir(parents=True, exist_ok=True)
     slug = re.sub(r"[^a-z0-9]+", "_", prefix.lower()).strip("_") or "diagnostic"

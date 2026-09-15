@@ -1,3 +1,5 @@
+"""Crash-tolerant full-rate CSV recording with atomic JSON metadata."""
+
 from __future__ import annotations
 
 import csv
@@ -61,14 +63,17 @@ class DataRecorder:
 
     @property
     def active(self) -> bool:
+        """Return whether a recording has started and not reached a terminal state."""
         return self.started_at is not None
 
     @property
     def output_path(self) -> Path | None:
+        """Return the streaming CSV path, or ``None`` for memory-only recording."""
         return self._csv_path
 
     @property
     def sample_count(self) -> int:
+        """Return all persisted rows or current in-memory samples."""
         return self._sample_count if self._csv_path else len(self.samples)
 
     def start(
@@ -135,6 +140,7 @@ class DataRecorder:
             raise
 
     def append(self, sample: Sample) -> None:
+        """Rebase sample time, retain a recent copy, and stream the full row."""
         if not self.active:
             return
         if self._elapsed_origin_s is None:
@@ -165,6 +171,7 @@ class DataRecorder:
             raise
 
     def discard(self) -> None:
+        """Mark a streaming run discarded without deleting its trace files."""
         if self._csv_writer is not None:
             try:
                 self._finish_stream("discarded")
@@ -187,6 +194,7 @@ class DataRecorder:
         parameters: Any = None,
         status: str = "complete",
     ) -> Path | None:
+        """Finalize a recording and return its CSV path when one was written."""
         if not self.active:
             return None
         if status not in self._STATUSES - {"running"}:

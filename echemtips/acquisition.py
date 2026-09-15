@@ -1,3 +1,5 @@
+"""Background, loss-aware acquisition independent of Qt rendering."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -14,6 +16,7 @@ class AcquisitionBacklogError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class AcquisitionDrain:
+    """One atomic queue drain containing samples, error, and peak backlog."""
     samples: list[Sample]
     error: Exception | None
     peak_pending_samples: int
@@ -54,9 +57,11 @@ class AcquisitionWorker:
 
     @property
     def running(self) -> bool:
+        """Report whether the acquisition thread is alive."""
         return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> None:
+        """Start the worker once; repeated calls while running are harmless."""
         if self.running:
             return
         self._stop.clear()
@@ -99,6 +104,7 @@ class AcquisitionWorker:
         self._paused.set()
 
     def drain(self) -> AcquisitionDrain:
+        """Atomically remove all queued batches and the current worker error."""
         with self._lock:
             samples = [sample for batch in self._batches for sample in batch]
             self._batches.clear()
@@ -126,6 +132,7 @@ class AcquisitionWorker:
         return AcquisitionDrain(initial.samples + final_samples, final_error, initial.peak_pending_samples)
 
     def resume(self) -> None:
+        """Release a snapshot barrier unless the worker has terminated."""
         if self._stop.is_set():
             return
         self._pause.clear()
@@ -133,6 +140,7 @@ class AcquisitionWorker:
         self._wake.set()
 
     def stop(self, timeout_s: float = 2.0) -> AcquisitionDrain:
+        """Request thread termination and return every batch still queued."""
         self._stop.set()
         self._wake.set()
         thread = self._thread
