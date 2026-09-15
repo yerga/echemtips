@@ -1,3 +1,5 @@
+"""Validated settings, measurements, and experiment parameter models."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
@@ -66,6 +68,7 @@ def hold_frame_count(duration_s: float) -> int:
 
 
 def validate_contact_options(mode: str, settling_time_s: float) -> list[str]:
+    """Return validation messages shared by contact-gated experiments."""
     errors: list[str] = []
     if mode not in CONTACT_MODES:
         errors.append("Contact criterion must be absolute current or change from baseline.")
@@ -76,6 +79,7 @@ def validate_contact_options(mode: str, settling_time_s: float) -> list[str]:
 
 @dataclass(slots=True)
 class AppSettings:
+    """Persisted application, acquisition, calibration, and display settings."""
     mode: str = "Simulation"
     resource: str = "RIO0"
     bitfile: str = DEFAULT_BITFILE
@@ -99,9 +103,11 @@ class AppSettings:
 
     @property
     def effective_period_s(self) -> float:
+        """Return the deployed FPGA data-point interval in seconds."""
         return self.sample_time_us * (self.samples_per_point + 1) / 1_000_000.0
 
     def validate(self) -> list[str]:
+        """Return all invalid setting messages without mutating the instance."""
         errors: list[str] = []
         if not isinstance(self.mode, str) or self.mode not in {"Simulation", "NI FPGA"}:
             errors.append("Connection mode must be Simulation or NI FPGA.")
@@ -141,6 +147,7 @@ class AppSettings:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "AppSettings":
+        """Build settings from known keys while ignoring newer unknown keys."""
         allowed = cls.__dataclass_fields__.keys()
         values = {key: value for key, value in raw.items() if key in allowed}
         return cls(**values)
@@ -148,6 +155,7 @@ class AppSettings:
 
 @dataclass(slots=True)
 class FeedbackConfiguration:
+    """Minimal Current 1/2 threshold configuration sent to FPGA feedback."""
     primary_channel: str = "Current 1"
     primary_threshold: float = 2.0
     primary_greater_than: bool = True
@@ -162,11 +170,13 @@ class FeedbackConfiguration:
         primary_threshold: float = 2.0,
         primary_greater_than: bool = True,
     ) -> "FeedbackConfiguration":
+        """Create a configuration from method values and stable FPGA defaults."""
         del settings
         return cls(primary_channel, primary_threshold, primary_greater_than)
 
 
 class SettingsStore:
+    """Load and atomically save one user's validated application settings."""
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path).expanduser() if path is not None else default_settings_path()
 
@@ -180,6 +190,7 @@ class SettingsStore:
         return None
 
     def load(self) -> AppSettings:
+        """Load saved settings, falling back safely to defaults on bad input."""
         source = self._read_path()
         if source is None:
             return AppSettings()
@@ -195,6 +206,7 @@ class SettingsStore:
             return AppSettings()
 
     def save(self, settings: AppSettings) -> None:
+        """Validate and atomically replace the configured settings file."""
         errors = settings.validate()
         if errors:
             raise ValueError("\n".join(errors))
@@ -206,6 +218,11 @@ class SettingsStore:
 
 @dataclass(slots=True)
 class Sample:
+    """One decoded instrument measurement plus runtime-only context tags.
+
+    Physical units are seconds, micrometres, volts, and nanoamperes. Runtime
+    fields are a superset of the compact versioned recording schema.
+    """
     elapsed_s: float
     x_um: float
     y_um: float
@@ -224,11 +241,13 @@ class Sample:
     commanded_z_um: float = math.nan
 
     def as_row(self) -> dict[str, float | int]:
+        """Return every runtime field as a flat mapping."""
         return asdict(self)
 
 
 @dataclass(slots=True)
 class ApproachCVParameters:
+    """Motion, contact, CV, and optional preposition values for Approach + CV."""
     start_z_um: float = 10.0
     end_z_um: float = 90.0
     approach_rate_um_s: float = 3.0
@@ -249,9 +268,11 @@ class ApproachCVParameters:
 
     @property
     def feedback_unit(self) -> str:
+        """Return the model-level threshold unit used by experiment services."""
         return "nA"
 
     def validate(self, settings: AppSettings) -> list[str]:
+        """Validate approach, contact, waveform, and hardware representability."""
         errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         if not math.isfinite(self.start_z_um) or not 0 <= self.start_z_um <= settings.z_range_um:
             errors.append("Start Z is outside the configured Z range.")
@@ -292,6 +313,7 @@ class ApproachCVParameters:
 
 @dataclass(slots=True)
 class CVParameters:
+    """Standalone start/vertex waveform and cycle configuration."""
     start_v: float = -0.2
     vertex1_v: float = 0.6
     vertex2_v: float = -0.4
@@ -300,6 +322,7 @@ class CVParameters:
     jump_at_start: bool = True
 
     def validate(self, settings: AppSettings) -> list[str]:
+        """Validate CV bounds, rate, count, and AO3 representability."""
         errors: list[str] = []
         if not math.isfinite(self.scan_rate_v_s) or self.scan_rate_v_s <= 0:
             errors.append("CV scan rate must be positive.")
@@ -317,6 +340,7 @@ class CVParameters:
 
 @dataclass(slots=True)
 class ApproachParameters:
+    """Standalone contact approach with optional XY position and retract."""
     start_z_um: float = 10.0
     end_z_um: float = 90.0
     approach_rate_um_s: float = 3.0
@@ -333,9 +357,11 @@ class ApproachParameters:
 
     @property
     def feedback_unit(self) -> str:
+        """Return the model-level threshold unit."""
         return "nA"
 
     def validate(self, settings: AppSettings) -> list[str]:
+        """Validate travel, rates, contact settings, potential, and XY targets."""
         errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         for name, value in (("Start Z", self.start_z_um), ("End Z", self.end_z_um)):
             if not math.isfinite(value) or not 0 <= value <= settings.z_range_um:
@@ -366,6 +392,7 @@ class ApproachParameters:
 
 @dataclass(slots=True)
 class ApproachITParameters(ApproachParameters):
+    """Approach parameters extended with an initial/pulse/return I–t program."""
     initial_potential_v: float = -0.1
     initial_hold_s: float = 0.25
     step_potential_v: float = 0.4
@@ -375,6 +402,7 @@ class ApproachITParameters(ApproachParameters):
     cycles: int = 1
 
     def it_steps(self) -> list[tuple[float, float, str]]:
+        """Expand all cycles into labelled ``(potential, duration, stage)`` steps."""
         steps: list[tuple[float, float, str]] = []
         for _ in range(self.cycles):
             steps.extend((
@@ -385,6 +413,7 @@ class ApproachITParameters(ApproachParameters):
         return steps
 
     def validate(self, settings: AppSettings) -> list[str]:
+        """Validate the approach and every potential/hold in the I–t program."""
         errors = ApproachParameters.validate(self, settings)
         if not isinstance(self.cycles, int) or not 1 <= self.cycles <= 10_000:
             errors.append("IT cycles must be between 1 and 10,000.")
@@ -414,6 +443,7 @@ class ApproachITParameters(ApproachParameters):
 
 @dataclass(slots=True)
 class ScanHoppingCVParameters:
+    """Physical grid, hopping motion, contact, and per-pixel CV configuration."""
     x_start_um: float = 35.0
     x_end_um: float = 65.0
     x_points: int = 3
@@ -444,16 +474,19 @@ class ScanHoppingCVParameters:
 
     @property
     def point_count(self) -> int:
+        """Return the total number of grid points."""
         return self.x_points * self.y_points
 
     @property
     def spacing_um(self) -> tuple[float, float]:
+        """Return adjacent X and Y point spacing in micrometres."""
         return (
             abs(self.x_end_um - self.x_start_um) / (self.x_points - 1) if self.x_points > 1 else 0.0,
             abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
         )
 
     def retract_distance_for_point(self, point: int) -> float:
+        """Return normal retract plus any raster end-of-line safety distance."""
         grid = self.grid()
         ends_raster_line = (
             not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
@@ -471,6 +504,7 @@ class ScanHoppingCVParameters:
         return contact_z + direction * self.retract_distance_for_point(point)
 
     def approach_start_z_for_point(self, point: int, previous_contact_z_um: float | None = None) -> float:
+        """Return first-hop absolute Z or later contact-relative retracted Z."""
         if point <= 0:
             return self.start_z_um
         return self.retract_z_for_point(point - 1, previous_contact_z_um)
@@ -504,6 +538,7 @@ class ScanHoppingCVParameters:
         return [start + index * (end - start) / (count - 1) for index in range(count)]
 
     def grid(self) -> list[tuple[int, int, float, float]]:
+        """Return ``(row, column, x_um, y_um)`` points in acquisition order."""
         xs = self._axis_values(self.x_start_um, self.x_end_um, self.x_points)
         ys = self._axis_values(self.y_start_um, self.y_end_um, self.y_points)
         points: list[tuple[int, int, float, float]] = []
@@ -515,6 +550,7 @@ class ScanHoppingCVParameters:
         return points
 
     def validate(self, settings: AppSettings) -> list[str]:
+        """Validate geometry, motion, contact, CV, retraction, and tag limits."""
         errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         for name, low, high, limit in (
             ("X", self.x_start_um, self.x_end_um, settings.x_range_um),
@@ -583,6 +619,7 @@ class ScanHoppingCVParameters:
 
 @dataclass(slots=True)
 class ScanHoppingITParameters:
+    """Physical grid, hopping motion, contact, and per-pixel I–t configuration."""
     x_start_um: float = 35.0
     x_end_um: float = 65.0
     x_points: int = 3
@@ -614,16 +651,19 @@ class ScanHoppingITParameters:
 
     @property
     def point_count(self) -> int:
+        """Return the total number of grid points."""
         return self.x_points * self.y_points
 
     @property
     def spacing_um(self) -> tuple[float, float]:
+        """Return adjacent X and Y point spacing in micrometres."""
         return (
             abs(self.x_end_um - self.x_start_um) / (self.x_points - 1) if self.x_points > 1 else 0.0,
             abs(self.y_end_um - self.y_start_um) / (self.y_points - 1) if self.y_points > 1 else 0.0,
         )
 
     def retract_distance_for_point(self, point: int) -> float:
+        """Return normal retract plus any raster end-of-line safety distance."""
         grid = self.grid()
         ends_raster_line = (
             not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
@@ -631,11 +671,13 @@ class ScanHoppingITParameters:
         return self.retract_distance_um + (self.raster_line_retract_um if ends_raster_line else 0.0)
 
     def retract_z_for_point(self, point: int, contact_z_um: float | None = None) -> float:
+        """Return a safe Z target away from measured or estimated contact."""
         contact_z = self.end_z_um if contact_z_um is None else contact_z_um
         direction = -1.0 if self.end_z_um > self.start_z_um else 1.0
         return contact_z + direction * self.retract_distance_for_point(point)
 
     def approach_start_z_for_point(self, point: int, previous_contact_z_um: float | None = None) -> float:
+        """Return first-hop absolute Z or later contact-relative retracted Z."""
         if point <= 0:
             return self.start_z_um
         return self.retract_z_for_point(point - 1, previous_contact_z_um)
@@ -659,6 +701,7 @@ class ScanHoppingITParameters:
         return lateral + repeated_approaches + retracts + self.point_count * (self.settling_time_s + it_per_point)
 
     def grid(self) -> list[tuple[int, int, float, float]]:
+        """Return ``(row, column, x_um, y_um)`` points in path order."""
         xs = ScanHoppingCVParameters._axis_values(self.x_start_um, self.x_end_um, self.x_points)
         ys = ScanHoppingCVParameters._axis_values(self.y_start_um, self.y_end_um, self.y_points)
         points: list[tuple[int, int, float, float]] = []
@@ -670,6 +713,7 @@ class ScanHoppingITParameters:
         return points
 
     def it_steps(self) -> list[tuple[float, float, str]]:
+        """Expand all cycles into labelled potential/hold steps."""
         steps: list[tuple[float, float, str]] = []
         for _ in range(self.cycles):
             steps.extend((
@@ -680,6 +724,7 @@ class ScanHoppingITParameters:
         return steps
 
     def validate(self, settings: AppSettings) -> list[str]:
+        """Validate geometry, motion, contact, I–t, retraction, and tag limits."""
         approach = ApproachITParameters(
             start_z_um=self.start_z_um, end_z_um=self.end_z_um,
             approach_rate_um_s=self.approach_rate_um_s, retract_rate_um_s=self.retract_rate_um_s,
