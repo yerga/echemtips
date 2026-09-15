@@ -59,6 +59,7 @@ def _synchronized_io(method):
     """Serialize commands with the background FIFO acquisition thread."""
     @wraps(method)
     def guarded(self, *args, **kwargs):
+        """Invoke one backend operation while holding its re-entrant I/O lock."""
         with self.io_lock:
             return method(self, *args, **kwargs)
     return guarded
@@ -286,6 +287,7 @@ class SimulationBackend(InstrumentBackend):
 
     @property
     def label(self) -> str:
+        """Identify this backend as the deterministic simulator."""
         return "Simulator"
 
     @_synchronized_io
@@ -305,6 +307,7 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def disconnect(self) -> None:
+        """Mark the simulator offline without changing its last values."""
         self.connected = False
 
     def _tick(self) -> None:
@@ -450,10 +453,12 @@ class NIFPGABackend(InstrumentBackend):
 
     @property
     def label(self) -> str:
+        """Return the NI backend label including its resource alias."""
         return f"NI FPGA · {self.settings.resource}"
 
     @property
     def startup_notice(self) -> str:
+        """Describe unavoidable AO startup values in raw and physical terms."""
         x_um = raw_to_position(
             DEPLOYED_STARTUP_RAW_OUTPUTS["Applied X"], self.settings.x_range_um, self.settings.x_bipolar
         )
@@ -473,20 +478,24 @@ class NIFPGABackend(InstrumentBackend):
 
     @property
     def startup_verified(self) -> bool:
+        """Return whether the current session passed applied-output checks."""
         return self._startup_verified
 
     @property
     def motion_available(self) -> bool:
+        """Return whether the active driver exposes move and stop controls."""
         return self._driver is not None and all(
             callable(getattr(self._driver, name, None)) for name in ("move", "stop_motion")
         )
 
     @property
     def hardware_approach_cv_required(self) -> bool:
+        """Declare that NI contact-gated methods must remain FPGA-resident."""
         return True
 
     @property
     def approach_cv_available(self) -> bool:
+        """Return whether the driver implements the complete staged contract."""
         return self._driver is not None and all(
             callable(getattr(self._driver, name, None))
             for name in ("start_approach_cv", "approach_cv_status", "stop_motion")
@@ -494,6 +503,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @property
     def scan_hopping_cv_available(self) -> bool:
+        """Return whether the driver implements hopping CV and sample context."""
         return self._driver is not None and all(
             callable(getattr(self._driver, name, None))
             for name in ("start_scan_hopping_cv", "scan_hopping_cv_status", "scan_context", "stop_motion")
@@ -501,9 +511,11 @@ class NIFPGABackend(InstrumentBackend):
 
     @property
     def full_rate_data_available(self) -> bool:
+        """Return whether the driver can drain complete FIFO sample batches."""
         return self._driver is not None and callable(getattr(self._driver, "read_samples", None))
 
     def hardware_program_available(self, name: str) -> bool:
+        """Check the shared driver interface and supported method-name set."""
         return self._driver is not None and all(
             callable(getattr(self._driver, method, None))
             for method in ("start_method", "method_status", "method_context")
@@ -511,6 +523,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @property
     def capabilities(self) -> BackendCapabilities:
+        """Derive UI controls from methods actually supplied by the driver."""
         driver = self._driver
         supports = lambda name: driver is not None and callable(getattr(driver, name, None))
         return BackendCapabilities(
@@ -523,6 +536,7 @@ class NIFPGABackend(InstrumentBackend):
 
     @property
     def position_readback_label(self) -> str:
+        """Describe AI readback or the limited applied-register fallback."""
         if not self.full_rate_data_available:
             return "Commanded output register (not measured position)"
         return "Measured AI0/AI1/AI2"
