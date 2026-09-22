@@ -7,6 +7,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Parent parameter-unit labels before making them visible, preventing brief
+  standalone windows from flashing during application startup on Windows.
+
 - Retry transient Windows locks during atomic recording-metadata replacement,
   preventing brief access-denied errors from aborting experiments. Persistent
   locks and other disk errors remain failures with partial data preserved.

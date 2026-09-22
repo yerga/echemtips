@@ -22,6 +22,33 @@ class QtLayoutTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.qt_app = create_application([])
 
+    def test_construction_does_not_show_temporary_windows(self) -> None:
+        class WindowShows(QtCore.QObject):
+            def __init__(self):
+                super().__init__()
+                self.shown = []
+
+            def eventFilter(self, obj, event):
+                if (event.type() == QtCore.QEvent.Type.Show
+                        and isinstance(obj, QtWidgets.QWidget) and obj.isWindow()):
+                    self.shown.append(type(obj).__name__)
+                return False
+
+        observer = WindowShows()
+        self.qt_app.installEventFilter(observer)
+        window = None
+        try:
+            window = EChemTipsApp()
+            self.qt_app.processEvents()
+            self.assertEqual(observer.shown, [])
+            window.show()
+            self.qt_app.processEvents()
+            self.assertEqual(observer.shown, ["EChemTipsApp"])
+        finally:
+            self.qt_app.removeEventFilter(observer)
+            if window is not None:
+                window.close()
+
     def test_control_pages_fit_minimum_window_and_keep_actions_accessible(self) -> None:
         window = EChemTipsApp()
         window.resize(1080, 680)

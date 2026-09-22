@@ -175,9 +175,11 @@ class Field(QtWidgets.QFrame):
         row.addWidget(self.entry, 1)
         self.unit_label = label(unit, "muted")
         self.unit_label.setMinimumWidth(0)
-        self.unit_label.setVisible(bool(unit))
         row.addWidget(self.unit_label)
         layout.addLayout(row)
+        # Installing the row assigns the field as parent. Showing an unparented
+        # unit label first creates a temporary native window on Windows.
+        self.unit_label.setVisible(bool(unit))
 
     def float(self) -> float:
         """Parse the current text as a floating-point value."""
