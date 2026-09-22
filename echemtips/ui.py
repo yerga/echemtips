@@ -15,6 +15,7 @@ from typing import Any
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .acquisition import AcquisitionDrain, AcquisitionWorker
+from .branding import application_icon, configure_application_identity, logo_label
 from .backends import BackendError, InstrumentBackend, create_backend
 from .data import DataRecorder
 from .diagnostics import (
@@ -1823,7 +1824,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     PAGE_NAMES = ("Watch current", "Watch position", "Preflight", "Characterize pipette", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
 
     def __init__(self) -> None:
-        super().__init__(); configure_pyqtgraph(); self.setWindowTitle("eChemTips — Scanning Electrochemistry"); self.resize(1440, 900); self.setMinimumSize(1080, 680)
+        super().__init__(); configure_pyqtgraph(); self.setWindowTitle("eChemTips — Instrument Control"); self.setWindowIcon(application_icon()); self.resize(1440, 900); self.setMinimumSize(1080, 680)
         self.store = SettingsStore(); self.settings = self.store.load(); self.driver_module = os.environ.get("ECHEMTIPS_DRIVER_MODULE") or os.environ.get("WECSPM_DRIVER_MODULE")
         self.backend: InstrumentBackend = create_backend(self.settings, self.driver_module); self._acquisition: AcquisitionWorker | None = None; self.recorder = DataRecorder(); self._sample: Sample | None = None
         self._make_experiments(); self._build_shell(); self._build_pages(); self.show_page("Watch current"); self._set_connection_ui(False)
@@ -1838,7 +1839,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     def _build_shell(self) -> None:
         root = QtWidgets.QWidget(); root.setObjectName("window"); self.setCentralWidget(root); layout = QtWidgets.QHBoxLayout(root); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
         sidebar = QtWidgets.QFrame(); sidebar.setObjectName("sidebar"); sidebar.setFixedWidth(225); side = _vbox(sidebar, (14, 20, 14, 18), 5)
-        brand_row = QtWidgets.QWidget(); br = _hbox(brand_row); mark = label("e", "brand"); mark.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter); mark.setFixedSize(36, 36); mark.setStyleSheet(f"background:{COLORS['accent']}; border-radius:8px; color:white;")
+        brand_row = QtWidgets.QWidget(); br = _hbox(brand_row); mark = logo_label()
         brand = label("eChemTips", "brand"); br.addWidget(mark); br.addWidget(brand); br.addStretch(1); side.addWidget(brand_row); side.addWidget(label("SCANNING ELECTROCHEMISTRY", "sidebarMuted")); side.addSpacing(18)
         self.nav_buttons: dict[str, QtWidgets.QPushButton] = {}; group = QtWidgets.QButtonGroup(self); group.setExclusive(True)
         glyphs = ("◉", "⌁", "✓", "◇", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
@@ -2260,4 +2261,5 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 def create_application(argv: list[str] | None = None) -> QtWidgets.QApplication:
     """Return the process QApplication configured with eChemTips styling."""
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv or [])
-    app.setApplicationName("eChemTips"); app.setOrganizationName("eChemTips"); app.setStyle("Fusion"); app.setStyleSheet(application_stylesheet()); return app
+    configure_application_identity(app)
+    app.setStyle("Fusion"); app.setStyleSheet(application_stylesheet()); return app

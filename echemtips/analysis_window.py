@@ -11,6 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, RAW_SIGNALS, extract_cv_cycles
 from .models import SettingsStore
+from .branding import application_icon, logo_label
 from .qt_common import COLORS, Card, XYPlot, application_stylesheet, button, label
 
 
@@ -19,6 +20,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def __init__(self, initial_path: Path | str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("eChemTips — Data Analysis")
+        self.setWindowIcon(application_icon())
         self.resize(1440, 900)
         self.setMinimumSize(1040, 680)
         self.dataset: AnalysisDataset | None = None
@@ -57,7 +59,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         side = QtWidgets.QVBoxLayout(sidebar)
         side.setContentsMargins(18, 22, 18, 18)
         side.setSpacing(8)
-        side.addWidget(label("eChemTips", "brand"))
+        brand_row = QtWidgets.QWidget(); brand_layout = QtWidgets.QHBoxLayout(brand_row)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.addWidget(logo_label()); brand_layout.addWidget(label("eChemTips", "brand")); brand_layout.addStretch(1)
+        side.addWidget(brand_row)
         side.addWidget(label("DATA ANALYSIS", "sidebarMuted"))
         side.addSpacing(14)
         side.addWidget(label("RECORDINGS", "sidebarMuted"))

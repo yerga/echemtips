@@ -13,6 +13,7 @@ from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
+from echemtips.branding import application_icon
 from echemtips.models import AppSettings, MAP_COLORMAPS, SettingsStore
 from echemtips.models import Sample
 from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot, XYPlot
@@ -20,6 +21,25 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_shared_logo_and_application_identity(self) -> None:
+        self.assertEqual(self.qt_app.applicationDisplayName(), "eChemTips")
+        self.assertFalse(self.qt_app.windowIcon().isNull())
+        for size in (16, 32, 64, 256):
+            self.assertFalse(application_icon().pixmap(size, size).isNull())
+        windows = (EChemTipsApp(), AnalysisWindow())
+        try:
+            self.assertEqual(windows[0].windowTitle(), "eChemTips — Instrument Control")
+            self.assertEqual(windows[1].windowTitle(), "eChemTips — Data Analysis")
+            for window in windows:
+                self.assertFalse(window.windowIcon().isNull())
+                logos = window.findChildren(QtWidgets.QLabel, "applicationLogo")
+                self.assertEqual(len(logos), 1)
+                self.assertFalse(logos[0].pixmap().isNull())
+                self.assertIn("pipette", logos[0].accessibleName())
+        finally:
+            for window in windows:
+                window.close()
+
     def test_settings_tabs_keep_save_action_visible_at_laptop_sizes(self) -> None:
         window = EChemTipsApp()
         try:

@@ -7,6 +7,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Added a packaged pipette/meniscus logo to both app sidebars and Qt window
+  icons, with a shared application identity and clearer control-window title.
+
 - Organized Settings into Connection, Acquisition, Piezos, Amplifiers, Saving,
   Plots and Maps tabs, with independent scrolling and an always-visible
   save/apply action for all categories.
