@@ -515,7 +515,7 @@ class StatusCard(Card):
         actions = QtWidgets.QWidget()
         action_layout = _hbox(actions)
         self.start_button = button(start_text, start_slot, "primary")
-        self.stop_button = button("Stop", stop_slot, "danger")
+        self.stop_button = button("Stop experiment", stop_slot, "danger")
         self.stop_button.setEnabled(False)
         action_layout.addWidget(self.start_button)
         action_layout.addWidget(self.stop_button)
@@ -530,7 +530,7 @@ class StatusCard(Card):
         if update is None:
             return
         self.state_label.setText(update.state.value)
-        self.detail_label.setText(update.detail)
+        self.detail_label.setText(update.detail.replace("I-t", "I–t"))
         self.progress.setValue(round(update.progress * 1000))
         terminal = update.state in (ExperimentState.COMPLETE, ExperimentState.ABORTED)
         if terminal:
@@ -600,8 +600,8 @@ class WatchPage(BasePage):
         controls.setMinimumWidth(285)
         controls.setMaximumWidth(350)
         form = _vbox(controls.body)
-        self.v1 = Field("Voltage 1 · AO3", "0.10", "V")
-        self.v2 = Field("Voltage 2 · AO4", "0.00", "V")
+        self.v1 = Field("Potential E1 · AO3", "0.10", "V")
+        self.v2 = Field("Potential E2 · AO4", "0.00", "V")
         form.addWidget(self.v1)
         form.addWidget(self.v2)
         form.addWidget(button("Apply potentials", self.apply_voltage, "primary"))
@@ -975,13 +975,13 @@ class StandaloneCVPage(ManagedExperimentPage):
     recording_name = "CV"
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Standalone CV", "Run cyclic voltammetry independently, with voltammograms separated from complete time-domain data.")
+        super().__init__(app, "CV", "Run cyclic voltammetry independently, with voltammograms separated from complete time-domain data.")
         root = QtWidgets.QHBoxLayout(self.body)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
         controls = Card("Potential program", "Start → vertex 1 → vertex 2 → start, matching the deployed waypoint convention.")
         form = _grid(controls.body)
-        self.start_v = add_field(form, Field("Start", "-0.2", "V"), 0, 0)
+        self.start_v = add_field(form, Field("Start potential", "-0.2", "V"), 0, 0)
         self.vertex1 = add_field(form, Field("Vertex 1", "0.6", "V"), 0, 1)
         self.vertex2 = add_field(form, Field("Vertex 2", "-0.4", "V"), 1, 0)
         self.rate = add_field(form, Field("Scan rate", "0.25", "V/s"), 1, 1)
@@ -1005,14 +1005,14 @@ class StandaloneCVPage(ManagedExperimentPage):
         right_layout.addWidget(self.build_status("CV status", "Start CV"))
         tabs = QtWidgets.QTabWidget()
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
-        tabs.addTab(_plot_card("Cyclic voltammogram", "Only CV data: Current 1 versus measured potential E1.", self.cv_plot), "Voltammogram")
+        tabs.addTab(_plot_card("Cyclic voltammogram", "Only CV data: Current 1 versus measured potential E1.", self.cv_plot), "CV")
         raw = QtWidgets.QWidget()
         raw_layout = QtWidgets.QHBoxLayout(raw)
         self.voltage_plot = Plot("Potential vs time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Current 1 (nA)", (COLORS["blue"],), app.settings.display_max_points)
-        raw_layout.addWidget(_plot_card("Potential", "Complete time-domain potential trace.", self.voltage_plot), 1)
-        raw_layout.addWidget(_plot_card("Current", "Complete time-domain Current 1 trace.", self.current_plot), 1)
-        tabs.addTab(raw, "Raw traces")
+        raw_layout.addWidget(_plot_card("Potential E1", "Complete time-domain potential trace.", self.voltage_plot), 1)
+        raw_layout.addWidget(_plot_card("Current 1", "Complete time-domain Current 1 trace.", self.current_plot), 1)
+        tabs.addTab(raw, "Experiment traces")
         right_layout.addWidget(tabs, 1)
         root.addWidget(right, 1)
 
@@ -1052,7 +1052,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
     manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Standalone approach", "Acquire an approach curve, distinguish confirmed contact from travel limit, and optionally retract.")
+        super().__init__(app, "Approach", "Acquire an approach curve, distinguish confirmed contact from travel limit, and optionally retract.")
         root = QtWidgets.QHBoxLayout(self.body)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
@@ -1061,8 +1061,8 @@ class StandaloneApproachPage(ManagedExperimentPage):
         form = _grid(movement.body)
         self.start_z = add_field(form, Field("Start Z", "10", "µm"), 0, 0)
         self.end_z = add_field(form, Field("Approach limit Z", "90", "µm"), 0, 1)
-        self.approach_rate = add_field(form, Field("Approach rate", "3", "µm/s"), 1, 0)
-        self.retract_rate = add_field(form, Field("Retract rate", "10", "µm/s"), 1, 1)
+        self.approach_rate = add_field(form, Field("Approach speed", "3", "µm/s"), 1, 0)
+        self.retract_rate = add_field(form, Field("Retract speed", "10", "µm/s"), 1, 1)
         self.retract = Check("Retract after approach", True); form.addWidget(self.retract, 2, 0, 1, 2)
         left_layout.addWidget(movement)
 
@@ -1074,7 +1074,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.threshold = add_field(form, Field("Contact threshold", "2000", "pA"), 1, 0)
         self.greater = Check("Trigger when current is greater than threshold", True)
         form.addWidget(self.greater, 1, 1)
-        self.settling_time = add_field(form, Field("Settle after contact", "0.5", "s"), 2, 0)
+        self.settling_time = add_field(form, Field("Settling time after contact", "0.5", "s"), 2, 0)
         form.addWidget(_contact_help(), 3, 0, 1, 2)
         left_layout.addWidget(contact)
 
@@ -1094,9 +1094,9 @@ class StandaloneApproachPage(ManagedExperimentPage):
         tabs = QtWidgets.QTabWidget(); plots = QtWidgets.QWidget(); plots_layout = QtWidgets.QHBoxLayout(plots)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
-        plots_layout.addWidget(_plot_card("Z approach", "Measured Z for the complete approach and retract.", self.z_plot), 1)
-        plots_layout.addWidget(_plot_card("Approach current", "Selected feedback current during the complete approach.", self.current_plot), 1)
-        tabs.addTab(plots, "Time traces")
+        plots_layout.addWidget(_plot_card("Z position", "Measured Z for the complete approach and retract.", self.z_plot), 1)
+        plots_layout.addWidget(_plot_card("Feedback current", "Selected feedback current during the complete approach.", self.current_plot), 1)
+        tabs.addTab(plots, "Experiment traces")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["danger"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1144,25 +1144,25 @@ class StandaloneApproachPage(ManagedExperimentPage):
 class ApproachCVPage(ManagedExperimentPage):
     """Contact-gated Approach + CV controls and stage-specific plots."""
     experiment_key = "approach_cv"
-    recording_name = "Approach then CV"
+    recording_name = "Approach + CV"
     manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Approach then CV", "Detect contact, run a cyclic voltammogram only after confirmation, and retract safely.")
+        super().__init__(app, "Approach + CV", "Detect contact, run a cyclic voltammogram only after confirmation, and retract safely.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
         controls_host = QtWidgets.QWidget(); controls_layout = _vbox(controls_host)
         approach = Card("1 · Approach", "Z motion stops when the selected signal crosses the threshold.")
         ag = _grid(approach.body)
         self.start_z = add_field(ag, Field("Start Z", "10.0", "µm"), 0, 0)
         self.end_z = add_field(ag, Field("Approach limit Z", "90.0", "µm"), 0, 1)
-        self.approach_rate = add_field(ag, Field("Approach rate", "3.0", "µm/s"), 1, 0)
-        self.approach_voltage = add_field(ag, Field("Approach potential", "0.10", "V"), 1, 1)
+        self.approach_rate = add_field(ag, Field("Approach speed", "3.0", "µm/s"), 1, 0)
+        self.approach_voltage = add_field(ag, Field("Approach potential E1", "0.10", "V"), 1, 1)
         self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1")
         choice_frame = QtWidgets.QWidget(); choice_layout = _vbox(choice_frame, spacing=5)
         choice_layout.addWidget(label("Feedback current", "muted")); choice_layout.addWidget(self.feedback_channel)
         ag.addWidget(choice_frame, 2, 0)
         self.threshold = add_field(ag, Field("Contact threshold", "2000", "pA"), 2, 1)
-        self.settling_time = add_field(ag, Field("Settle after contact", "0.5", "s"), 3, 0)
+        self.settling_time = add_field(ag, Field("Settling time after contact", "0.5", "s"), 3, 0)
         self.greater_than = Check("Trigger when current is greater than threshold", True)
         ag.addWidget(self.greater_than, 3, 1)
         ag.addWidget(_contact_help(), 4, 0, 1, 2)
@@ -1174,7 +1174,7 @@ class ApproachCVPage(ManagedExperimentPage):
         controls_layout.addWidget(position)
         cv = Card("3 · Cyclic voltammetry", "Potential E1 is swept start → vertex 1 → vertex 2 → start.")
         cg = _grid(cv.body)
-        self.cv_start = add_field(cg, Field("Start", "-0.20", "V"), 0, 0)
+        self.cv_start = add_field(cg, Field("Start potential", "-0.20", "V"), 0, 0)
         self.vertex1 = add_field(cg, Field("Vertex 1", "0.60", "V"), 0, 1)
         self.vertex2 = add_field(cg, Field("Vertex 2", "-0.40", "V"), 1, 0)
         self.scan_rate = add_field(cg, Field("Scan rate", "0.25", "V/s"), 1, 1)
@@ -1196,8 +1196,8 @@ class ApproachCVPage(ManagedExperimentPage):
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
         plots.addWidget(_plot_card("Z position", "Full experiment history.", self.z_plot), 1)
         plots.addWidget(_plot_card("Feedback current", "Full experiment history.", self.current_plot), 1)
-        tabs.addTab(traces, "Time traces")
-        tabs.addTab(_plot_card("Cyclic voltammogram", "Only samples acquired during CV waypoints.", self.cv_plot), "Voltammogram")
+        tabs.addTab(traces, "Experiment traces")
+        tabs.addTab(_plot_card("Cyclic voltammogram", "Only samples acquired during CV waypoints.", self.cv_plot), "CV")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1262,13 +1262,13 @@ class ApproachITPage(ManagedExperimentPage):
     manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Approach then I–t", "Detect contact, apply timed potential steps, acquire current versus time, and optionally retract.")
+        super().__init__(app, "Approach + I–t", "Detect contact, apply timed potential steps, acquire current versus time, and optionally retract.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
         holder = QtWidgets.QWidget(); hl = _vbox(holder)
         movement = Card("1 · Z movement", "Define the approach range and optional return movement.")
         g = _grid(movement.body)
         self.start_z = add_field(g, Field("Start Z", "10", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "90", "µm"), 0, 1)
-        self.approach_rate = add_field(g, Field("Approach rate", "3", "µm/s"), 1, 0); self.retract_rate = add_field(g, Field("Retract rate", "10", "µm/s"), 1, 1)
+        self.approach_rate = add_field(g, Field("Approach speed", "3", "µm/s"), 1, 0); self.retract_rate = add_field(g, Field("Retract speed", "10", "µm/s"), 1, 1)
         self.retract = Check("Retract after I–t", True); g.addWidget(self.retract, 2, 0, 1, 2)
         hl.addWidget(movement)
         contact = Card("2 · Contact detection", "The approach ends automatically when the selected current crosses the threshold.")
@@ -1277,7 +1277,7 @@ class ApproachITPage(ManagedExperimentPage):
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 0, 1)
         self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 1, 0)
         self.greater = Check("Trigger when current is greater than threshold", True); g.addWidget(self.greater, 1, 1)
-        self.settling_time = add_field(g, Field("Settle after contact", "0.5", "s"), 2, 0)
+        self.settling_time = add_field(g, Field("Settling time after contact", "0.5", "s"), 2, 0)
         g.addWidget(_contact_help(), 3, 0, 1, 2)
         hl.addWidget(contact)
         position = Card("3 · Optional XY preposition", "Leave either field empty to keep that axis at its current position.")
@@ -1286,9 +1286,9 @@ class ApproachITPage(ManagedExperimentPage):
         hl.addWidget(position)
         electrochemistry = Card("4 · I–t potential program", "Potential E1 follows initial → pulse → return for each cycle.")
         g = _grid(electrochemistry.body)
-        self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 0, 0); self.initial_t = add_field(g, Field("Initial hold", "0.25", "s"), 0, 1)
-        self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 1, 0); self.step_t = add_field(g, Field("Pulse hold", "1.0", "s"), 1, 1)
-        self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return hold", "0.25", "s"), 2, 1)
+        self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 0, 0); self.initial_t = add_field(g, Field("Initial duration", "0.25", "s"), 0, 1)
+        self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 1, 0); self.step_t = add_field(g, Field("Pulse duration", "1.0", "s"), 1, 1)
+        self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return duration", "0.25", "s"), 2, 1)
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
         preview, self.program_preview = _program_card(
@@ -1300,12 +1300,12 @@ class ApproachITPage(ManagedExperimentPage):
         tabs = QtWidgets.QTabWidget(); full = QtWidgets.QWidget(); fl = QtWidgets.QHBoxLayout(full)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
-        fl.addWidget(_plot_card("Z", "Complete approach and retract.", self.z_plot), 1); fl.addWidget(_plot_card("Feedback current", "Complete selected-current trace.", self.current_plot), 1)
-        tabs.addTab(full, "Full traces"); it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it)
+        fl.addWidget(_plot_card("Z position", "Complete approach and retract.", self.z_plot), 1); fl.addWidget(_plot_card("Feedback current", "Complete selected-current trace.", self.current_plot), 1)
+        tabs.addTab(full, "Experiment traces"); it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it)
         self.voltage_plot = Plot("Potential vs I–t time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "I–t elapsed (s)")
         self.it_plot = Plot("Current vs I–t time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "I–t elapsed (s)")
-        il.addWidget(_plot_card("Potential steps", "Post-contact potential program.", self.voltage_plot), 1); il.addWidget(_plot_card("I–t response", "Current acquired during timed holds.", self.it_plot), 1)
-        tabs.addTab(it, "I–t data"); rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_t0: float | None = None
+        il.addWidget(_plot_card("Potential E1", "Post-contact potential program.", self.voltage_plot), 1); il.addWidget(_plot_card("I–t response", "Current acquired during timed holds.", self.it_plot), 1)
+        tabs.addTab(it, "I–t"); rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_t0: float | None = None
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1376,20 +1376,20 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
         self.start_z = add_field(g, Field("Initial approach Z", "55", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "80", "µm"), 0, 1)
-        self.lateral_rate = add_field(g, Field("XY rate", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach rate", "15", "µm/s"), 1, 1)
-        self.retract_rate = add_field(g, Field("Retract rate", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
+        self.lateral_rate = add_field(g, Field("XY speed", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach speed", "15", "µm/s"), 1, 1)
+        self.retract_rate = add_field(g, Field("Retract speed", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
         self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
         self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
-        self.settling_time = add_field(g, Field("Settle after every contact", "0.5", "s"), 5, 0)
+        self.settling_time = add_field(g, Field("Settling time after contact", "0.5", "s"), 5, 0)
         self.greater = Check("Trigger when current is greater than threshold", True); g.addWidget(self.greater, 5, 1)
         g.addWidget(_contact_help(), 6, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · Cyclic voltammetry", "Select the per-hop potential E1 waveform and current-map sampling potential.")
         g = _grid(electrochemistry.body)
-        self.map_v = add_field(g, Field("Current-map potential E1", "0.2", "V"), 0, 0); self.cv_start = add_field(g, Field("CV start", "-0.2", "V"), 0, 1)
-        self.vertex1 = add_field(g, Field("CV vertex 1", "0.6", "V"), 1, 0); self.vertex2 = add_field(g, Field("CV vertex 2", "-0.4", "V"), 1, 1)
-        self.scan_rate = add_field(g, Field("CV scan rate", "2", "V/s"), 2, 0); self.cycles = add_field(g, Field("CV cycles", "1"), 2, 1)
+        self.map_v = add_field(g, Field("Current-map potential E1", "0.2", "V"), 0, 0); self.cv_start = add_field(g, Field("Start potential", "-0.2", "V"), 0, 1)
+        self.vertex1 = add_field(g, Field("Vertex 1", "0.6", "V"), 1, 0); self.vertex2 = add_field(g, Field("Vertex 2", "-0.4", "V"), 1, 1)
+        self.scan_rate = add_field(g, Field("Scan rate", "2", "V/s"), 2, 0); self.cycles = add_field(g, Field("Cycles", "1"), 2, 1)
         hl.addWidget(electrochemistry)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1414,7 +1414,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
-        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing height in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Current map", "Current 1 at the selected fixed potential in physical stage coordinates.", self.current_map), 1); map_index = self.visual_tabs.addTab(maps, "Maps")
+        ml.addWidget(_plot_card("Contact Z map", "Confirmed feedback crossing height in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Current at selected potential", "Current 1 at the selected fixed potential in physical stage coordinates.", self.current_map), 1); map_index = self.visual_tabs.addTab(maps, "Maps")
         self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); self.map_view_toolbar = _install_map_view_selector(self.visual_tabs, map_index, self.map_view)
         self.map_view.currentTextChanged.connect(self._refresh_maps)
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
@@ -1514,21 +1514,21 @@ class ScanHoppingITPage(ManagedExperimentPage):
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
         self.start_z = add_field(g, Field("Initial approach Z", "55", "µm"), 0, 0); self.end_z = add_field(g, Field("Approach limit Z", "80", "µm"), 0, 1)
-        self.xy_rate = add_field(g, Field("XY rate", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach rate", "15", "µm/s"), 1, 1)
-        self.retract_rate = add_field(g, Field("Retract rate", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
+        self.xy_rate = add_field(g, Field("XY speed", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach speed", "15", "µm/s"), 1, 1)
+        self.retract_rate = add_field(g, Field("Retract speed", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
         self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
         self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
-        self.settling_time = add_field(g, Field("Settle after every contact", "0.5", "s"), 5, 0)
+        self.settling_time = add_field(g, Field("Settling time after contact", "0.5", "s"), 5, 0)
         self.greater = Check("Trigger when current is greater than threshold", True); g.addWidget(self.greater, 5, 1)
         g.addWidget(_contact_help(), 6, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · I–t potential program", "Potential E1 follows initial → pulse → return at every hop.")
         g = _grid(electrochemistry.body)
-        self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 0, 0); self.initial_t = add_field(g, Field("Initial hold", "0.25", "s"), 0, 1)
-        self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 1, 0); self.step_t = add_field(g, Field("Pulse hold", "1.0", "s"), 1, 1)
-        self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return hold", "0.25", "s"), 2, 1)
-        self.cycles = add_field(g, Field("I–t cycles", "1"), 3, 0)
+        self.initial_v = add_field(g, Field("Initial potential", "-0.1", "V"), 0, 0); self.initial_t = add_field(g, Field("Initial duration", "0.25", "s"), 0, 1)
+        self.step_v = add_field(g, Field("Pulse potential", "0.4", "V"), 1, 0); self.step_t = add_field(g, Field("Pulse duration", "1.0", "s"), 1, 1)
+        self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return duration", "0.25", "s"), 2, 1)
+        self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1540,16 +1540,16 @@ class ScanHoppingITPage(ManagedExperimentPage):
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
         )
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
-        right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Hopping I–t status", "Start hopping I–t")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
+        right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
-        tl.addWidget(_plot_card("Z", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
+        tl.addWidget(_plot_card("Z position", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Hop I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Hop I–t elapsed (s)")
         il.addWidget(_plot_card("Potential E1", "Timed steps at the latest hop.", self.voltage_plot), 1); il.addWidget(_plot_card("Current 1", "I–t response at the latest hop.", self.it_plot), 1); tabs.addTab(it, "I–t at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
-        ml.addWidget(_plot_card("Z contact map", "Confirmed feedback crossing in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Pulse-current map", "Mean Current 1 during pulse hold in physical stage coordinates.", self.current_map), 1); map_index = tabs.addTab(maps, "Maps")
+        ml.addWidget(_plot_card("Contact Z map", "Confirmed feedback crossing in physical stage coordinates.", self.z_map), 1); ml.addWidget(_plot_card("Mean pulse current", "Mean Current 1 during pulse hold in physical stage coordinates.", self.current_map), 1); map_index = tabs.addTab(maps, "Maps")
         self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); self.map_view_toolbar = _install_map_view_selector(tabs, map_index, self.map_view)
         self.map_view.currentTextChanged.connect(self._refresh_maps)
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
@@ -1624,7 +1624,7 @@ class MovePiezoPage(BasePage):
         form = _vbox(controls.body)
         form.addWidget(label("Piezo axis", "muted")); self.axis = Choice(("X", "Y", "Z"), "Z"); form.addWidget(self.axis)
         self.target = Field("Target", "50", "µm"); self.speed = Field("Speed", "5", "µm/s"); form.addWidget(self.target); form.addWidget(self.speed)
-        action_row = QtWidgets.QWidget(); al = _hbox(action_row); al.addWidget(button("Move piezo", self.move, "primary")); al.addWidget(button("Stop", self.stop, "danger")); form.addWidget(action_row); form.addStretch(1)
+        action_row = QtWidgets.QWidget(); al = _hbox(action_row); al.addWidget(button("Move piezo", self.move, "primary")); al.addWidget(button("Stop movement", self.stop, "danger")); form.addWidget(action_row); form.addStretch(1)
         controls.setMinimumWidth(300); controls.setMaximumWidth(380); root.addWidget(controls)
         position = Card("Position readback", "Measured inputs are never presented as commanded output values."); pl = _vbox(position.body)
         panes = QtWidgets.QWidget(); pg = QtWidgets.QGridLayout(panes); pg.setContentsMargins(0, 0, 0, 0); pg.setSpacing(10)
@@ -1791,7 +1791,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.nav_buttons: dict[str, QtWidgets.QPushButton] = {}; group = QtWidgets.QButtonGroup(self); group.setExclusive(True)
         glyphs = ("◉", "⌁", "✓", "◇", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
         for index, (name, glyph) in enumerate(zip(self.PAGE_NAMES, glyphs), 1):
-            nav = button(f"{glyph}   {name}", lambda checked=False, page=name: self.show_page(page)); nav.setProperty("role", "nav"); nav.setCheckable(True); group.addButton(nav); side.addWidget(nav); self.nav_buttons[name] = nav
+            nav = button(f"{glyph}   {name.replace('I-t', 'I–t')}", lambda checked=False, page=name: self.show_page(page)); nav.setProperty("role", "nav"); nav.setCheckable(True); group.addButton(nav); side.addWidget(nav); self.nav_buttons[name] = nav
             if index <= 9:
                 shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
         side.addStretch(1); side.addWidget(label("FPGA logic preserved", "sidebarMuted")); side.addWidget(label("PySide6 · PyQtGraph", "sidebarMuted")); layout.addWidget(sidebar)
@@ -1855,7 +1855,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     @property
     def active_parameters(self) -> object | None:
         """Return parameters associated with the recorder's active method."""
-        key = {"CV": "cv", "Approach": "approach", "Approach then CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+        key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
         return self.experiments[key].params if key is not None else None
 
     def toggle_connection(self) -> None:
@@ -2041,7 +2041,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not self.recorder.active:
             if callable(sync): sync()
             return
-        key = {"CV": "cv", "Approach": "approach", "Approach then CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+        key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
         if key is None:
             if callable(sync): sync()
             return
@@ -2066,7 +2066,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 if worker is None: samples, acquisition_error = self.backend.read_samples(), None
                 else: drained = worker.drain(); samples, acquisition_error = drained.samples, drained.error
                 EChemTipsApp._consume_acquired(self, samples, finalize=False)
-                key = {"CV": "cv", "Approach": "approach", "Approach then CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+                key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
                 terminal = bool(self.recorder.active and key is not None and EChemTipsApp._experiments_for(self)[key].state in (ExperimentState.COMPLETE, ExperimentState.ABORTED))
                 if terminal and worker is not None:
                     final = worker.pause_and_snapshot(); EChemTipsApp._consume_acquired(self, final.samples, finalize=False); samples += final.samples; acquisition_error = acquisition_error or final.error; worker.resume()

@@ -18,6 +18,17 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_experiment_action_terminology(self) -> None:
+        window = EChemTipsApp()
+        try:
+            for key in ("Scan hopping + CV", "Scan hopping + I-t"):
+                self.assertEqual(window.pages[key].status.start_button.text(), "Start scan")
+                self.assertEqual(window.pages[key].status.stop_button.text(), "Stop experiment")
+            self.assertIn("I–t", window.nav_buttons["Approach + I-t"].text())
+            self.assertEqual(window.pages["CV"].status.start_button.text(), "Start CV")
+        finally:
+            window.close()
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.qt_app = create_application([])
@@ -157,7 +168,7 @@ class QtLayoutTests(unittest.TestCase):
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
-                ("Time traces", "Voltammogram", "Approach curves"),
+                ("Experiment traces", "CV", "Approach curves"),
             )
             expected_sections = {
                 "Approach": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition"),
