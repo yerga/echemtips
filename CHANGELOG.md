@@ -7,6 +7,12 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Added saved display preferences for independent Z/current map color limits,
+  monitor/experiment rolling windows, pA/nA/automatic current units, font size
+  and trace thickness. Unit conversion is rendering-only; recordings and
+  exports retain their original units. Analysis loads typography/current-unit
+  preferences on opening. Larger fonts reflow Settings and the toolbar.
+
 - Moved scan map shape and meniscus footprint diameter into shared, persistent
   Display settings. Display-only changes retain the connection and existing maps.
 

@@ -101,6 +101,36 @@ the entire experiment.
 
 ## Display
 
+| Preference | Default | Options / range |
+| --- | --- | --- |
+| Contact Z color scale | Automatic | Automatic, or fixed minimum/maximum in µm |
+| Current color scale | Automatic | Automatic, or fixed minimum/maximum entered in nA |
+| Monitor rolling window | 30 s | 1–3600 s; Watch current and Watch position |
+| Experiment rolling window | 60 s | 1–3600 s; time-domain traces and rolling approach history |
+| Current display units | nA | nA, pA, Auto |
+| Font size | 10 pt | 8–14 pt |
+| Trace thickness | 2 px | 0.5–6 px |
+
+Fixed color limits require minimum below maximum. Values beyond these limits
+use the end colors without changing the measurements. Z and current limits
+are independent and shared between scan methods. Current limits are always
+entered in **nA**, even when maps display pA (1 nA = 1000 pA). The range summary
+reports the actual data range; the color bar shows the selected scale.
+
+Auto current units use pA when the visible nonzero current magnitudes are all
+below 1 nA; otherwise nA. A fixed current map scale selects Auto units from
+its limits, so new map values do not change those units. Plot axes, current-map
+scales/hover values, Watch current readouts and the instrument strip use the
+chosen units. Feedback thresholds, amplifier sensitivities, diagnostic reports,
+CSV recordings and analysis exports keep their explicit original units.
+The analysis window loads unit/font/thickness preferences when opened.
+
+Rolling windows apply only to live time traces and approach history, not CV
+curves, the latest approach curve, maps or post-recording analysis. Increasing
+a window cannot restore points already pruned from the live buffer; the saved
+recording retains them. Larger fonts use a single-column Settings layout and
+scrollbars where required; emergency controls remain outside scrolling content.
+
 **Scan map shape** selects Square cells (default) or Circular footprints for
 both scan experiments. **Meniscus footprint diameter** defaults to 1 µm and
 must be finite and positive. It sets the circle diameter in physical

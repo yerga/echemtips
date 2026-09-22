@@ -166,6 +166,10 @@ retracts by a positive distance away from the measured contact Z.
   diameter under **Settings → Display**, not on individual scan pages. These
   preferences change rendering only, not the scan path or feedback.
 
+**Settings → Display** also offers independent automatic/fixed Z and current
+color limits, rolling history durations, current display units, font size and
+trace thickness. Saved recording units and full-rate data are unaffected.
+
 The maps contain only confirmed contacts. A no-contact hop cannot start a CV or
 produce a valid contact/current map value. Start with 1×1, then 2×2, during
 commissioning.
