@@ -101,6 +101,18 @@ the entire experiment.
 
 ## Display
 
+**Scan map shape** selects Square cells (default) or Circular footprints for
+both scan experiments. **Meniscus footprint diameter** defaults to 1 µm and
+must be finite and positive. It sets the circle diameter in physical
+coordinates, and the fallback cell width for single-row/column square maps.
+It changes rendering only, not hop spacing, feedback or physical meniscus size.
+
+Use **Save as defaults and apply** to update both scan pages and retain these
+preferences after restart. Display-only changes preserve the connection,
+experiment objects and existing maps; stop an active experiment before saving
+settings. Footprint diameter is also copied into scan parameters in the JSON
+metadata for interpretation of the recorded map.
+
 | Setting | Default | Valid range | Effect |
 | --- | --- | --- | --- |
 | **Display buffer** | 12,000 points/plot | integer 500–100,000 | Maximum retained plot-buffer resolution before decimation. It affects UI cost only, not saved data. Rolling time windows can remove older displayed points earlier. |

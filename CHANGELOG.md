@@ -7,6 +7,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Moved scan map shape and meniscus footprint diameter into shared, persistent
+  Display settings. Display-only changes retain the connection and existing maps.
+
 - Bitfiles are explicitly selected or supplied through `ECHEMTIPS_BITFILE`;
   removed private filename discovery and filename-based settings migration.
   Preserved saved paths; new configurations default to Auto transport.

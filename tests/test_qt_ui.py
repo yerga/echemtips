@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import math
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -11,13 +13,54 @@ from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
-from echemtips.models import AppSettings
+from echemtips.models import AppSettings, SettingsStore
 from echemtips.models import Sample
 from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_map_preferences_are_shared_saved_and_do_not_reset_connection(self) -> None:
+        window = EChemTipsApp()
+        try:
+            with TemporaryDirectory() as folder:
+                window.store = SettingsStore(Path(folder) / "settings.json")
+                settings_page = window.pages["Settings"]
+                settings_page.map_view.setCurrentText("Circular footprints")
+                settings_page.map_footprint.variable.set("2.5")
+                backend = window.backend
+                backend.connect()
+                experiment = window.scan_experiment
+                scan = window.pages["Scan hopping + CV"]
+                scan.z_map.set_data({(0, 0): 12}, 1, 1, x_values=[20], y_values=[30])
+                window.apply_settings(settings_page.values())
+                self.assertIs(window.backend, backend)
+                self.assertTrue(backend.connected)
+                self.assertIs(window.scan_experiment, experiment)
+                saved = window.store.load()
+                self.assertEqual(saved.map_view_mode, "circular")
+                self.assertEqual(saved.map_footprint_diameter_um, 2.5)
+                with patch.dict(os.environ, {"ECHEMTIPS_SETTINGS_PATH": str(window.store.path)}):
+                    reopened = EChemTipsApp()
+                    try:
+                        self.assertEqual(reopened.pages["Settings"].map_view.get(), "Circular footprints")
+                        self.assertEqual(reopened.pages["Scan hopping + I-t"].z_map.view_mode, "circular")
+                    finally:
+                        reopened.close()
+                self.assertEqual(scan.z_map.values, {(0, 0): 12})
+                for key in ("Scan hopping + CV", "Scan hopping + I-t"):
+                    page = window.pages[key]
+                    self.assertFalse(hasattr(page, "footprint"))
+                    self.assertFalse(hasattr(page, "map_view"))
+                    self.assertEqual(page.parameters().footprint_diameter_um, 2.5)
+                    self.assertEqual(page.z_map.view_mode, "circular")
+                    self.assertEqual(page.current_map.footprint_diameter_um, 2.5)
+                settings_page.map_view.setCurrentText("Square cells")
+                window.apply_settings(settings_page.values())
+                self.assertEqual(scan.z_map.view_mode, "square")
+        finally:
+            window.close()
+
     def test_wrapped_contact_text_fits_on_all_approach_pages(self) -> None:
         window = EChemTipsApp()
         try:
@@ -218,11 +261,7 @@ class QtLayoutTests(unittest.TestCase):
                 window.show_page(page_name)
                 scan_page.visual_tabs.setCurrentIndex(map_index)
                 self.qt_app.processEvents()
-                self.assertIs(
-                    scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner),
-                    scan_page.map_view_toolbar,
-                )
-                self.assertTrue(scan_page.map_view_toolbar.isVisible())
+                self.assertIsNone(scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner))
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),

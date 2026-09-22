@@ -83,6 +83,8 @@ class AppSettings:
     save_directory: str = "data"
     auto_save: bool = True
     display_max_points: int = 12_000
+    map_view_mode: str = "square"
+    map_footprint_diameter_um: float = 1.0
 
     @property
     def effective_period_s(self) -> float:
@@ -124,6 +126,10 @@ class AppSettings:
             errors.append("Display buffer must contain between 500 and 100,000 points.")
         if self.mode == "NI FPGA" and (not isinstance(self.resource, str) or not self.resource.strip()):
             errors.append("NI FPGA resource must not be empty.")
+        if not isinstance(self.map_view_mode, str) or self.map_view_mode not in {"square", "circular"}:
+            errors.append("Scan map shape must be square or circular.")
+        if not _finite_number(self.map_footprint_diameter_um) or self.map_footprint_diameter_um <= 0:
+            errors.append("Meniscus footprint diameter must be finite and positive.")
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
             errors.append("NI FPGA bitfile must not be empty.")
         return errors

@@ -162,7 +162,9 @@ retracts by a positive distance away from the measured contact Z.
 - The duration estimate includes deterministic CV, settling, lateral, repeated
   approach, and retract time. It excludes the initial move and first approach.
 - Square cells show the sampled grid; circular footprints show the configured
-  meniscus diameter in physical coordinates.
+  meniscus diameter in physical coordinates. Choose the shared shape and
+  diameter under **Settings → Display**, not on individual scan pages. These
+  preferences change rendering only, not the scan path or feedback.
 
 The maps contain only confirmed contacts. A no-contact hop cannot start a CV or
 produce a valid contact/current map value. Start with 1×1, then 2×2, during

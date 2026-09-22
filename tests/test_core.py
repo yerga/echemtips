@@ -22,6 +22,12 @@ from echemtips.models import (
 
 
 class SettingsTests(unittest.TestCase):
+    def test_map_display_preferences_are_validated(self) -> None:
+        for diameter in (0, -1, float("nan"), float("inf"), "bad", True):
+            self.assertTrue(AppSettings(map_footprint_diameter_um=diameter).validate())
+        self.assertTrue(AppSettings(map_view_mode="unknown").validate())
+        self.assertEqual(AppSettings.from_dict({}).map_view_mode, "square")
+
     def test_default_settings_are_valid(self) -> None:
         settings = AppSettings()
         self.assertEqual(settings.validate(), [])

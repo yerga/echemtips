@@ -219,26 +219,6 @@ def _left_scroll(widget: QtWidgets.QWidget, width: int = 390) -> QtWidgets.QScro
     return area
 
 
-def _install_map_view_selector(tabs: QtWidgets.QTabWidget, map_index: int, selector: Choice) -> QtWidgets.QWidget:
-    """Place map-only controls in the tab bar so they do not shrink the plots."""
-    toolbar = QtWidgets.QWidget()
-    layout = _hbox(toolbar, (0, 0, 8, 0), 6)
-    layout.addWidget(label("Map view", "muted"))
-    selector.setMinimumWidth(155)
-    selector.setMaximumWidth(180)
-    layout.addWidget(selector)
-    toolbar.setFixedHeight(34)
-    tabs.setCornerWidget(toolbar, QtCore.Qt.Corner.TopRightCorner)
-
-    def update_visibility(index: int) -> None:
-        """Show map controls only while the map tab is selected."""
-        toolbar.setVisible(index == map_index)
-
-    tabs.currentChanged.connect(update_visibility)
-    update_visibility(tabs.currentIndex())
-    return toolbar
-
-
 class BasePage(QtWidgets.QWidget):
     """Common page shell with a title, wrapped description, and body area."""
     def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
@@ -1377,7 +1357,6 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
         self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
-        self.footprint = add_field(g, Field("Meniscus footprint diameter", "1", "µm"), 4, 0)
         hl.addWidget(area)
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
@@ -1420,9 +1399,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
-        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Current at selected potential", self.current_map, help_text='Uses Current 1 at the selected E1 potential, regardless of the current channel selected for contact detection.'), 1); map_index = self.visual_tabs.addTab(maps, "Maps")
-        self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); self.map_view_toolbar = _install_map_view_selector(self.visual_tabs, map_index, self.map_view)
-        self.map_view.currentTextChanged.connect(self._refresh_maps)
+        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Current at selected potential", self.current_map, help_text='Uses Current 1 at the selected E1 potential, regardless of the current channel selected for contact detection.'), 1); self.visual_tabs.addTab(maps, "Maps")
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingCVParameters:
@@ -1433,14 +1410,14 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA,
             greater_than=self.greater.get(), feedback_mode="absolute", settling_time_s=self.settling_time.float(),
             cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
-            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.footprint.float(),
+            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
         )
 
     def _refresh_maps(self, *_args: object) -> None:
         params = self.parameters()
         xs = params._axis_values(params.x_start_um, params.x_end_um, params.x_points)
         ys = params._axis_values(params.y_start_um, params.y_end_um, params.y_points)
-        mode = "circular" if self.map_view.get() == "Circular footprints" else "square"
+        mode = self.app.settings.map_view_mode
         self.z_map.set_data(self.experiment.contact_z, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
         self.current_map.set_data(self.experiment.current_at_potential, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
 
@@ -1515,7 +1492,6 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
         self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
-        self.footprint = add_field(g, Field("Meniscus footprint diameter", "1", "µm"), 4, 0)
         hl.addWidget(area)
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
@@ -1555,9 +1531,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
-        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Mean pulse current", self.current_map, help_text='Uses the mean of Current 1 during the pulse hold, not the instantaneous current or the average over the whole hop.'), 1); map_index = tabs.addTab(maps, "Maps")
-        self.map_view = Choice(("Square cells", "Circular footprints"), "Square cells"); self.map_view_toolbar = _install_map_view_selector(tabs, map_index, self.map_view)
-        self.map_view.currentTextChanged.connect(self._refresh_maps)
+        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Mean pulse current", self.current_map, help_text='Uses the mean of Current 1 during the pulse hold, not the instantaneous current or the average over the whole hop.'), 1); tabs.addTab(maps, "Maps")
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingITParameters:
@@ -1567,14 +1541,14 @@ class ScanHoppingITPage(ManagedExperimentPage):
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
             feedback_mode="absolute", settling_time_s=self.settling_time.float(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
-            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.footprint.float(),
+            step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
         )
 
     def _refresh_maps(self, *_args: object) -> None:
         params = self.parameters()
         xs = ScanHoppingCVParameters._axis_values(params.x_start_um, params.x_end_um, params.x_points)
         ys = ScanHoppingCVParameters._axis_values(params.y_start_um, params.y_end_um, params.y_points)
-        mode = "circular" if self.map_view.get() == "Circular footprints" else "square"
+        mode = self.app.settings.map_view_mode
         self.z_map.set_data(self.experiment.contact_z, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
         self.current_map.set_data(self.experiment.current_at_pulse, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
 
@@ -1710,6 +1684,12 @@ class SettingsPage(BasePage):
         sv.addWidget(data_row); sv.addWidget(self.auto_save); rl.addWidget(saving)
         display = Card("Display", help_text="Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
         self.display_max_points = Field("Display buffer", str(app.settings.display_max_points), "points/plot"); dv.addWidget(self.display_max_points); rl.addWidget(display); rl.addStretch(1)
+        dv.addWidget(label("Scan map shape", "muted"))
+        self.map_view = Choice(("Square cells", "Circular footprints"), "Circular footprints" if app.settings.map_view_mode == "circular" else "Square cells")
+        dv.addWidget(self.map_view)
+        self.map_footprint = Field("Meniscus footprint diameter", str(app.settings.map_footprint_diameter_um), "µm")
+        self.map_footprint.setToolTip("Display only: circle diameter, also used as the cell width for single-row/column maps. Does not change hop spacing or control the meniscus.")
+        dv.addWidget(self.map_footprint)
         actions = QtWidgets.QWidget(); al = _hbox(actions); self.save_defaults_button = button("Save as defaults and apply", self.save, "primary"); al.addWidget(self.save_defaults_button)
         self.settings_path_label = label(f"Loaded automatically at startup from {app.store.path}", "muted", word_wrap=True); al.addWidget(self.settings_path_label, 1)
         full = QtWidgets.QWidget(); full_layout = _vbox(full); full_layout.addWidget(content); full_layout.addWidget(actions); self.viewport = scroll_area(full); body_layout = _vbox(self.body); body_layout.addWidget(self.viewport)
@@ -1762,10 +1742,12 @@ class SettingsPage(BasePage):
             command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
             hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=str(data_folder), auto_save=self.auto_save.get(),
             display_max_points=self.display_max_points.integer(),
+            map_view_mode="circular" if self.map_view.get() == "Circular footprints" else "square",
+            map_footprint_diameter_um=self.map_footprint.float(),
         )
 
     def save(self) -> None:
-        """Validate, persist, apply, and require reconnect for new settings."""
+        """Persist settings; instrument changes require reconnect, display changes do not."""
         try:
             settings = self.values(); errors = settings.validate()
             if errors: raise ValueError("\n".join(errors))
@@ -1782,6 +1764,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.store = SettingsStore(); self.settings = self.store.load(); self.driver_module = os.environ.get("ECHEMTIPS_DRIVER_MODULE") or os.environ.get("WECSPM_DRIVER_MODULE")
         self.backend: InstrumentBackend = create_backend(self.settings, self.driver_module); self._acquisition: AcquisitionWorker | None = None; self.recorder = DataRecorder(); self._sample: Sample | None = None
         self._make_experiments(); self._build_shell(); self._build_pages(); self.show_page("Watch current"); self._set_connection_ui(False)
+        self._apply_display_settings()
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
 
     def _make_experiments(self) -> None:
@@ -1931,8 +1914,17 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if isinstance(page, DiagnosticWorkflowPage): page.sync_actions(connected, diagnostic_busy and not page.is_busy)
 
     def apply_settings(self, settings: AppSettings) -> None:
-        """Persist settings, rebuild backend/methods, and disconnect old state."""
+        """Persist preferences, rebuilding the backend only for non-display changes."""
         if self.any_experiment_active: raise ValueError("Stop the experiment before changing instrument settings.")
+        display_keys = {"display_max_points", "map_view_mode", "map_footprint_diameter_um"}
+        changed = {key for key, value in asdict(settings).items() if value != getattr(self.settings, key)}
+        if Path(settings.save_directory).expanduser().resolve() == Path(self.settings.save_directory).expanduser().resolve():
+            changed.discard("save_directory")
+        if changed <= display_keys:
+            self.store.save(settings)
+            self.settings = settings
+            self._apply_display_settings()
+            return
         was_connected = self.backend.connected
         if was_connected: self.flush_acquisition()
         if self.recorder.active: self.finish_recording(self.active_parameters)
@@ -1941,9 +1933,21 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         for page_name in ("Preflight", "Characterize pipette"):
             page = self.pages.get(page_name)
             if isinstance(page, DiagnosticWorkflowPage): page._cv_runner = CVExperiment(self.backend, self.settings)
-        for plot in self.findChildren(Plot): plot.max_points = max(250, settings.display_max_points); plot.buffer.max_points = plot.max_points; plot.buffer.compact(); plot.redraw()
+        self._apply_display_settings()
         self.mode_badge.setText(settings.mode.upper()); self._set_connection_ui(False)
         if was_connected: self.toast("Settings applied; reconnect to use the new backend", "warning")
+
+    def _apply_display_settings(self) -> None:
+        for plot in self.findChildren(Plot):
+            plot.max_points = max(250, self.settings.display_max_points)
+            plot.buffer.max_points = plot.max_points
+            plot.buffer.compact()
+            plot.redraw()
+        for heatmap in self.findChildren(Heatmap):
+            heatmap.set_data(heatmap.values, heatmap.rows, heatmap.columns,
+                             x_values=heatmap.x_values, y_values=heatmap.y_values,
+                             view_mode=self.settings.map_view_mode,
+                             footprint_diameter_um=self.settings.map_footprint_diameter_um)
 
     def finish_recording(self, parameters: object = None, status: str = "complete") -> Path | None:
         """Finalize the shared recorder and synchronize action availability."""
