@@ -22,6 +22,23 @@ from echemtips.models import (
 
 
 class SettingsTests(unittest.TestCase):
+    def test_display_settings_reject_invalid_ranges_and_units(self) -> None:
+        for kwargs in (
+            {"map_z_min_um": 10, "map_z_max_um": 10},
+            {"map_current_min_na": 2, "map_current_max_na": 1},
+            {"monitor_window_s": 0}, {"experiment_window_s": float("nan")},
+            {"font_size_pt": 50}, {"trace_width_px": 0},
+            {"current_display_unit": "uA"}, {"map_z_auto_limits": "yes"},
+        ):
+            self.assertTrue(AppSettings(**kwargs).validate(), kwargs)
+        with TemporaryDirectory() as folder:
+            store = SettingsStore(Path(folder) / "settings.json")
+            expected = AppSettings(map_current_auto_limits=False, map_current_min_na=-0.1,
+                map_current_max_na=0.2, monitor_window_s=15, experiment_window_s=90,
+                current_display_unit="pA", font_size_pt=12, trace_width_px=3)
+            store.save(expected)
+            self.assertEqual(store.load(), expected)
+
     def test_map_display_preferences_are_validated(self) -> None:
         for diameter in (0, -1, float("nan"), float("inf"), "bad", True):
             self.assertTrue(AppSettings(map_footprint_diameter_um=diameter).validate())

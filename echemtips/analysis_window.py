@@ -11,7 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, RAW_SIGNALS, extract_cv_cycles
 from .models import SettingsStore
-from .qt_common import COLORS, Card, XYPlot, button, label
+from .qt_common import COLORS, Card, XYPlot, application_stylesheet, button, label
 
 
 class AnalysisWindow(QtWidgets.QMainWindow):
@@ -26,6 +26,13 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.data_folder = self._default_data_folder()
         self.file_paths: list[Path] = []
         self._build_ui()
+        preferences = SettingsStore().load()
+        self.setStyleSheet(application_stylesheet(preferences.font_size_pt))
+        for plot in self.findChildren(XYPlot):
+            plot.current_display_unit = preferences.current_display_unit
+            plot.font_size_pt = preferences.font_size_pt
+            plot.trace_width_px = preferences.trace_width_px
+            plot.redraw()
         self.refresh_files()
         if initial_path:
             self.load_recording(Path(initial_path))

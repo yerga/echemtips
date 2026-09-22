@@ -60,6 +60,7 @@ from .qt_common import (
     application_stylesheet,
     button,
     configure_pyqtgraph,
+    current_display_scale,
     label,
     scroll_area,
 )
@@ -565,12 +566,17 @@ class InstrumentReadoutBar(QtWidgets.QFrame):
         """Update every persistent readback cell from the newest sample."""
         for attribute, _caption, unit in self._CHANNELS:
             value = getattr(sample, attribute)
+            if unit == "nA":
+                scale, unit = current_display_scale(getattr(self, "current_display_unit", "nA"), [value])
+                value *= scale
             sign = "+" if attribute in {"voltage1_v", "voltage2_v", "current1_na", "current2_na"} else ""
             self.value_labels[attribute].setText(f"{value:{sign}.3f} {unit}")
 
     def clear(self) -> None:
         """Replace every persistent readback value with an unavailable marker."""
         for attribute, _caption, unit in self._CHANNELS:
+            if unit == "nA" and getattr(self, "current_display_unit", "nA") == "pA":
+                unit = "pA"
             self.value_labels[attribute].setText(f"— {unit}")
 
 
@@ -712,13 +718,13 @@ class WatchPage(BasePage):
         if enabled and not self.live_enabled and clear_on_start:
             self.clear_plots()
             self._live_time_origin_s: float | None = None
-            self.current_label.setText("i1  — nA")
-            self.current2_label.setText("i2  — nA")
+            self.current_label.setText(f"i1  — {'pA' if self.app.settings.current_display_unit == 'pA' else 'nA'}")
+            self.current2_label.setText(f"i2  — {'pA' if self.app.settings.current_display_unit == 'pA' else 'nA'}")
             self.position_label.setText("Z  — µm")
         self.live_enabled = enabled
         self.live_button.setText("Stop live view" if enabled else "Start live view")
         self.live_status_label.setText(
-            "Live view on · 30 s"
+            f"Live view on · {self.app.settings.monitor_window_s:g} s"
             if enabled
             else "Live view off"
         )
@@ -732,8 +738,10 @@ class WatchPage(BasePage):
         if not samples or not self.live_enabled:
             return
         latest = samples[-1]
-        self.current_label.setText(f"i1  {latest.current1_na:+.3f} nA")
-        self.current2_label.setText(f"i2  {latest.current2_na:+.3f} nA")
+        scale, unit = current_display_scale(self.app.settings.current_display_unit, [latest.current1_na])
+        self.current_label.setText(f"i1  {latest.current1_na * scale:+.3f} {unit}")
+        scale, unit = current_display_scale(self.app.settings.current_display_unit, [latest.current2_na])
+        self.current2_label.setText(f"i2  {latest.current2_na * scale:+.3f} {unit}")
         self.position_label.setText(f"Z  {latest.z_um:.3f} µm")
         for sample in samples:
             origin = getattr(self, "_live_time_origin_s", None)
@@ -851,7 +859,7 @@ class WatchPositionPage(BasePage):
             self._live_time_origin_s: float | None = None
         self.live_enabled = enabled
         self.live_button.setText("Stop live view" if enabled else "Start live view")
-        self.live_status_label.setText("Live view on · 30 s" if enabled else "Live view off")
+        self.live_status_label.setText(f"Live view on · {self.app.settings.monitor_window_s:g} s" if enabled else "Live view off")
 
     def on_samples(self, samples: list[Sample]) -> None:
         """Append new X/Y/Z samples only while live position view is active."""
@@ -1650,7 +1658,7 @@ class SettingsPage(BasePage):
     """Validated persisted connection, calibration, acquisition, and UI options."""
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Settings", "A capability-aware, validated configuration shared by every experiment.")
-        content = QtWidgets.QWidget(); columns = QtWidgets.QHBoxLayout(content); columns.setContentsMargins(2, 2, 12, 18); columns.setSpacing(14)
+        content = QtWidgets.QWidget(); columns = QtWidgets.QHBoxLayout(content); columns.setContentsMargins(2, 2, 12, 18); columns.setSpacing(14); self.columns = columns
         left = QtWidgets.QWidget(); right = QtWidgets.QWidget(); ll = _vbox(left); rl = _vbox(right); columns.addWidget(left, 1); columns.addWidget(right, 1)
         connection = Card("Connection"); cl = _vbox(connection.body)
         cl.addWidget(label("Backend", "muted")); self.mode = Choice(("Simulation", "NI FPGA"), app.settings.mode); cl.addWidget(self.mode)
@@ -1690,6 +1698,34 @@ class SettingsPage(BasePage):
         self.map_footprint = Field("Meniscus footprint diameter", str(app.settings.map_footprint_diameter_um), "µm")
         self.map_footprint.setToolTip("Display only: circle diameter, also used as the cell width for single-row/column maps. Does not change hop spacing or control the meniscus.")
         dv.addWidget(self.map_footprint)
+        dv.addWidget(label("Map color scales", "cardTitle"))
+        self.map_z_auto = Check("Automatic contact Z limits", app.settings.map_z_auto_limits)
+        self.map_current_auto = Check("Automatic current limits", app.settings.map_current_auto_limits)
+        for prefix, title, unit, auto, low, high in (
+            ("map_z", "Contact Z", "µm", self.map_z_auto, app.settings.map_z_min_um, app.settings.map_z_max_um),
+            ("map_current", "Current", "nA", self.map_current_auto, app.settings.map_current_min_na, app.settings.map_current_max_na),
+        ):
+            dv.addWidget(auto)
+            row = QtWidgets.QWidget(); grid = _grid(row)
+            minimum = add_field(grid, Field(f"{title} minimum", str(low), unit), 0, 0)
+            maximum = add_field(grid, Field(f"{title} maximum", str(high), unit), 0, 1)
+            setattr(self, prefix + "_min", minimum); setattr(self, prefix + "_max", maximum)
+            minimum.setEnabled(not auto.get()); maximum.setEnabled(not auto.get())
+            auto.toggled.connect(lambda checked, a=minimum, b=maximum: (a.setEnabled(not checked), b.setEnabled(not checked)))
+            dv.addWidget(row)
+        self.map_current_min.setToolTip("Enter limits in nA, regardless of display units. 1 nA = 1000 pA.")
+        self.map_current_max.setToolTip(self.map_current_min.toolTip())
+        dv.addWidget(label("Traces and typography", "cardTitle"))
+        self.monitor_window = Field("Monitor rolling window", str(app.settings.monitor_window_s), "s")
+        self.experiment_window = Field("Experiment rolling window", str(app.settings.experiment_window_s), "s")
+        dv.addWidget(self.monitor_window); dv.addWidget(self.experiment_window)
+        dv.addWidget(label("Current display units", "muted"))
+        self.current_units = Choice(("nA", "pA", "Auto"), app.settings.current_display_unit)
+        self.current_units.setToolTip("Auto uses pA when the visible current magnitude is below 1 nA. Recording and parameter units are unchanged.")
+        dv.addWidget(self.current_units)
+        self.font_size = Field("Font size", str(app.settings.font_size_pt), "pt")
+        self.trace_width = Field("Trace thickness", str(app.settings.trace_width_px), "px")
+        dv.addWidget(self.font_size); dv.addWidget(self.trace_width)
         actions = QtWidgets.QWidget(); al = _hbox(actions); self.save_defaults_button = button("Save as defaults and apply", self.save, "primary"); al.addWidget(self.save_defaults_button)
         self.settings_path_label = label(f"Loaded automatically at startup from {app.store.path}", "muted", word_wrap=True); al.addWidget(self.settings_path_label, 1)
         full = QtWidgets.QWidget(); full_layout = _vbox(full); full_layout.addWidget(content); full_layout.addWidget(actions); self.viewport = scroll_area(full); body_layout = _vbox(self.body); body_layout.addWidget(self.viewport)
@@ -1744,6 +1780,10 @@ class SettingsPage(BasePage):
             display_max_points=self.display_max_points.integer(),
             map_view_mode="circular" if self.map_view.get() == "Circular footprints" else "square",
             map_footprint_diameter_um=self.map_footprint.float(),
+            map_z_auto_limits=self.map_z_auto.get(), map_z_min_um=self.map_z_min.float(), map_z_max_um=self.map_z_max.float(),
+            map_current_auto_limits=self.map_current_auto.get(), map_current_min_na=self.map_current_min.float(), map_current_max_na=self.map_current_max.float(),
+            monitor_window_s=self.monitor_window.float(), experiment_window_s=self.experiment_window.float(),
+            current_display_unit=self.current_units.get(), font_size_pt=self.font_size.float(), trace_width_px=self.trace_width.float(),
         )
 
     def save(self) -> None:
@@ -1784,14 +1824,26 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if index <= 9:
                 shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
         side.addStretch(1); layout.addWidget(sidebar)
-        main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0); topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar"); topbar.setFixedHeight(70); tl = _hbox(topbar, (18, 10, 18, 10), 8)
-        self.connection_dot = label("●"); self.connection_label = label(f"Disconnected · {self.backend.label}", "muted"); self.execution_label = label("Offline", "muted"); tl.addWidget(self.connection_dot); tl.addWidget(self.connection_label); tl.addWidget(self.execution_label); tl.addStretch(1)
-        self.mode_badge = label(self.settings.mode.upper(), "muted"); self.mode_badge.setStyleSheet(f"background:{COLORS['panel_2']}; padding:7px 10px; border-radius:6px; font-weight:650;"); tl.addWidget(self.mode_badge)
-        self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host); self.next_waypoint_button = button("End waypoint", self.end_current_waypoint); self.next_waypoint_button.setToolTip("Low-level FPGA control only; this does not confirm contact. Use the approach page's accept-contact button to continue an approach."); self.connect_button = button("Connect", self.toggle_connection, "primary")
-        for widget in (self.pause_button, self.resume_button, self.next_waypoint_button, self.connect_button): tl.addWidget(widget)
+        main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0)
+        topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar")
+        tl = QtWidgets.QGridLayout(topbar); tl.setContentsMargins(18, 8, 18, 8); tl.setSpacing(6)
+        self.connection_dot = label("●")
+        self.connection_label = label(f"Disconnected · {self.backend.label}", "muted", word_wrap=True)
+        self.execution_label = label("Offline", "muted", word_wrap=True)
+        self.mode_badge = label(self.settings.mode.upper(), "muted")
+        status_row = QtWidgets.QWidget(); status_layout = _hbox(status_row)
+        for widget in (self.connection_dot, self.connection_label, self.execution_label, self.mode_badge):
+            status_layout.addWidget(widget)
+        status_layout.addStretch(1); tl.addWidget(status_row, 0, 0, 1, 4)
+        self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host)
+        self.next_waypoint_button = button("End waypoint", self.end_current_waypoint)
+        self.next_waypoint_button.setToolTip("Low-level FPGA control only; this does not confirm contact. Use the approach page's accept-contact button to continue an approach.")
+        self.connect_button = button("Connect", self.toggle_connection, "primary")
+        for column, widget in enumerate((self.pause_button, self.resume_button, self.next_waypoint_button, self.connect_button)):
+            tl.addWidget(widget, 1, column)
         emergency = button("EMERGENCY STOP", self.emergency_stop, "danger")
-        emergency.setMinimumWidth(emergency.sizeHint().width())
-        tl.addWidget(emergency); ml.addWidget(topbar)
+        tl.addWidget(emergency, 0, 4, 2, 1)
+        ml.addWidget(topbar)
         self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (22, 18, 22, 10)); container_layout.addWidget(self.stack); ml.addWidget(container, 1)
         self.instrument_readout = InstrumentReadoutBar(); readout_container = QtWidgets.QWidget(); readout_layout = _vbox(readout_container, (22, 0, 22, 10)); readout_layout.addWidget(self.instrument_readout); ml.addWidget(readout_container)
         layout.addWidget(main, 1)
@@ -1916,7 +1968,10 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     def apply_settings(self, settings: AppSettings) -> None:
         """Persist preferences, rebuilding the backend only for non-display changes."""
         if self.any_experiment_active: raise ValueError("Stop the experiment before changing instrument settings.")
-        display_keys = {"display_max_points", "map_view_mode", "map_footprint_diameter_um"}
+        display_keys = {"display_max_points", "map_view_mode", "map_footprint_diameter_um",
+                        "map_z_auto_limits", "map_z_min_um", "map_z_max_um", "map_current_auto_limits",
+                        "map_current_min_na", "map_current_max_na", "monitor_window_s", "experiment_window_s",
+                        "current_display_unit", "font_size_pt", "trace_width_px"}
         changed = {key for key, value in asdict(settings).items() if value != getattr(self.settings, key)}
         if Path(settings.save_directory).expanduser().resolve() == Path(self.settings.save_directory).expanduser().resolve():
             changed.discard("save_directory")
@@ -1938,16 +1993,68 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if was_connected: self.toast("Settings applied; reconnect to use the new backend", "warning")
 
     def _apply_display_settings(self) -> None:
+        settings = self.settings
+        self.setStyleSheet(application_stylesheet(settings.font_size_pt))
+        font = QtGui.QFont(); font.setPointSizeF(settings.font_size_pt)
+        sidebar = self.findChild(QtWidgets.QFrame, "sidebar")
+        sidebar.setFixedWidth(max(225, max(nav.sizeHint().width() for nav in self.nav_buttons.values()) + 28))
+        self.pages["Settings"].columns.setDirection(QtWidgets.QBoxLayout.Direction.TopToBottom if settings.font_size_pt > 10 else QtWidgets.QBoxLayout.Direction.LeftToRight)
+        for area in self.findChildren(QtWidgets.QScrollArea):
+            area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded if settings.font_size_pt > 10 else QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        monitors = {plot for key in ("Watch current", "Watch position") for plot in self.pages[key].findChildren(Plot)}
         for plot in self.findChildren(Plot):
-            plot.max_points = max(250, self.settings.display_max_points)
+            plot.max_points = max(250, settings.display_max_points)
             plot.buffer.max_points = plot.max_points
-            plot.buffer.compact()
-            plot.redraw()
+            if isinstance(plot, TimedXYPlot):
+                plot.history_window_s = settings.experiment_window_s
+                # TimedXYPlot compacts its time and XY arrays together.
+            else:
+                plot.buffer.compact()
+                if plot.time_based:
+                    plot.rolling_window_s = settings.monitor_window_s if plot in monitors else settings.experiment_window_s
+            plot.set_display_style(settings.current_display_unit, settings.font_size_pt, settings.trace_width_px)
+        for diagram in self.findChildren(ProgramDiagram):
+            diagram.font_size_pt = settings.font_size_pt
+            diagram.setFixedHeight(round(180 * max(1, settings.font_size_pt / 10)))
+            pen = QtGui.QPen(diagram.curve.opts["pen"]); pen.setWidthF(settings.trace_width_px); diagram.curve.setPen(pen)
+            for axis in ("left", "bottom"):
+                diagram.graph.getAxis(axis).setTickFont(font)
+            diagram.graph.getAxis("left").setLabel(diagram.graph.getAxis("left").labelText, **{"font-size": f"{settings.font_size_pt:g}pt"})
+            for item in diagram.labels:
+                item.setFont(font)
+            diagram._fit_annotations()
         for heatmap in self.findChildren(Heatmap):
+            is_current = heatmap.base_unit == "nA"
+            heatmap.current_display_unit = settings.current_display_unit
+            heatmap.font_size_pt = settings.font_size_pt
+            auto = settings.map_current_auto_limits if is_current else settings.map_z_auto_limits
+            limits = (settings.map_current_min_na, settings.map_current_max_na) if is_current else (settings.map_z_min_um, settings.map_z_max_um)
+            heatmap.fixed_limits = None if auto else limits
+            for axis in ("left", "bottom"):
+                heatmap.plot_item.getAxis(axis).setTickFont(font)
+            heatmap.color_bar.axis.setTickFont(font)
+            heatmap.footer.setFixedHeight(max(32, round(settings.font_size_pt * 3.2)))
             heatmap.set_data(heatmap.values, heatmap.rows, heatmap.columns,
                              x_values=heatmap.x_values, y_values=heatmap.y_values,
-                             view_mode=self.settings.map_view_mode,
-                             footprint_diameter_um=self.settings.map_footprint_diameter_um)
+                             view_mode=settings.map_view_mode,
+                             footprint_diameter_um=settings.map_footprint_diameter_um)
+        for text in self.findChildren(QtWidgets.QLabel):
+            for prefix, window in (("Current history", settings.monitor_window_s), ("Position history", settings.monitor_window_s), ("Approach history", settings.experiment_window_s)):
+                if text.text().startswith(prefix + " ·"):
+                    text.setText(f"{prefix} · {window:g} s")
+            if text.text().startswith("Live view on ·"):
+                text.setText(f"Live view on · {settings.monitor_window_s:g} s")
+        self.instrument_readout.current_display_unit = settings.current_display_unit
+        watch = self.pages["Watch current"]
+        for name, readout, plot in (("i1", watch.current_label, watch.current1_plot), ("i2", watch.current2_label, watch.current2_plot)):
+            values = plot.series[0]
+            scale, unit = current_display_scale(settings.current_display_unit, values[-1:])
+            readout.setText(f"{name}  {values[-1] * scale:+.3f} {unit}" if values else f"{name}  — {unit}")
+        if self._sample is not None:
+            self.instrument_readout.set_sample(self._sample)
+        else:
+            self.instrument_readout.clear()
 
     def finish_recording(self, parameters: object = None, status: str = "complete") -> Path | None:
         """Finalize the shared recorder and synchronize action availability."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from html import escape
 from bisect import bisect_left
 from collections.abc import Iterable
@@ -36,10 +37,10 @@ COLORS = {
 }
 
 
-def application_stylesheet() -> str:
+def application_stylesheet(font_size_pt: float = 10.0) -> str:
     """Return a high-contrast light theme with predictable widget sizing."""
     c = COLORS
-    return f"""
+    stylesheet = f"""
     * {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: {c['text']}; }}
     QMainWindow, QWidget#window, QScrollArea#pageScroll, QStackedWidget {{ background: {c['window']}; }}
     QFrame#topbar {{ background: {c['panel']}; border: 0; border-bottom: 1px solid {c['border']}; }}
@@ -91,6 +92,15 @@ def application_stylesheet() -> str:
     QSplitter::handle {{ background: {c['border']}; width: 1px; height: 1px; }}
     QToolTip {{ color: {c['text']}; background: white; border: 1px solid {c['border']}; }}
     """
+    stylesheet = re.sub(r"font-size: (\d+)px", lambda match: f"font-size: {float(match[1]) * font_size_pt / 10:g}px", stylesheet)
+    return f"* {{ font-size: {font_size_pt:g}pt; }}\n" + stylesheet
+
+
+def current_display_scale(mode: str, values: Iterable[float]) -> tuple[float, str]:
+    """Choose display units while leaving source currents in nA."""
+    peak = max((abs(value) for value in values if math.isfinite(value)), default=0.0)
+    unit = "pA" if mode == "pA" or (mode == "Auto" and 0 < peak < 1) else "nA"
+    return (1000.0 if unit == "pA" else 1.0), unit
 
 
 def button(text: str, slot=None, role: str = "") -> QtWidgets.QPushButton:
@@ -112,6 +122,14 @@ class WrappedLabel(QtWidgets.QLabel):
         required = self.heightForWidth(self.width())
         if required > 0 and self.minimumHeight() != required:
             self.setMinimumHeight(required)
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        """Update wrapped height after a font or stylesheet change."""
+        super().changeEvent(event)
+        if event.type() in (QtCore.QEvent.Type.FontChange, QtCore.QEvent.Type.StyleChange):
+            required = self.heightForWidth(self.width())
+            if required > 0:
+                self.setMinimumHeight(required)
 
 
 def label(text: str = "", role: str = "", *, word_wrap: bool = False) -> QtWidgets.QLabel:
@@ -288,6 +306,10 @@ class Plot(QtWidgets.QWidget):
         super().__init__()
         self.max_points = max(250, max_points)
         self.rolling_window_s = rolling_window_s
+        self.time_based = "(s)" in x_label or rolling_window_s is not None
+        self.title, self.y_label, self.x_label = title, y_label, x_label
+        self.current_display_unit = "nA"
+        self.font_size_pt = 10.0
         self.buffer = DisplayBuffer(len(colors), self.max_points)
         self.series = self.buffer.series
         self.x_values = self.buffer.x
@@ -331,8 +353,26 @@ class Plot(QtWidgets.QWidget):
                 for values in self.series:
                     del values[:first_visible]
         x = np.asarray(self.x_values, dtype=float)
+        scale, unit = current_display_scale(self.current_display_unit, (value for series in self.series for value in series)) if "(nA)" in self.y_label else (1.0, "")
+        y_label = self.y_label.replace("(nA)", f"({unit})") if unit else self.y_label
+        if unit and unit != getattr(self, "_rendered_unit", unit):
+            self.graph.enableAutoRange(axis=pg.ViewBox.YAxis)
+        self._rendered_unit = unit
+        self.graph.setLabel("left", y_label, color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
         for curve, values in zip(self.curves, self.series):
-            curve.setData(x, np.asarray(values, dtype=float), connect="finite")
+            curve.setData(x, np.asarray(values, dtype=float) * scale, connect="finite")
+
+    def set_display_style(self, unit: str, font_size_pt: float, trace_width_px: float) -> None:
+        """Change render units, typography and pens without altering buffered data."""
+        self.current_display_unit, self.font_size_pt = unit, font_size_pt
+        self.graph.setTitle(self.title, color=COLORS["text"], size=f"{font_size_pt:g}pt")
+        self.graph.setLabel("bottom", self.x_label, color=COLORS["muted"], **{"font-size": f"{font_size_pt:g}pt"})
+        font = QtGui.QFont(); font.setPointSizeF(font_size_pt)
+        for name in ("left", "bottom"):
+            self.graph.getAxis(name).setTickFont(font)
+        for curve in self.curves:
+            pen = pg.mkPen(curve.opts["pen"]); pen.setWidthF(trace_width_px); curve.setPen(pen)
+        self.redraw()
 
     def configure(self, *, height: int | None = None, **_kwargs: object) -> None:
         """Apply compatibility layout options used by experiment pages."""
@@ -413,6 +453,7 @@ class ProgramDiagram(QtWidgets.QWidget):
 
     def __init__(self, y_label: str) -> None:
         super().__init__()
+        self.font_size_pt = 10.0
         self.graph = pg.PlotWidget(background=COLORS["panel"])
         self.graph.setLabel("left", y_label, color=COLORS["muted"])
         self.graph.getAxis("left").enableAutoSIPrefix(False)
@@ -468,6 +509,7 @@ class ProgramDiagram(QtWidgets.QWidget):
         self.graph.getAxis("bottom").setTicks([[(position, name) for position, name in zip(label_x, names)]])
         for position, value in zip(label_x, values):
             item = pg.TextItem(f"{value:g}", color=COLORS["text"], anchor=(0.5, 1.35))
+            font = QtGui.QFont(); font.setPointSizeF(self.font_size_pt); item.setFont(font)
             item.setPos(position, value)
             self.graph.addItem(item)
             self.labels.append(item)
@@ -480,6 +522,11 @@ class Heatmap(QtWidgets.QWidget):
     def __init__(self, unit: str, quantity: str = "Value") -> None:
         super().__init__()
         self.unit = unit
+        self.base_unit = unit
+        self.font_size_pt = 10.0
+        self.current_display_unit = "nA"
+        self.display_scale = 1.0
+        self.fixed_limits: tuple[float, float] | None = None
         self.quantity = quantity
         self.rows = 1
         self.columns = 1
@@ -563,7 +610,7 @@ class Heatmap(QtWidgets.QWidget):
         if value is None or not math.isfinite(value):
             self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · no data")
         else:
-            self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · {value:.5g} {self.unit}")
+            self.hover.setText(f"X {self.x_values[column]:.5g} µm · Y {self.y_values[row]:.5g} µm · {value * self.display_scale:.5g} {self.unit}")
         self.footer_stack.setCurrentWidget(self.hover)
 
     def set_data(
@@ -579,6 +626,9 @@ class Heatmap(QtWidgets.QWidget):
     ) -> None:
         """Render finite grid values in physical coordinates and update range text."""
         self.values = dict(values)
+        scale_values = self.fixed_limits if self.fixed_limits is not None else self.values.values()
+        self.display_scale, self.unit = current_display_scale(self.current_display_unit, scale_values) if self.base_unit == "nA" else (1.0, self.base_unit)
+        self.color_bar.axis.setLabel(f"{self.quantity} ({self.unit})", **{"font-size": f"{self.font_size_pt:g}pt"})
         self.rows = max(1, rows)
         self.columns = max(1, columns)
         xs = list(x_values) if x_values is not None else [float(index) for index in range(self.columns)]
@@ -597,7 +647,7 @@ class Heatmap(QtWidgets.QWidget):
         data = np.full((self.rows, self.columns), np.nan, dtype=float)
         for (row, column), value in values.items():
             if 0 <= row < self.rows and 0 <= column < self.columns and math.isfinite(value):
-                data[row, column] = value
+                data[row, column] = value * self.display_scale
         finite = data[np.isfinite(data)]
         display = data if finite.size else np.zeros_like(data)
         if finite.size:
@@ -612,6 +662,8 @@ class Heatmap(QtWidgets.QWidget):
             levels = (0.0, 1.0)
             self.summary.setText("Range — · waiting for data")
             self.hover.setText("Hover a footprint for its position and value")
+        if self.fixed_limits is not None:
+            levels = tuple(value * self.display_scale for value in self.fixed_limits)
         plot_xs, plot_ys, image = list(xs), list(ys), display
         if plot_xs[-1] < plot_xs[0]:
             plot_xs.reverse(); image = np.fliplr(image)
@@ -628,7 +680,7 @@ class Heatmap(QtWidgets.QWidget):
         spots = []
         for (row, column), value in self.values.items():
             if 0 <= row < self.rows and 0 <= column < self.columns and math.isfinite(value):
-                normalized = min(1.0, max(0.0, (value - levels[0]) / span)) if span else 0.5
+                normalized = min(1.0, max(0.0, (value * self.display_scale - levels[0]) / span)) if span else 0.5
                 spots.append({"pos": (xs[column], ys[row]), "size": self.footprint_diameter_um,
                               "brush": pg.mkBrush(color_map.map(normalized, mode="qcolor")),
                               "pen": pg.mkPen(COLORS["border"], width=0.7)})
@@ -651,6 +703,9 @@ class XYPlot(QtWidgets.QWidget):
         super().__init__()
         self.x_label = x_label
         self.y_label = y_label
+        self.current_display_unit = "nA"
+        self.font_size_pt = 10.0
+        self.trace_width_px = 2.0
         self.series: list[tuple[str, list[float], list[float], str]] = []
         self.message = "Open a recording to begin"
         self.graph = pg.PlotWidget(background=COLORS["panel"])
@@ -681,8 +736,12 @@ class XYPlot(QtWidgets.QWidget):
         """Rebuild legend and curves from the most recently supplied series."""
         self.graph.clear()
         self.graph.addLegend(offset=(8, 8), brush=pg.mkBrush(255, 255, 255, 220))
-        self.graph.setLabel("bottom", self.x_label, color=COLORS["muted"])
-        self.graph.setLabel("left", self.y_label, color=COLORS["muted"])
+        scale, unit = current_display_scale(self.current_display_unit, (value for _, _, ys, _ in self.series for value in ys)) if "(nA)" in self.y_label else (1.0, "")
+        self.graph.setLabel("bottom", self.x_label, color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
+        self.graph.setLabel("left", self.y_label.replace("(nA)", f"({unit})") if unit else self.y_label, color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
+        font = QtGui.QFont(); font.setPointSizeF(self.font_size_pt)
+        for axis in ("left", "bottom"):
+            self.graph.getAxis(axis).setTickFont(font)
         if not self.series:
             self.empty = pg.TextItem(self.message, color=COLORS["muted"], anchor=(0.5, 0.5))
             self.empty.setPos(0, 0)
@@ -695,7 +754,7 @@ class XYPlot(QtWidgets.QWidget):
             stride = max(1, math.ceil(count / 12_000))
             x = np.asarray(xs[:count:stride], dtype=float)
             y = np.asarray(ys[:count:stride], dtype=float)
-            self.graph.plot(x, y, pen=pg.mkPen(color, width=2), name=name, connect="finite")
+            self.graph.plot(x, y * scale, pen=pg.mkPen(color, width=self.trace_width_px), name=name, connect="finite")
         self.graph.enableAutoRange()
 
 

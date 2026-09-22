@@ -85,6 +85,17 @@ class AppSettings:
     display_max_points: int = 12_000
     map_view_mode: str = "square"
     map_footprint_diameter_um: float = 1.0
+    map_z_auto_limits: bool = True
+    map_z_min_um: float = 0.0
+    map_z_max_um: float = 100.0
+    map_current_auto_limits: bool = True
+    map_current_min_na: float = -1.0
+    map_current_max_na: float = 1.0
+    monitor_window_s: float = 30.0
+    experiment_window_s: float = 60.0
+    current_display_unit: str = "nA"
+    font_size_pt: float = 10.0
+    trace_width_px: float = 2.0
 
     @property
     def effective_period_s(self) -> float:
@@ -130,6 +141,22 @@ class AppSettings:
             errors.append("Scan map shape must be square or circular.")
         if not _finite_number(self.map_footprint_diameter_um) or self.map_footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
+        for name, auto, low, high in (
+            ("Contact Z", self.map_z_auto_limits, self.map_z_min_um, self.map_z_max_um),
+            ("Current", self.map_current_auto_limits, self.map_current_min_na, self.map_current_max_na),
+        ):
+            if not isinstance(auto, bool) or not _finite_number(low) or not _finite_number(high) or low >= high:
+                errors.append(f"{name} map limits must be finite with minimum below maximum.")
+        for name, value, low, high in (
+            ("Monitor window", self.monitor_window_s, 1, 3600),
+            ("Experiment window", self.experiment_window_s, 1, 3600),
+            ("Font size", self.font_size_pt, 8, 14),
+            ("Trace thickness", self.trace_width_px, 0.5, 6),
+        ):
+            if not _finite_number(value) or not low <= value <= high:
+                errors.append(f"{name} must be between {low} and {high}.")
+        if not isinstance(self.current_display_unit, str) or self.current_display_unit not in {"nA", "pA", "Auto"}:
+            errors.append("Current display units must be nA, pA or Auto.")
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
             errors.append("NI FPGA bitfile must not be empty.")
         return errors

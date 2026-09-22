@@ -15,11 +15,107 @@ from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
 from echemtips.models import AppSettings, SettingsStore
 from echemtips.models import Sample
-from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot
+from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot, XYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_analysis_current_style_preserves_source_data(self) -> None:
+        plot = XYPlot("Potential (V)", "Current (nA)")
+        try:
+            xs, ys = [-0.2, 0.3], [0.25, -0.5]
+            plot.current_display_unit = "pA"; plot.trace_width_px = 4
+            plot.set_data([("CV", xs, ys, "red")])
+            curve = plot.graph.listDataItems()[0]
+            self.assertEqual(list(curve.getData()[1]), [250, -500])
+            self.assertEqual(ys, [0.25, -0.5])
+            self.assertEqual(curve.opts["pen"].widthF(), 4)
+        finally:
+            plot.close()
+
+    def setUp(self) -> None:
+        self.settings_directory = TemporaryDirectory()
+        self.addCleanup(self.settings_directory.cleanup)
+        path = Path(self.settings_directory.name) / "settings.json"
+        SettingsStore(path).save(AppSettings())
+        environment = patch.dict(os.environ, {"ECHEMTIPS_SETTINGS_PATH": str(path)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_current_display_conversion_does_not_modify_buffer(self) -> None:
+        plot = Plot("Current", "Current 1 (nA)", ("red",))
+        try:
+            plot.append(0, 0.25); plot.append(1, -0.5)
+            plot.set_display_style("pA", 12, 3)
+            self.assertEqual(plot.series[0], [0.25, -0.5])
+            self.assertEqual(list(plot.curves[0].getData()[1]), [250, -500])
+            self.assertEqual(plot.graph.getAxis("left").labelText, "Current 1 (pA)")
+            self.assertEqual(plot.curves[0].opts["pen"].widthF(), 3)
+            plot.set_display_style("Auto", 10, 2)
+            self.assertEqual(list(plot.curves[0].getData()[1]), [250, -500])
+            plot.append(2, 2)
+            self.assertEqual(plot.graph.getAxis("left").labelText, "Current 1 (nA)")
+            self.assertEqual(list(plot.curves[0].getData()[1]), [0.25, -0.5, 2])
+        finally:
+            plot.close()
+
+    def test_fixed_map_limits_scale_with_units_without_changing_values(self) -> None:
+        heatmap = Heatmap("nA", "Current 1")
+        try:
+            heatmap.current_display_unit = "pA"
+            heatmap.fixed_limits = (-0.5, 0.5)
+            values = {(0, 0): -1, (0, 1): 0.25}
+            for mode in ("square", "circular"):
+                heatmap.set_data(values, 1, 2, view_mode=mode)
+                self.assertEqual(heatmap.values, values)
+                self.assertEqual(heatmap.color_bar.levels(), (-500, 500))
+                self.assertEqual(heatmap.unit, "pA")
+                self.assertEqual(list(heatmap.image_item.image[0]), [-1000, 250])
+            heatmap.current_display_unit = "nA"
+            heatmap.fixed_limits = None
+            heatmap.set_data(values, 1, 2)
+            self.assertEqual(heatmap.color_bar.levels(), (-1, 0.25))
+        finally:
+            heatmap.close()
+
+    def test_display_controls_apply_to_windows_styles_and_readbacks(self) -> None:
+        window = EChemTipsApp()
+        try:
+            controls = window.pages["Settings"]
+            controls.monitor_window.variable.set("10")
+            controls.experiment_window.variable.set("20")
+            controls.current_units.setCurrentText("pA")
+            controls.font_size.variable.set("14")
+            controls.trace_width.variable.set("3")
+            controls.map_current_auto.setChecked(False)
+            controls.map_current_min.variable.set("-0.1")
+            controls.map_current_max.variable.set("0.5")
+            watch = window.pages["Watch current"].current1_plot
+            for i in range(30): watch.append(i, 0.25, redraw=False)
+            history = window.pages["Approach"].approach_history
+            for i in range(30): history.append_timed(i, 30-i, 0.1, redraw=False)
+            with patch.object(window.store, "save"):
+                window.apply_settings(controls.values())
+            self.assertEqual(watch.x_values[0], 19)
+            self.assertEqual(history.clock_values[0], 9)
+            self.assertEqual(len(history.clock_values), len(history.x_values))
+            self.assertEqual(window.pages["CV"].cv_plot.rolling_window_s, None)
+            self.assertEqual(window.pages["CV"].current_plot.rolling_window_s, 20)
+            self.assertEqual(window.pages["Scan hopping + CV"].current_map.fixed_limits, (-0.1, 0.5))
+            window.instrument_readout.set_sample(Sample(0, 0, 0, 0, 0, 0, 0.25, -0.5))
+            self.assertIn("250.000 pA", window.instrument_readout.value_labels["current1_na"].text())
+            for width in (1080, 1440):
+                window.resize(width, 680); window.show(); window.show_page("Approach")
+                for _ in range(4): self.qt_app.processEvents()
+                text = window.pages["Approach"].findChild(QtWidgets.QLabel, "contactHelp")
+                self.assertGreaterEqual(text.height(), text.heightForWidth(text.width()))
+                for nav in window.nav_buttons.values():
+                    self.assertGreaterEqual(nav.width(), nav.sizeHint().width())
+                emergency = next(b for b in window.findChildren(QtWidgets.QPushButton) if b.text() == "EMERGENCY STOP")
+                self.assertGreaterEqual(emergency.width(), emergency.sizeHint().width())
+        finally:
+            window.close()
+
     def test_map_preferences_are_shared_saved_and_do_not_reset_connection(self) -> None:
         window = EChemTipsApp()
         try:
