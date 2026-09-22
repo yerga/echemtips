@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from html import escape
 from bisect import bisect_left
 from collections.abc import Iterable
 
@@ -206,15 +207,53 @@ def add_field(layout: QtWidgets.QGridLayout, field: Field, row: int, column: int
     return field
 
 
+class InfoButton(QtWidgets.QToolButton):
+    """Keyboard-accessible contextual help available on hover or click."""
+
+    def __init__(self, title: str, text: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setText("ⓘ")
+        self.setAccessibleName(f"{title} help")
+        self.setAccessibleDescription(text)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setFixedSize(28, 28)
+        self.setToolTip(f'<div style="max-width: 340px; white-space: normal">{escape(text)}</div>')
+        self.setWhatsThis(text)
+        self._help_title, self._help_text = title, text
+        self._help_dialog = None
+        self.clicked.connect(self._show_help)
+
+    def _show_help(self) -> None:
+        if self._help_dialog is None:
+            dialog = QtWidgets.QDialog(self)
+            dialog.setWindowTitle(self._help_title)
+            layout = QtWidgets.QVBoxLayout(dialog)
+            message = label(self._help_text, word_wrap=True)
+            message.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            message.setMaximumWidth(380)
+            layout.addWidget(message)
+            close = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+            close.rejected.connect(dialog.close)
+            layout.addWidget(close)
+            self._help_dialog = dialog
+        self._help_dialog.show()
+        self._help_dialog.raise_()
+        self._help_dialog.activateWindow()
+
+
 class Card(QtWidgets.QFrame):
     """Themed title/subtitle container exposing a child body frame."""
-    def __init__(self, title: str, subtitle: str = "") -> None:
+    def __init__(self, title: str, subtitle: str = "", *, help_text: str = "") -> None:
         super().__init__()
         self.setObjectName("card")
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(18, 16, 18, 17)
         outer.setSpacing(7)
-        outer.addWidget(label(title, "cardTitle"))
+        heading = QtWidgets.QHBoxLayout()
+        heading.addWidget(label(title, "cardTitle", word_wrap=True), 1)
+        if help_text:
+            heading.addWidget(InfoButton(title, help_text, self))
+        outer.addLayout(heading)
         if subtitle:
             outer.addWidget(label(subtitle, "cardSubtitle", word_wrap=True))
         self.body = QtWidgets.QFrame()

@@ -52,6 +52,7 @@ from .qt_common import (
     Choice,
     Field,
     Heatmap,
+    InfoButton,
     Plot,
     ProgramDiagram,
     TimedXYPlot,
@@ -115,7 +116,7 @@ def _grid(widget: QtWidgets.QWidget, columns: int = 2) -> QtWidgets.QGridLayout:
 
 
 def _plot_card(title: str, subtitle: str, plot: QtWidgets.QWidget) -> Card:
-    card = Card(title, subtitle)
+    card = Card(title, help_text=subtitle)
     layout = _vbox(card.body)
     layout.addWidget(plot, 1)
     return card
@@ -129,9 +130,15 @@ def _approach_curves_view(latest: Plot, history: TimedXYPlot) -> QtWidgets.QWidg
     splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
     latest.configure(height=125); history.configure(height=125)
     latest_section = QtWidgets.QWidget(); latest_layout = _vbox(latest_section, spacing=3)
-    latest_layout.addWidget(label("Latest approach", "cardTitle")); latest_layout.addWidget(label("Restarts when a new approach begins.", "muted")); latest_layout.addWidget(latest, 1)
+    heading = QtWidgets.QHBoxLayout()
+    heading.addWidget(label("Latest approach", "cardTitle"), 1)
+    heading.addWidget(InfoButton("Latest approach", "Shows the current or most recent approach. A new approach clears this curve.", latest_section))
+    latest_layout.addLayout(heading); latest_layout.addWidget(latest, 1)
     history_section = QtWidgets.QWidget(); history_layout = _vbox(history_section, spacing=3)
-    history_layout.addWidget(label("Rolling approach history", "cardTitle")); history_layout.addWidget(label("All approach samples from the latest 60 seconds; complete data remain recorded.", "muted")); history_layout.addWidget(history, 1)
+    heading = QtWidgets.QHBoxLayout()
+    heading.addWidget(label("Approach history · 60 s", "cardTitle"), 1)
+    heading.addWidget(InfoButton("Approach history", "Displays approach samples from the latest 60 seconds. Display trimming does not remove data from an active recording.", history_section))
+    history_layout.addLayout(heading); history_layout.addWidget(history, 1)
     splitter.addWidget(latest_section); splitter.addWidget(history_section)
     splitter.setSizes([175, 175])
     content_layout.addWidget(splitter)
@@ -149,7 +156,7 @@ def _program_card(
     *,
     stepped: bool = False,
 ) -> tuple[Card, ProgramDiagram]:
-    card = Card(title, subtitle)
+    card = Card(title, help_text=subtitle)
     diagram = ProgramDiagram(y_label)
     _vbox(card.body).addWidget(diagram)
 
@@ -177,7 +184,7 @@ def _format_duration(seconds: float) -> str:
 
 
 def _scan_summary_card(parameter_factory, triggers: list[QtCore.QObject]) -> tuple[Card, QtWidgets.QLabel, QtWidgets.QLabel]:
-    card = Card("Calculated scan", "Derived from the exact bounds, point counts, and rates above.")
+    card = Card("Calculated scan", help_text="Derived from the exact bounds, point counts, and rates above.")
     layout = _vbox(card.body, spacing=5)
     spacing_label = label("Hop spacing —", "statusStrong")
     duration_label = label("Estimated duration —", "muted", word_wrap=True)
@@ -242,9 +249,11 @@ class BasePage(QtWidgets.QWidget):
         self.app = app
         outer = _vbox(self, spacing=14)
         title_widget = label(title, "pageTitle")
-        description_widget = label(description, "pageDescription", word_wrap=True)
-        outer.addWidget(title_widget)
-        outer.addWidget(description_widget)
+        heading = QtWidgets.QHBoxLayout()
+        heading.addWidget(title_widget, 1)
+        if description and title != "Settings":
+            heading.addWidget(InfoButton(title, description, self))
+        outer.addLayout(heading)
         self.body = QtWidgets.QWidget()
         self.body.setObjectName("window")
         outer.addWidget(self.body, 1)
@@ -451,7 +460,7 @@ class PipetteCharacterizationPage(DiagnosticWorkflowPage):
         super().__init__(app, "Characterize pipette", "Document pipette stability and estimate resistance and aperture radius before scanning.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
         controls = QtWidgets.QWidget(); left = _vbox(controls)
-        setup = Card("Pipette and electrolyte", "The radius estimate uses a conical-pipette approximation and should be reported as an estimate.")
+        setup = Card("Pipette and electrolyte", help_text="The radius estimate uses a conical-pipette approximation and should be reported as an estimate.")
         g = _grid(setup.body)
         self.pipette_id = add_field(g, Field("Pipette ID", "pipette-001"), 0, 0)
         channel_box = QtWidgets.QWidget(); cl = _vbox(channel_box, spacing=5); cl.addWidget(label("Current input", "muted")); self.channel = Choice(FEEDBACK_CHANNELS, "Current 1"); cl.addWidget(self.channel); g.addWidget(channel_box, 0, 1)
@@ -522,6 +531,7 @@ class StatusCard(Card):
         action_layout.addStretch(1)
         layout.addWidget(self.state_label)
         layout.addWidget(self.detail_label)
+        self.detail_label.setVisible(bool(detail))
         layout.addWidget(self.progress)
         layout.addWidget(actions)
 
@@ -531,6 +541,7 @@ class StatusCard(Card):
             return
         self.state_label.setText(update.state.value)
         self.detail_label.setText(update.detail.replace("I-t", "I–t"))
+        self.detail_label.setVisible(bool(update.detail))
         self.progress.setValue(round(update.progress * 1000))
         terminal = update.state in (ExperimentState.COMPLETE, ExperimentState.ABORTED)
         if terminal:
@@ -614,7 +625,7 @@ class WatchPage(BasePage):
         self.live_button = button("Start live view", self.toggle_live_view)
         form.addWidget(self.live_button)
         form.addWidget(button("Clear graphs", self.clear_plots))
-        self.live_status_label = label("Live view is off. Start it to plot new samples.", "muted")
+        self.live_status_label = label("Live view off", "muted")
         self.live_status_label.setWordWrap(True)
         form.addWidget(self.live_status_label)
         form.addSpacing(12)
@@ -630,7 +641,7 @@ class WatchPage(BasePage):
         control_scroll.setMaximumWidth(350)
         layout.addWidget(control_scroll)
 
-        history = Card("Current history", "Opt-in rolling 30 s view; recordings remain complete and full-rate.")
+        history = Card("Current history", help_text="Opt-in rolling 30 s view; recordings remain complete and full-rate.")
         history_layout = _vbox(history.body)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.current1_plot = Plot("Current 1 vs time", "Current 1 (nA)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=30)
@@ -732,9 +743,9 @@ class WatchPage(BasePage):
         self.live_enabled = enabled
         self.live_button.setText("Stop live view" if enabled else "Start live view")
         self.live_status_label.setText(
-            "Plotting samples acquired from now."
+            "Live view on · 30 s"
             if enabled
-            else "Live view is off. Start it to plot new samples."
+            else "Live view off"
         )
 
     def on_sample(self, sample: Sample) -> None:
@@ -767,7 +778,7 @@ class WatchPositionPage(BasePage):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
 
-        controls = Card("Position monitor", "The graph starts only when requested; recording remains full-rate.")
+        controls = Card("Position monitor", help_text="The graph starts only when requested; recording remains full-rate.")
         controls.setMinimumWidth(285)
         controls.setMaximumWidth(350)
         form = _vbox(controls.body)
@@ -780,14 +791,14 @@ class WatchPositionPage(BasePage):
         form.addWidget(self.stop_recording_button)
         form.addWidget(self.live_button)
         form.addWidget(button("Clear graphs", self.clear_plots))
-        self.live_status_label = label("Live view is off. Start it to plot new samples.", "muted", word_wrap=True)
+        self.live_status_label = label("Live view off", "muted", word_wrap=True)
         form.addWidget(self.live_status_label)
         form.addStretch(1)
         control_scroll = scroll_area(controls, minimum_width=285)
         control_scroll.setMaximumWidth(350)
         layout.addWidget(control_scroll)
 
-        history = Card("Position history", "Rolling 30 s views of measured position channels AI0, AI1, and AI2.")
+        history = Card("Position history", help_text="Rolling 30 s views of measured position channels AI0, AI1, and AI2.")
         history_layout = _vbox(history.body)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.x_plot = Plot("X position vs time", "X position (µm)", (COLORS["blue"],), app.settings.display_max_points, "", rolling_window_s=30)
@@ -865,7 +876,7 @@ class WatchPositionPage(BasePage):
             self._live_time_origin_s: float | None = None
         self.live_enabled = enabled
         self.live_button.setText("Stop live view" if enabled else "Start live view")
-        self.live_status_label.setText("Plotting samples acquired from now." if enabled else "Live view is off. Start it to plot new samples.")
+        self.live_status_label.setText("Live view on · 30 s" if enabled else "Live view off")
 
     def on_samples(self, samples: list[Sample]) -> None:
         """Append new X/Y/Z samples only while live position view is active."""
@@ -896,7 +907,7 @@ class ManagedExperimentPage(BasePage):
 
     def build_status(self, title: str, start_text: str) -> StatusCard:
         """Build shared method actions and optional manual-contact control."""
-        self.status = StatusCard(title, "Configure the method, then start.", start_text, self.start, self.stop)
+        self.status = StatusCard(title, "", start_text, self.start, self.stop)
         self.state_label = self.status.state_label
         self.detail_label = self.status.detail_label
         self.progress = self.status.progress
@@ -979,7 +990,7 @@ class StandaloneCVPage(ManagedExperimentPage):
         root = QtWidgets.QHBoxLayout(self.body)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
-        controls = Card("Potential program", "Start → vertex 1 → vertex 2 → start, matching the deployed waypoint convention.")
+        controls = Card("Potential program", "Start → vertex 1 → vertex 2 → start.")
         form = _grid(controls.body)
         self.start_v = add_field(form, Field("Start potential", "-0.2", "V"), 0, 0)
         self.vertex1 = add_field(form, Field("Vertex 1", "0.6", "V"), 0, 1)
@@ -992,7 +1003,7 @@ class StandaloneCVPage(ManagedExperimentPage):
         left_layout = _vbox(left)
         left_layout.addWidget(controls)
         preview, self.program_preview = _program_card(
-            "CV profile", "The labels match the fields above.", "Potential E1 (V)",
+            "CV profile", "", "Potential E1 (V)",
             (self.start_v, self.vertex1, self.vertex2, self.start_v),
             ("Start", "Vertex 1", "Vertex 2", "Return"),
         )
@@ -1190,13 +1201,13 @@ class ApproachCVPage(ManagedExperimentPage):
         root.addWidget(_left_scroll(controls_host))
         right = QtWidgets.QWidget(); right_layout = _vbox(right)
         right_layout.addWidget(self.build_status("Experiment status", "Start approach + CV"))
-        tabs = QtWidgets.QTabWidget(); traces = QtWidgets.QWidget(); plots = QtWidgets.QHBoxLayout(traces); plots.setSpacing(10)
+        tabs = QtWidgets.QTabWidget(); traces = QtWidgets.QWidget(); plots = QtWidgets.QVBoxLayout(traces); plots.setSpacing(10); traces.setMinimumHeight(540)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
-        plots.addWidget(_plot_card("Z position", "Full experiment history.", self.z_plot), 1)
-        plots.addWidget(_plot_card("Feedback current", "Full experiment history.", self.current_plot), 1)
-        tabs.addTab(traces, "Experiment traces")
+        plots.addWidget(_plot_card("Z position", "Displays experiment-time data. The visible history may be limited; an active recording retains full-rate data.", self.z_plot), 1)
+        plots.addWidget(_plot_card("Feedback current", "Displays experiment-time data. The visible history may be limited; an active recording retains full-rate data.", self.current_plot), 1)
+        tabs.addTab(scroll_area(traces), "Experiment traces")
         tabs.addTab(_plot_card("Cyclic voltammogram", "Only samples acquired during CV waypoints.", self.cv_plot), "CV")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
@@ -1404,9 +1415,9 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
         self.visual_tabs = QtWidgets.QTabWidget()
-        traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces)
+        traces = QtWidgets.QWidget(); tl = QtWidgets.QVBoxLayout(traces); traces.setMinimumHeight(540)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
-        tl.addWidget(_plot_card("Z position", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); self.visual_tabs.addTab(traces, "Experiment traces")
+        tl.addWidget(_plot_card("Z position", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); self.visual_tabs.addTab(scroll_area(traces), "Experiment traces")
         cv_page = QtWidgets.QWidget(); cvl = _vbox(cv_page); self.cv_pixel_label = label("Waiting for a CV", "muted")
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
         cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Cyclic voltammogram", "Only CV samples from the latest hop.", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV at hop")
@@ -1541,8 +1552,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
         )
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
-        traces = QtWidgets.QWidget(); tl = QtWidgets.QHBoxLayout(traces); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
-        tl.addWidget(_plot_card("Z position", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); tabs.addTab(traces, "Experiment traces")
+        traces = QtWidgets.QWidget(); tl = QtWidgets.QVBoxLayout(traces); traces.setMinimumHeight(540); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
+        tl.addWidget(_plot_card("Z position", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", "Rolling 60 s view; elapsed time starts with this scan and the complete data remain recorded.", self.current_plot), 1); tabs.addTab(scroll_area(traces), "Experiment traces")
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Hop I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Hop I–t elapsed (s)")
         il.addWidget(_plot_card("Potential E1", "Timed steps at the latest hop.", self.voltage_plot), 1); il.addWidget(_plot_card("Current 1", "I–t response at the latest hop.", self.it_plot), 1); tabs.addTab(it, "I–t at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
@@ -1620,13 +1631,13 @@ class MovePiezoPage(BasePage):
     def __init__(self, app: "EChemTipsApp") -> None:
         super().__init__(app, "Move piezo", "Command bounded X/Y/Z piezo moves, with commanded and measured positions shown separately.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
-        controls = Card("Motion command", "Position bounds come from Settings.")
+        controls = Card("Motion command", help_text="Position bounds come from Settings.")
         form = _vbox(controls.body)
         form.addWidget(label("Piezo axis", "muted")); self.axis = Choice(("X", "Y", "Z"), "Z"); form.addWidget(self.axis)
         self.target = Field("Target", "50", "µm"); self.speed = Field("Speed", "5", "µm/s"); form.addWidget(self.target); form.addWidget(self.speed)
         action_row = QtWidgets.QWidget(); al = _hbox(action_row); al.addWidget(button("Move piezo", self.move, "primary")); al.addWidget(button("Stop movement", self.stop, "danger")); form.addWidget(action_row); form.addStretch(1)
         controls.setMinimumWidth(300); controls.setMaximumWidth(380); root.addWidget(controls)
-        position = Card("Position readback", "Measured inputs are never presented as commanded output values."); pl = _vbox(position.body)
+        position = Card("Position readback"); pl = _vbox(position.body)
         panes = QtWidgets.QWidget(); pg = QtWidgets.QGridLayout(panes); pg.setContentsMargins(0, 0, 0, 0); pg.setSpacing(10)
         self.position_labels: dict[str, QtWidgets.QLabel] = {}; self.commanded_position_labels: dict[str, QtWidgets.QLabel] = {}
         for column, axis in enumerate(("X", "Y", "Z")):
@@ -1672,12 +1683,12 @@ class SettingsPage(BasePage):
         super().__init__(app, "Settings", "A capability-aware, validated configuration shared by every experiment.")
         content = QtWidgets.QWidget(); columns = QtWidgets.QHBoxLayout(content); columns.setContentsMargins(2, 2, 12, 18); columns.setSpacing(14)
         left = QtWidgets.QWidget(); right = QtWidgets.QWidget(); ll = _vbox(left); rl = _vbox(right); columns.addWidget(left, 1); columns.addWidget(right, 1)
-        connection = Card("Connection", "Simulation needs no driver. NI FPGA uses a separately supplied compiled target."); cl = _vbox(connection.body)
+        connection = Card("Connection", help_text="Simulation needs no driver. NI FPGA uses a separately supplied compiled target."); cl = _vbox(connection.body)
         cl.addWidget(label("Backend", "muted")); self.mode = Choice(("Simulation", "NI FPGA"), app.settings.mode); cl.addWidget(self.mode)
         self.resource = Field("NI resource", app.settings.resource); cl.addWidget(self.resource)
         cl.addWidget(label("FPGA hardware", "muted")); self.transport = Choice(("USB R Series", "PCIe/PXI R Series", "Auto"), app.settings.hardware_transport); cl.addWidget(self.transport)
         cl.addWidget(label("Compiled bitfile", "muted")); bitrow = QtWidgets.QWidget(); br = _hbox(bitrow); self.bitfile = QtWidgets.QLineEdit(app.settings.bitfile); br.addWidget(self.bitfile, 1); br.addWidget(button("Browse…", self.browse_bitfile)); cl.addWidget(bitrow); ll.addWidget(connection)
-        acquisition = Card("Acquisition", "Effective interval includes the FPGA transfer iteration."); ag = _grid(acquisition.body)
+        acquisition = Card("Acquisition", help_text="Effective interval includes the FPGA transfer iteration."); ag = _grid(acquisition.body)
         self.sample_time = add_field(ag, Field("Sample time", str(app.settings.sample_time_us), "µs"), 0, 0); self.samples_per_point = add_field(ag, Field("Samples averaged per data point", str(app.settings.samples_per_point)), 0, 1)
         self.ready_timeout = add_field(ag, Field("FPGA ready timeout", str(app.settings.hardware_ready_timeout_s), "s"), 1, 0); self.watchdog_margin = add_field(ag, Field("Command watchdog margin", str(app.settings.hardware_watchdog_margin_s), "s"), 1, 1)
         self.period_label = label("", "statusStrong"); ag.addWidget(self.period_label, 2, 0, 1, 2); ll.addWidget(acquisition)
@@ -1695,14 +1706,14 @@ class SettingsPage(BasePage):
             "and the maximum requested E1 range is ±2 V. Use 5:1 when the external controller's "
             "±2 V potential span is represented by the NI output's ±10 V command span."
         )
-        self.command_ratio_help = QtWidgets.QToolButton(); self.command_ratio_help.setText("ⓘ"); self.command_ratio_help.setToolTip(ratio_help_text); self.command_ratio_help.setWhatsThis(ratio_help_text); self.command_ratio_help.setAccessibleName("Command voltage ratio help"); self.command_ratio_help.setFixedSize(32, 32); ratio_layout.addWidget(self.command_ratio_help, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
+        self.command_ratio_help = InfoButton("Command voltage ratio", ratio_help_text, self); ratio_layout.addWidget(self.command_ratio_help, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         amp.addWidget(ratio_row, 1, 0, 1, 2)
         self.command_ratio_summary = label("", "muted", word_wrap=True); amp.addWidget(self.command_ratio_summary, 2, 0, 1, 2); rl.addWidget(amplifier)
         saving = Card("Saving", "Choose a permanent folder for full-rate experiment files."); sv = _vbox(saving.body)
         data_row = QtWidgets.QWidget(); data_layout = _hbox(data_row); self.save_directory = Field("Data folder", app.settings.save_directory); data_layout.addWidget(self.save_directory, 1); data_layout.addWidget(button("Browse…", self.browse_data_folder), 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save)
         sv.addWidget(data_row); sv.addWidget(self.auto_save); rl.addWidget(saving)
-        display = Card("Display", "Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
+        display = Card("Display", help_text="Plot buffers are decimated for responsive viewing; recordings retain every acquired sample."); dv = _vbox(display.body)
         self.display_max_points = Field("Display buffer", str(app.settings.display_max_points), "points/plot"); dv.addWidget(self.display_max_points); rl.addWidget(display); rl.addStretch(1)
         actions = QtWidgets.QWidget(); al = _hbox(actions); self.save_defaults_button = button("Save as defaults and apply", self.save, "primary"); al.addWidget(self.save_defaults_button)
         self.settings_path_label = label(f"Loaded automatically at startup from {app.store.path}", "muted", word_wrap=True); al.addWidget(self.settings_path_label, 1)
@@ -1794,13 +1805,15 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             nav = button(f"{glyph}   {name.replace('I-t', 'I–t')}", lambda checked=False, page=name: self.show_page(page)); nav.setProperty("role", "nav"); nav.setCheckable(True); group.addButton(nav); side.addWidget(nav); self.nav_buttons[name] = nav
             if index <= 9:
                 shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
-        side.addStretch(1); side.addWidget(label("FPGA logic preserved", "sidebarMuted")); side.addWidget(label("PySide6 · PyQtGraph", "sidebarMuted")); layout.addWidget(sidebar)
+        side.addStretch(1); layout.addWidget(sidebar)
         main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0); topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar"); topbar.setFixedHeight(70); tl = _hbox(topbar, (18, 10, 18, 10), 8)
         self.connection_dot = label("●"); self.connection_label = label(f"Disconnected · {self.backend.label}", "muted"); self.execution_label = label("Offline", "muted"); tl.addWidget(self.connection_dot); tl.addWidget(self.connection_label); tl.addWidget(self.execution_label); tl.addStretch(1)
         self.mode_badge = label(self.settings.mode.upper(), "muted"); self.mode_badge.setStyleSheet(f"background:{COLORS['panel_2']}; padding:7px 10px; border-radius:6px; font-weight:650;"); tl.addWidget(self.mode_badge)
         self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host); self.next_waypoint_button = button("End waypoint", self.end_current_waypoint); self.next_waypoint_button.setToolTip("Low-level FPGA control only; this does not confirm contact. Use the approach page's accept-contact button to continue an approach."); self.connect_button = button("Connect", self.toggle_connection, "primary")
         for widget in (self.pause_button, self.resume_button, self.next_waypoint_button, self.connect_button): tl.addWidget(widget)
-        tl.addWidget(button("EMERGENCY STOP", self.emergency_stop, "danger")); ml.addWidget(topbar)
+        emergency = button("EMERGENCY STOP", self.emergency_stop, "danger")
+        emergency.setMinimumWidth(emergency.sizeHint().width())
+        tl.addWidget(emergency); ml.addWidget(topbar)
         self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (22, 18, 22, 10)); container_layout.addWidget(self.stack); ml.addWidget(container, 1)
         self.instrument_readout = InstrumentReadoutBar(); readout_container = QtWidgets.QWidget(); readout_layout = _vbox(readout_container, (22, 0, 22, 10)); readout_layout.addWidget(self.instrument_readout); ml.addWidget(readout_container)
         layout.addWidget(main, 1)

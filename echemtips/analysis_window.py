@@ -11,7 +11,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, RAW_SIGNALS, extract_cv_cycles
 from .models import SettingsStore
-from .qt_common import COLORS, Card, XYPlot, button, label
+from .qt_common import COLORS, Card, InfoButton, XYPlot, button, label
 
 
 class AnalysisWindow(QtWidgets.QMainWindow):
@@ -104,7 +104,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.raw_signal.currentTextChanged.connect(self._refresh_raw_plot)
         controls.addWidget(self.raw_signal)
         controls.addStretch(1)
-        controls.addWidget(label("Full recording · interactive pan and zoom", "muted"))
+        controls.addWidget(InfoButton("Experiment traces", "Shows the full recording. Pan and zoom to inspect individual regions.", tab))
         layout.addLayout(controls)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.raw_current_plot = XYPlot("Elapsed time (s)", "Current (nA)")
@@ -114,7 +114,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
-        self.tabs.addTab(tab, "Raw traces")
+        self.tabs.addTab(tab, "Experiment traces")
 
     def _build_cv_tab(self) -> None:
         tab = QtWidgets.QWidget()
@@ -131,7 +131,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         controls.addWidget(self.export_button)
         layout.addLayout(controls)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        summary = Card("Detected cycles", "Select a cycle or overlay every completed cycle.")
+        summary = Card("Detected cycles", help_text="Select a cycle or overlay every completed cycle.")
         summary.setMinimumWidth(285)
         summary.setMaximumWidth(380)
         summary_layout = QtWidgets.QVBoxLayout(summary.body)
@@ -148,7 +148,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.cv_plot)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
-        self.tabs.addTab(tab, "Voltammograms")
+        self.tabs.addTab(tab, "CV")
 
     def _build_table_tab(self) -> None:
         tab = QtWidgets.QWidget()

@@ -5,6 +5,14 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Changed
+
+- Standardized experiment actions, electrochemical potential terminology,
+  movement speeds and plot tabs across the control interface.
+- Removed redundant implementation notes and moved background plot/setup
+  explanations into accessible hover/click info buttons. Measurement controls,
+  file formats and hardware behavior are unchanged.
+
 ### Fixed
 
 - Parent parameter-unit labels before making them visible, preventing brief

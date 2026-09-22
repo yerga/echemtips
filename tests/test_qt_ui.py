@@ -13,11 +13,28 @@ from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
 from echemtips.models import AppSettings
 from echemtips.models import Sample
-from echemtips.qt_common import Heatmap, Plot, TimedXYPlot
+from echemtips.qt_common import Heatmap, InfoButton, Plot, TimedXYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_context_help_and_removed_clutter(self) -> None:
+        window = EChemTipsApp()
+        try:
+            notes = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
+            for removed in ("FPGA logic preserved", "PySide6 · PyQtGraph", "Restarts when a new approach begins.", "All approach samples from the latest 60 seconds; complete data remain recorded."):
+                self.assertNotIn(removed, notes)
+            info = window.pages["Settings"].command_ratio_help
+            self.assertIsInstance(info, InfoButton)
+            self.assertEqual(info.focusPolicy(), QtCore.Qt.FocusPolicy.StrongFocus)
+            info.click()
+            self.qt_app.processEvents()
+            self.assertTrue(info._help_dialog.isVisible())
+            self.assertTrue(info.accessibleDescription())
+            info._help_dialog.close()
+        finally:
+            window.close()
+
     def test_experiment_action_terminology(self) -> None:
         window = EChemTipsApp()
         try:
@@ -215,7 +232,7 @@ class QtLayoutTests(unittest.TestCase):
         self.qt_app.processEvents()
         try:
             labels = [window.tabs.tabText(index) for index in range(window.tabs.count())]
-            self.assertEqual(labels, ["Raw traces", "Voltammograms", "Raw data table", "Metadata"])
+            self.assertEqual(labels, ["Experiment traces", "CV", "Raw data table", "Metadata"])
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()
