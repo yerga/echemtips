@@ -1,4 +1,4 @@
-"""Deployed USB-7856R bitfile contract, scaling, and FIFO wire formats."""
+"""WEC-SPM-compatible bitfile contract, scaling, and FIFO wire formats."""
 
 from __future__ import annotations
 
@@ -16,8 +16,6 @@ WAYPOINT_WORDS = 14
 SAMPLE_WORDS = 14
 HOST_TO_TARGET_FIFO = "Host_To_FPGA_Positions"
 TARGET_TO_HOST_FIFO = "FPGA_To_Host_FIFO"
-DEPLOYED_USB_TARGET_CLASS = "USB-7856R"
-DEPLOYED_USB_SIGNATURE = "8229BC0D5A4935D854D1286878CEE54A"
 
 # FPGA Target.vi writes these values directly to AO0-AO4 and their Applied
 # indicators in its unconditional startup frame. External Pause is evaluated
@@ -221,7 +219,12 @@ def inspect_bitfile(path: str | Path) -> BitfileInfo:
 
 
 def validate_wec_bitfile(info: BitfileInfo, transport: str = "Auto") -> list[str]:
-    """Return every mismatch from the deployed WEC-SPM host protocol."""
+    """Check the host interface, not a filename or single build signature.
+
+    Matching metadata cannot prove timing, channel or execution semantics.
+    A target-specific build must preserve the WEC-SPM behavior and be
+    commissioned on the actual device before enabling actuators.
+    """
     errors: list[str] = []
     missing_registers = sorted(REQUIRED_REGISTERS - info.registers)
     missing_fifos = sorted({HOST_TO_TARGET_FIFO, TARGET_TO_HOST_FIFO} - info.fifos)
@@ -251,13 +254,6 @@ def validate_wec_bitfile(info: BitfileInfo, transport: str = "Auto") -> list[str
         )
     if transport == "PCIe/PXI R Series" and info.is_usb_target:
         errors.append(f"target class is {info.target_class}, but PCIe/PXI was selected")
-    if info.is_usb_target and transport in {"Auto", "USB R Series"} and (
-        info.target_class != DEPLOYED_USB_TARGET_CLASS or info.signature != DEPLOYED_USB_SIGNATURE
-    ):
-        errors.append(
-            f"USB target identity is {info.target_class}/{info.signature}, expected "
-            f"{DEPLOYED_USB_TARGET_CLASS}/{DEPLOYED_USB_SIGNATURE}"
-        )
     return errors
 
 

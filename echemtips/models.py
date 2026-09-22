@@ -11,29 +11,12 @@ import sys
 from typing import Any
 
 
-TARGET_BITFILE_NAME = "wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx"
-LEGACY_BITFILE_NAMES = {"FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx"}
-
-
 def _default_bitfile() -> str:
-    """Find a locally supplied target without ever packaging it.
-
-    The sibling lookup supports a layout where the private LabVIEW archive and
-    public eChemTips checkout share a parent directory. Other installations
-    get a filename placeholder that must be selected before connecting.
-    """
+    """Use an explicit environment path, otherwise require operator selection."""
     configured = os.environ.get("ECHEMTIPS_BITFILE")
     if configured:
         return str(Path(configured).expanduser())
-    project_root = Path(__file__).resolve().parent.parent
-    candidates = (
-        project_root.parent / "WEC_SPM" / "FPGA Bitfiles" / TARGET_BITFILE_NAME,
-        project_root / "FPGA Bitfiles" / TARGET_BITFILE_NAME,
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    return TARGET_BITFILE_NAME
+    return ""
 
 
 DEFAULT_BITFILE = _default_bitfile()
@@ -83,7 +66,7 @@ class AppSettings:
     mode: str = "Simulation"
     resource: str = "RIO0"
     bitfile: str = DEFAULT_BITFILE
-    hardware_transport: str = "USB R Series"
+    hardware_transport: str = "Auto"
     x_range_um: float = 100.0
     y_range_um: float = 100.0
     z_range_um: float = 100.0
@@ -196,11 +179,6 @@ class SettingsStore:
             return AppSettings()
         try:
             raw = json.loads(source.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                saved_bitfile = raw.get("bitfile")
-                if isinstance(saved_bitfile, str) and Path(saved_bitfile).name in LEGACY_BITFILE_NAMES:
-                    raw["bitfile"] = DEFAULT_BITFILE
-                    raw["hardware_transport"] = "USB R Series"
             return AppSettings.from_dict(raw)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return AppSettings()

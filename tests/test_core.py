@@ -15,7 +15,7 @@ from echemtips.experiments import (
     ExperimentState, ScanHoppingCVExperiment, ScanHoppingITExperiment, contact_threshold_hit,
 )
 from echemtips.models import (
-    DEFAULT_BITFILE, AppSettings, ApproachCVParameters, ApproachITParameters,
+    AppSettings, ApproachCVParameters, ApproachITParameters,
     ApproachParameters, CVParameters, Sample, ScanHoppingCVParameters,
     ScanHoppingITParameters, SettingsStore, default_settings_path,
 )
@@ -67,6 +67,7 @@ class SettingsTests(unittest.TestCase):
             expected = AppSettings(
                 z_range_um=38.0,
                 mode="NI FPGA",
+                bitfile="my-instrument.lvbitx",
                 current2_v_per_na=2.5,
             )
             store.save(expected)
@@ -75,16 +76,24 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(actual.mode, "NI FPGA")
             self.assertEqual(actual.current2_v_per_na, 2.5)
 
-    def test_legacy_default_bitfile_is_migrated_to_usb_target(self) -> None:
+    def test_saved_bitfile_and_transport_are_preserved(self) -> None:
         with TemporaryDirectory() as folder:
             path = Path(folder) / "settings.json"
             path.write_text(json.dumps({
-                "bitfile": "FPGA Bitfiles/FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx",
+                "bitfile": "FPGA Bitfiles/my-custom-build.lvbitx",
                 "hardware_transport": "PCIe/PXI R Series",
             }), encoding="utf-8")
             settings = SettingsStore(path).load()
-            self.assertEqual(settings.bitfile, DEFAULT_BITFILE)
-            self.assertEqual(settings.hardware_transport, "USB R Series")
+            self.assertEqual(settings.bitfile, "FPGA Bitfiles/my-custom-build.lvbitx")
+            self.assertEqual(settings.hardware_transport, "PCIe/PXI R Series")
+
+    def test_default_bitfile_requires_explicit_selection_or_environment(self) -> None:
+        from echemtips.models import _default_bitfile
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_default_bitfile(), "")
+        with patch.dict("os.environ", {"ECHEMTIPS_BITFILE": "/private/any-build.lvbitx"}):
+            self.assertEqual(_default_bitfile(), "/private/any-build.lvbitx")
+        self.assertTrue(any("bitfile" in e for e in AppSettings(mode="NI FPGA", bitfile="").validate()))
 
 
 class SimulationTests(unittest.TestCase):
@@ -167,7 +176,7 @@ class NIBackendSafetyTests(unittest.TestCase):
             backend.connect()
 
     def test_fpga_connection_requires_explicit_startup_actuation_permission(self) -> None:
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile="target.lvbitx"))
         self.assertIn("AO0/X", backend.startup_notice)
         self.assertIn("+5 V", backend.startup_notice)
         self.assertIn("X 50.0 µm", backend.startup_notice)

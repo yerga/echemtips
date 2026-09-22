@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
+from contextlib import redirect_stderr
+import io
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -12,6 +15,7 @@ from echemtips.models import (
 from echemtips.ni_driver import WECSPMDriver
 from echemtips.ni_protocol import (
     ANALOG_INPUT_CHANNELS,
+    BitfileInfo, REGISTER_CONTRACT, FIFO_CONTRACT,
     ANALOG_OUTPUT_CHANNELS,
     FEEDBACK_ACTION_CODES,
     FEEDBACK_SIGNAL_CODES,
@@ -32,20 +36,38 @@ from echemtips.waypoints import PhysicalWaypoint
 
 
 BITFILE = Path(DEFAULT_BITFILE)
-LEGACY_BITFILE = BITFILE.with_name("FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx")
 
 
 class ProtocolTests(unittest.TestCase):
-    @unittest.skipUnless(BITFILE.is_file() and LEGACY_BITFILE.is_file(), "private FPGA bitfiles are not installed")
-    def test_usb_7856_bitfile_contract_and_legacy_guard(self) -> None:
+    def test_checker_requires_a_selected_bitfile_and_defaults_to_auto_transport(self) -> None:
+        from echemtips.hardware_check import _parser, main
+        self.assertEqual(_parser().parse_args([]).transport, "auto")
+        output = io.StringIO()
+        with redirect_stderr(output):
+            self.assertEqual(main(["--bitfile", ""]), 2)
+        self.assertIn("supply --bitfile", output.getvalue())
+
+    @unittest.skipUnless(BITFILE.is_file(), "set ECHEMTIPS_BITFILE to test a private FPGA bitfile")
+    def test_locally_supplied_bitfile_contract(self) -> None:
         info = inspect_bitfile(BITFILE)
-        self.assertEqual(info.target_class, "USB-7856R")
-        self.assertEqual(info.signature, "8229BC0D5A4935D854D1286878CEE54A")
-        self.assertEqual(validate_wec_bitfile(info, "USB R Series"), [])
-        legacy = inspect_bitfile(LEGACY_BITFILE)
-        self.assertTrue(any("not a USB" in error for error in validate_wec_bitfile(legacy, "USB R Series")))
-        self.assertEqual(info.register_contract, legacy.register_contract)
-        self.assertEqual(info.fifo_contract, legacy.fifo_contract)
+        self.assertEqual(validate_wec_bitfile(info), [])
+
+    def test_compatible_builds_are_not_pinned_to_filename_model_or_signature(self) -> None:
+        for model in ("USB-7856R", "USB-7855R", "PCIe-7852R", "PXI-7852R"):
+            info = BitfileInfo(Path("user-selected-name.lvbitx"), model, "new-build-signature",
+                               frozenset(REGISTER_CONTRACT), frozenset(FIFO_CONTRACT),
+                               dict(REGISTER_CONTRACT), dict(FIFO_CONTRACT))
+            self.assertEqual(validate_wec_bitfile(info), [])
+            transport = "USB R Series" if info.is_usb_target else "PCIe/PXI R Series"
+            self.assertEqual(validate_wec_bitfile(info, transport), [])
+            other = "PCIe/PXI R Series" if info.is_usb_target else "USB R Series"
+            self.assertTrue(validate_wec_bitfile(info, other))
+            name = next(iter(REGISTER_CONTRACT))
+            self.assertTrue(validate_wec_bitfile(replace(info, registers=info.registers - {name})))
+            self.assertTrue(validate_wec_bitfile(replace(info, register_contract={name: ("WrongType", False)})))
+            fifo = next(iter(FIFO_CONTRACT))
+            for contract in (("U16", "HostToTarget", 8197), ("I16", "WrongDirection", 8197), ("I16", "HostToTarget", 1)):
+                self.assertTrue(validate_wec_bitfile(replace(info, fifo_contract={fifo: contract})))
 
     def test_deployed_semantic_channel_and_feedback_profile(self) -> None:
         self.assertEqual(ANALOG_OUTPUT_CHANNELS, {
