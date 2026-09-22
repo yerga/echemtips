@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Retry transient Windows locks during atomic recording-metadata replacement,
+  preventing brief access-denied errors from aborting experiments. Persistent
+  locks and other disk errors remain failures with partial data preserved.
+
 - Hardware elapsed time now accumulates FPGA inter-sample tick intervals.
   Treating those intervals as absolute timestamps previously collapsed steady
   acquisitions into vertical time plots and incorrect CSV elapsed times.

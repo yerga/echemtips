@@ -1,5 +1,13 @@
 # Recording data format
 
+On Windows, atomic JSON replacement retries access-denied and sharing-lock
+errors (WinError 5, 32, 33) up to five times, waiting a total of 0.62 seconds.
+This covers brief file locks without marking an otherwise healthy recording
+as failed. The acquisition worker continues reading during these waits.
+Persistent failures still abort recording and preserve the CSV and previous
+JSON; a `.json.tmp` file may contain the latest metadata awaiting replacement.
+Other disk errors are reported immediately.
+
 eChemTips writes one CSV measurement stream and one JSON metadata sidecar for
 each recorded experiment. This document defines recording schema version 2,
 which is the format written by the current application.

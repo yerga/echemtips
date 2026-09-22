@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any, TextIO
 
 from .models import AppSettings, Sample, ScanHoppingCVParameters, ScanHoppingITParameters
@@ -25,6 +26,7 @@ class DataRecorder:
 
     FLUSH_EVERY = 16
     MAX_RECENT_SAMPLES = 1024
+    _METADATA_REPLACE_DELAYS = (0.02, 0.04, 0.08, 0.16, 0.32)
     _STATUSES = {"running", "complete", "aborted", "error", "discarded"}
     _PER_SAMPLE_OMISSIONS = {
         "feedback_type",
@@ -300,7 +302,18 @@ class DataRecorder:
                 os.fsync(stream.fileno())
             except (AttributeError, ValueError):
                 pass
-        os.replace(temporary, path)
+        # Windows readers can briefly deny replacement after our handle closes.
+        # Keep both the complete temporary JSON and the previous valid sidecar;
+        # never truncate the destination as a fallback for a blocked rename.
+        for attempt in range(len(self._METADATA_REPLACE_DELAYS) + 1):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as exc:
+                if (getattr(exc, "winerror", None) not in {5, 32, 33}
+                        or attempt == len(self._METADATA_REPLACE_DELAYS)):
+                    raise
+                time.sleep(self._METADATA_REPLACE_DELAYS[attempt])
 
     def _try_write_metadata(self) -> None:
         try:

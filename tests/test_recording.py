@@ -184,6 +184,82 @@ class StreamingRecordingTests(unittest.TestCase):
             self.assertEqual(metadata["sample_count"], 1)
             self.assertFalse(recorder.active)
 
+    def test_windows_metadata_locks_are_retried_throughout_recording(self) -> None:
+        import os
+
+        for code in (5, 32, 33):
+            for stage in ("start", "checkpoint", "finish"):
+                with self.subTest(code=code, stage=stage), TemporaryDirectory() as folder:
+                    recorder = DataRecorder(flush_every=1)
+                    if stage != "start":
+                        recorder.start("CV", self.settings(folder))
+                    original = os.replace
+                    error = PermissionError("temporary Windows lock")
+                    error.winerror = code
+                    attempts = 0
+
+                    def locked_replace(source, destination):
+                        nonlocal attempts
+                        attempts += 1
+                        if attempts < 3:
+                            json.loads(Path(source).read_text())
+                            if Path(destination).exists():
+                                json.loads(Path(destination).read_text())
+                            raise error
+                        original(source, destination)
+
+                    with patch("echemtips.data.os.replace", side_effect=locked_replace), \
+                            patch("echemtips.data.time.sleep") as sleep:
+                        if stage == "start":
+                            recorder.start("CV", self.settings(folder))
+                        elif stage == "checkpoint":
+                            recorder.append(sample(0))
+                        else:
+                            recorder.finish()
+                        self.assertEqual(attempts, 3)
+                        self.assertEqual(sleep.call_count, 2)
+                    if stage != "finish":
+                        self.assertTrue(recorder.active)
+                        recorder.append(sample(1))
+                        recorder.finish()
+                    output = recorder.output_path
+                    metadata = json.loads(output.with_suffix(".json").read_text())
+                    self.assertEqual(metadata["status"], "complete")
+                    self.assertNotIn("error", metadata)
+                    with output.open(newline="") as stream:
+                        self.assertEqual(len(list(csv.DictReader(stream))), recorder.sample_count)
+
+    def test_persistent_windows_lock_is_bounded_and_preserves_files(self) -> None:
+        with TemporaryDirectory() as folder:
+            recorder = DataRecorder(flush_every=1)
+            recorder.start("CV", self.settings(folder))
+            output = recorder.output_path
+            previous = output.with_suffix(".json").read_text()
+            error = PermissionError("persistent Windows lock")
+            error.winerror = 5
+            with patch("echemtips.data.os.replace", side_effect=error) as replace, \
+                    patch("echemtips.data.time.sleep"):
+                with self.assertRaises(PermissionError):
+                    recorder.append(sample(0))
+            self.assertEqual(replace.call_count, 12)  # checkpoint + error update
+            self.assertFalse(recorder.active)
+            self.assertEqual(output.with_suffix(".json").read_text(), previous)
+            pending = json.loads(output.with_suffix(".json.tmp").read_text())
+            self.assertEqual(pending["status"], "error")
+            with output.open(newline="") as stream:
+                self.assertEqual(len(list(csv.DictReader(stream))), 1)
+
+    def test_non_lock_replace_errors_are_not_retried(self) -> None:
+        with TemporaryDirectory() as folder:
+            recorder = DataRecorder(flush_every=1)
+            recorder.start("CV", self.settings(folder))
+            with patch("echemtips.data.os.replace", side_effect=OSError("disk failure")), \
+                    patch("echemtips.data.time.sleep") as sleep:
+                with self.assertRaises(OSError):
+                    recorder.append(sample(0))
+                sleep.assert_not_called()
+            self.assertFalse(recorder.active)
+
     def test_metadata_checkpoint_failure_preserves_csv_and_recoverable_status(self) -> None:
         with TemporaryDirectory() as folder:
             recorder = DataRecorder(flush_every=1)
