@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Hardware elapsed time now accumulates FPGA inter-sample tick intervals.
+  Treating those intervals as absolute timestamps previously collapsed steady
+  acquisitions into vertical time plots and incorrect CSV elapsed times.
+
 - FPGA connections now reset and verify the target before configuration and
   startup, allowing reconnects to a previously running VI. The startup notice
   explains reinitialization; failed resets close the session without running it.

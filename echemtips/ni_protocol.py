@@ -403,12 +403,16 @@ class Waypoint:
 
 
 class SampleDecoder:
-    """Decode 14-word sample frames and unwrap their 40 MHz timestamp."""
+    """Decode frames and accumulate their 40 MHz inter-sample tick intervals.
+
+    FPGA Target.vi subtracts the previous acquisition tick from the current
+    tick before splitting the U32 difference into two biased I16 FIFO words.
+    These are durations, not absolute timestamps. The first frame establishes
+    time zero; later durations accumulate across FIFO reads and experiments.
+    """
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
-        self._last_tick: int | None = None
-        self._tick_epoch = 0
-        self._first_tick: int | None = None
+        self._elapsed_ticks: int | None = None
 
     @staticmethod
     def _timestamp_half(word: int) -> int:
@@ -416,14 +420,12 @@ class SampleDecoder:
         return (int(word) + 32768) & 0xFFFF
 
     def _elapsed(self, high: int, low: int) -> float:
-        tick = (self._timestamp_half(high) << 16) | self._timestamp_half(low)
-        if self._last_tick is not None and tick < self._last_tick and self._last_tick - tick > 0x80000000:
-            self._tick_epoch += 1 << 32
-        self._last_tick = tick
-        unwrapped = self._tick_epoch + tick
-        if self._first_tick is None:
-            self._first_tick = unwrapped
-        return (unwrapped - self._first_tick) / FPGA_CLOCK_HZ
+        interval_ticks = (self._timestamp_half(high) << 16) | self._timestamp_half(low)
+        if self._elapsed_ticks is None:
+            self._elapsed_ticks = 0
+        else:
+            self._elapsed_ticks += interval_ticks
+        return self._elapsed_ticks / FPGA_CLOCK_HZ
 
     def decode(self, words: list[int] | tuple[int, ...]) -> Sample:
         """Decode one exact-length FIFO frame to calibrated physical values."""

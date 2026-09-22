@@ -75,16 +75,40 @@ class ProtocolTests(unittest.TestCase):
     def test_fifo_sample_decode(self) -> None:
         settings = AppSettings(command_voltage_ratio=2.0, current1_v_per_na=0.5)
         decoder = SampleDecoder(settings)
-        # Biased U32 halves 0x8000/0x8000 travel as signed zeros.
+        # Each frame carries a biased U32 interval, not an absolute timestamp.
         words = [0] * SAMPLE_WORDS
         words[3] = voltage1_to_raw(1.0, 2.0)
         words[5] = 16384
         first = decoder.decode(words)
-        words[13] = 40  # low half becomes 0x8028: 40 ticks later
+        words[12] = -32768
+        words[13] = 40 - 32768  # interval of 40 ticks (one microsecond)
         second = decoder.decode(words)
         self.assertAlmostEqual(first.voltage1_v, 1.0, places=3)
         self.assertAlmostEqual(first.current1_na, 10.0, places=3)
         self.assertAlmostEqual(second.elapsed_s, 1e-6, places=9)
+
+    def test_fifo_intervals_accumulate_for_constant_and_variable_sample_rates(self) -> None:
+        decoder = SampleDecoder(AppSettings())
+        expected_ticks = 0
+        # Include signed-word boundaries and decreasing intervals: neither is
+        # an absolute-counter wrap. The initial startup interval is excluded.
+        for index, ticks in enumerate((123456789, 41120, 41120, 65535, 65536, 1, 0, 40000000)):
+            words = [0] * SAMPLE_WORDS
+            words[12] = (ticks >> 16) - 32768
+            words[13] = (ticks & 0xFFFF) - 32768
+            if index:
+                expected_ticks += ticks
+            self.assertAlmostEqual(decoder.decode(words).elapsed_s, expected_ticks / 40000000, places=12)
+
+    def test_fifo_elapsed_time_exceeds_u32_clock_period(self) -> None:
+        decoder = SampleDecoder(AppSettings())
+        words = [0] * SAMPLE_WORDS
+        ticks = 40000000
+        words[12] = (ticks >> 16) - 32768
+        words[13] = (ticks & 0xFFFF) - 32768
+        for second in range(121):
+            self.assertEqual(decoder.decode(words).elapsed_s, second)
+        self.assertEqual(SampleDecoder(AppSettings()).decode(words).elapsed_s, 0)
 
 
 class _Register:
@@ -123,6 +147,31 @@ class _FIFO:
 
 
 class NativeDriverTests(unittest.TestCase):
+    def test_fifo_batch_boundaries_preserve_sample_time(self) -> None:
+        from tempfile import TemporaryDirectory
+        from echemtips.data import DataRecorder
+        import csv
+
+        frame = [0] * SAMPLE_WORDS
+        frame[12] = -32768
+        frame[13] = 40000 - 32768  # 1 ms between samples
+        fifo = self.session.fifos["FPGA_To_Host_FIFO"]
+        with TemporaryDirectory() as folder:
+            recorder = DataRecorder()
+            recorder.start("Watch Current", AppSettings(save_directory=folder))
+            received = []
+            for size in (3, 0, 2):
+                fifo.data.extend(frame * size)
+                samples = self.driver.read_samples()
+                received.extend(samples)
+                for sample in samples:
+                    recorder.append(sample)
+            path = recorder.finish()
+            self.assertEqual([s.elapsed_s for s in received], [0, .001, .002, .003, .004])
+            with path.open(newline="") as stream:
+                self.assertEqual([float(row["elapsed_s"]) for row in csv.DictReader(stream)],
+                                 [0, .001, .002, .003, .004])
+
     def setUp(self) -> None:
         names = {
             "Buffer Loop Wait Time (tICKS)", "HoldTimerScale", "2^(-n)", "External Stop", "External Pause", "Internal Pause",
