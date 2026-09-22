@@ -20,6 +20,37 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_settings_tabs_keep_save_action_visible_at_laptop_sizes(self) -> None:
+        window = EChemTipsApp()
+        try:
+            window.resize(1080, 680); window.show(); window.show_page("Settings")
+            settings = window.pages["Settings"]
+            names = ("Connection", "Acquisition", "Piezos", "Amplifiers", "Saving", "Plots", "Maps")
+            self.assertEqual(tuple(settings.tabs.tabText(i) for i in range(settings.tabs.count())), names)
+            for font_size in (10, 14):
+                window.settings.font_size_pt = font_size
+                window._apply_display_settings()
+                for index, name in enumerate(names):
+                    settings.tabs.setCurrentIndex(index)
+                    for _ in range(4): self.qt_app.processEvents()
+                    viewport = settings.tab_scrolls[name]
+                    viewport.verticalScrollBar().setValue(viewport.verticalScrollBar().maximum())
+                    self.qt_app.processEvents()
+                    save = settings.save_defaults_button
+                    self.assertTrue(save.isVisible(), name)
+                    self.assertFalse(viewport.isAncestorOf(save), name)
+                    rectangle = QtCore.QRect(save.mapTo(window, QtCore.QPoint()), save.size())
+                    self.assertTrue(window.rect().contains(rectangle), (font_size, name, rectangle))
+            settings.tabs.setCurrentIndex(5)
+            settings.monitor_window.variable.set("15")
+            settings.tabs.setCurrentIndex(6)
+            settings.map_z_colormap.setCurrentText("Magma")
+            settings.tabs.setCurrentIndex(0)
+            self.assertEqual(settings.values().monitor_window_s, 15)
+            self.assertEqual(settings.values().map_z_colormap, "magma")
+        finally:
+            window.close()
+
     def test_colormaps_match_images_footprints_and_scale(self) -> None:
         heatmap = Heatmap("nA", "Current 1")
         try:
@@ -299,9 +330,9 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertGreater(page.height(), 0, name)
                 self.assertTrue(window.instrument_readout.isVisible(), name)
             settings = window.pages["Settings"]
-            self.assertGreater(settings.viewport.verticalScrollBar().maximum(), 0)
+            viewport = settings.tab_scrolls["Connection"]
             self.assertEqual(
-                settings.viewport.horizontalScrollBarPolicy(),
+                viewport.horizontalScrollBarPolicy(),
                 QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
             )
             settings_text = " ".join(

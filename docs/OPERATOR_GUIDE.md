@@ -163,12 +163,14 @@ retracts by a positive distance away from the measured contact Z.
   approach, and retract time. It excludes the initial move and first approach.
 - Square cells show the sampled grid; circular footprints show the configured
   meniscus diameter in physical coordinates. Choose the shared shape and
-  diameter under **Settings → Display**, not on individual scan pages. These
+  diameter under **Settings → Maps**, not on individual scan pages. These
   preferences change rendering only, not the scan path or feedback.
 
-**Settings → Display** also offers independent automatic/fixed Z and current
-color limits, rolling history durations, current display units, font size and
-trace thickness. Saved recording units and full-rate data are unaffected.
+**Settings → Maps** also offers independent Z/current colormaps and
+automatic/fixed color limits. **Settings → Plots** contains rolling history
+durations, current display units, font size and trace thickness. The save/apply
+button below the tabs applies all categories. Saved recording units and
+full-rate data are unaffected.
 
 The maps contain only confirmed contacts. A no-contact hop cannot start a CV or
 produce a valid contact/current map value. Start with 1×1, then 2×2, during

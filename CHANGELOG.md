@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Organized Settings into Connection, Acquisition, Piezos, Amplifiers, Saving,
+  Plots and Maps tabs, with independent scrolling and an always-visible
+  save/apply action for all categories.
+
 - Added independent saved Z/current colormaps, synchronized across both scan
   methods, square cells, circular footprints and color bars.
 

@@ -99,7 +99,15 @@ Starting a recording creates its files immediately. This protects partial data
 from process interruption but means the destination must remain writable for
 the entire experiment.
 
-## Display
+## Plots and Maps
+
+Settings uses seven tabs: **Connection**, **Acquisition**, **Piezos**,
+**Amplifiers**, **Saving**, **Plots**, and **Maps**. The
+**Save as defaults and apply** button remains visible below the tabs and saves
+all categories together. Each tab scrolls independently when needed.
+Plot buffers, rolling windows, current units, font size and trace thickness
+are in **Plots**; map shape, footprint diameter, colormaps and color limits
+are in **Maps**. The defaults-file location is shown in **Saving**.
 
 | Preference | Default | Options / range |
 | --- | --- | --- |
@@ -135,8 +143,8 @@ The analysis window loads unit/font/thickness preferences when opened.
 Rolling windows apply only to live time traces and approach history, not CV
 curves, the latest approach curve, maps or post-recording analysis. Increasing
 a window cannot restore points already pruned from the live buffer; the saved
-recording retains them. Larger fonts use a single-column Settings layout and
-scrollbars where required; emergency controls remain outside scrolling content.
+recording retains them. Settings tabs provide scrollbars where required at
+larger fonts; emergency controls remain outside scrolling content.
 
 **Scan map shape** selects Square cells (default) or Circular footprints for
 both scan experiments. **Meniscus footprint diameter** defaults to 1 µm and
