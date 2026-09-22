@@ -22,6 +22,16 @@ from echemtips.models import (
 
 
 class SettingsTests(unittest.TestCase):
+    def test_colormap_preferences_round_trip_and_validate(self) -> None:
+        for field in ("map_z_colormap", "map_current_colormap"):
+            self.assertTrue(AppSettings(**{field: "not-a-palette"}).validate())
+        self.assertEqual(AppSettings.from_dict({}).map_z_colormap, "viridis")
+        with TemporaryDirectory() as folder:
+            store = SettingsStore(Path(folder) / "settings.json")
+            settings = AppSettings(map_z_colormap="cividis", map_current_colormap="CET-D1")
+            store.save(settings)
+            self.assertEqual(store.load(), settings)
+
     def test_display_settings_reject_invalid_ranges_and_units(self) -> None:
         for kwargs in (
             {"map_z_min_um": 10, "map_z_max_um": 10},

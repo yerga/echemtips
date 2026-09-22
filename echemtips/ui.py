@@ -35,6 +35,7 @@ from .experiments import (
     ScanHoppingITExperiment,
 )
 from .models import (
+    MAP_COLORMAPS,
     AppSettings,
     ApproachCVParameters,
     ApproachITParameters,
@@ -1699,6 +1700,13 @@ class SettingsPage(BasePage):
         self.map_footprint.setToolTip("Display only: circle diameter, also used as the cell width for single-row/column maps. Does not change hop spacing or control the meniscus.")
         dv.addWidget(self.map_footprint)
         dv.addWidget(label("Map color scales", "cardTitle"))
+        dv.addWidget(label("Contact Z colormap", "muted"))
+        self.map_z_colormap = Choice(tuple(MAP_COLORMAPS), next(name for name, value in MAP_COLORMAPS.items() if value == app.settings.map_z_colormap))
+        dv.addWidget(self.map_z_colormap)
+        dv.addWidget(label("Current colormap", "muted"))
+        self.map_current_colormap = Choice(tuple(MAP_COLORMAPS), next(name for name, value in MAP_COLORMAPS.items() if value == app.settings.map_current_colormap))
+        self.map_current_colormap.setToolTip("For a blue–white–red scale centered on zero, use symmetric fixed current limits, such as −1 and +1 nA.")
+        dv.addWidget(self.map_current_colormap)
         self.map_z_auto = Check("Automatic contact Z limits", app.settings.map_z_auto_limits)
         self.map_current_auto = Check("Automatic current limits", app.settings.map_current_auto_limits)
         for prefix, title, unit, auto, low, high in (
@@ -1781,6 +1789,8 @@ class SettingsPage(BasePage):
             map_view_mode="circular" if self.map_view.get() == "Circular footprints" else "square",
             map_footprint_diameter_um=self.map_footprint.float(),
             map_z_auto_limits=self.map_z_auto.get(), map_z_min_um=self.map_z_min.float(), map_z_max_um=self.map_z_max.float(),
+            map_z_colormap=MAP_COLORMAPS[self.map_z_colormap.get()],
+            map_current_colormap=MAP_COLORMAPS[self.map_current_colormap.get()],
             map_current_auto_limits=self.map_current_auto.get(), map_current_min_na=self.map_current_min.float(), map_current_max_na=self.map_current_max.float(),
             monitor_window_s=self.monitor_window.float(), experiment_window_s=self.experiment_window.float(),
             current_display_unit=self.current_units.get(), font_size_pt=self.font_size.float(), trace_width_px=self.trace_width.float(),
@@ -1969,6 +1979,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         """Persist preferences, rebuilding the backend only for non-display changes."""
         if self.any_experiment_active: raise ValueError("Stop the experiment before changing instrument settings.")
         display_keys = {"display_max_points", "map_view_mode", "map_footprint_diameter_um",
+                        "map_z_colormap", "map_current_colormap",
                         "map_z_auto_limits", "map_z_min_um", "map_z_max_um", "map_current_auto_limits",
                         "map_current_min_na", "map_current_max_na", "monitor_window_s", "experiment_window_s",
                         "current_display_unit", "font_size_pt", "trace_width_px"}
@@ -2026,6 +2037,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             diagram._fit_annotations()
         for heatmap in self.findChildren(Heatmap):
             is_current = heatmap.base_unit == "nA"
+            heatmap.colormap_name = settings.map_current_colormap if is_current else settings.map_z_colormap
             heatmap.current_display_unit = settings.current_display_unit
             heatmap.font_size_pt = settings.font_size_pt
             auto = settings.map_current_auto_limits if is_current else settings.map_z_auto_limits

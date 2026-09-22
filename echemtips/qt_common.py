@@ -527,6 +527,9 @@ class Heatmap(QtWidgets.QWidget):
         self.current_display_unit = "nA"
         self.display_scale = 1.0
         self.fixed_limits: tuple[float, float] | None = None
+        self.colormap_name = "viridis"
+        self._active_colormap_name = self.colormap_name
+        self.color_map = pg.colormap.get(self.colormap_name)
         self.quantity = quantity
         self.rows = 1
         self.columns = 1
@@ -551,7 +554,7 @@ class Heatmap(QtWidgets.QWidget):
         self.color_bar = pg.ColorBarItem(
             values=(0.0, 1.0),
             width=14,
-            colorMap=pg.colormap.get("viridis"),
+            colorMap=self.color_map,
             label=f"{self.quantity} ({self.unit})",
             interactive=False,
             colorMapMenu=False,
@@ -626,6 +629,10 @@ class Heatmap(QtWidgets.QWidget):
     ) -> None:
         """Render finite grid values in physical coordinates and update range text."""
         self.values = dict(values)
+        if self.colormap_name != self._active_colormap_name:
+            self.color_map = pg.colormap.get(self.colormap_name)
+            self.color_bar.setColorMap(self.color_map)
+            self._active_colormap_name = self.colormap_name
         scale_values = self.fixed_limits if self.fixed_limits is not None else self.values.values()
         self.display_scale, self.unit = current_display_scale(self.current_display_unit, scale_values) if self.base_unit == "nA" else (1.0, self.base_unit)
         self.color_bar.axis.setLabel(f"{self.quantity} ({self.unit})", **{"font-size": f"{self.font_size_pt:g}pt"})
@@ -675,7 +682,7 @@ class Heatmap(QtWidgets.QWidget):
         self.image_item.setImage(image, autoLevels=False, levels=levels)
         self.image_item.setRect(QtCore.QRectF(plot_xs[0] - dx / 2, plot_ys[0] - dy / 2,
                                              plot_xs[-1] - plot_xs[0] + dx, plot_ys[-1] - plot_ys[0] + dy))
-        color_map = pg.colormap.get("viridis")
+        color_map = self.color_map
         span = levels[1] - levels[0]
         spots = []
         for (row, column), value in self.values.items():

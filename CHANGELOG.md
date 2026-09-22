@@ -7,6 +7,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Added independent saved Z/current colormaps, synchronized across both scan
+  methods, square cells, circular footprints and color bars.
+
 - Added saved display preferences for independent Z/current map color limits,
   monitor/experiment rolling windows, pA/nA/automatic current units, font size
   and trace thickness. Unit conversion is rendering-only; recordings and

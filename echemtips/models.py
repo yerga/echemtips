@@ -21,6 +21,13 @@ def _default_bitfile() -> str:
 
 DEFAULT_BITFILE = _default_bitfile()
 
+# Bundled PyQtGraph palettes: no optional matplotlib dependency is required.
+MAP_COLORMAPS = {
+    "Viridis": "viridis", "Cividis": "cividis", "Plasma": "plasma",
+    "Inferno": "inferno", "Magma": "magma", "Grayscale": "CET-L1",
+    "Blue–white–red": "CET-D1",
+}
+
 
 def default_settings_path() -> Path:
     """Return one user-level settings path independent of the launch folder."""
@@ -86,6 +93,8 @@ class AppSettings:
     map_view_mode: str = "square"
     map_footprint_diameter_um: float = 1.0
     map_z_auto_limits: bool = True
+    map_z_colormap: str = "viridis"
+    map_current_colormap: str = "viridis"
     map_z_min_um: float = 0.0
     map_z_max_um: float = 100.0
     map_current_auto_limits: bool = True
@@ -157,6 +166,9 @@ class AppSettings:
                 errors.append(f"{name} must be between {low} and {high}.")
         if not isinstance(self.current_display_unit, str) or self.current_display_unit not in {"nA", "pA", "Auto"}:
             errors.append("Current display units must be nA, pA or Auto.")
+        for name, value in (("Contact Z", self.map_z_colormap), ("Current", self.map_current_colormap)):
+            if not isinstance(value, str) or value not in MAP_COLORMAPS.values():
+                errors.append(f"{name} colormap must be one of the supported palettes.")
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
             errors.append("NI FPGA bitfile must not be empty.")
         return errors

@@ -103,6 +103,7 @@ the entire experiment.
 
 | Preference | Default | Options / range |
 | --- | --- | --- |
+| Contact Z / Current colormap | Viridis (each) | Independent choices: Viridis, Cividis, Plasma, Inferno, Magma, Grayscale, Blue–white–red |
 | Contact Z color scale | Automatic | Automatic, or fixed minimum/maximum in µm |
 | Current color scale | Automatic | Automatic, or fixed minimum/maximum entered in nA |
 | Monitor rolling window | 30 s | 1–3600 s; Watch current and Watch position |
@@ -116,6 +117,12 @@ use the end colors without changing the measurements. Z and current limits
 are independent and shared between scan methods. Current limits are always
 entered in **nA**, even when maps display pA (1 nA = 1000 pA). The range summary
 reports the actual data range; the color bar shows the selected scale.
+
+Colormap selections apply to both scan methods, square cells, circular
+footprints and their color bars. Save and apply to recolor existing maps;
+measurements and scale limits are unchanged. For Blue–white–red to represent
+zero at its midpoint, choose symmetric fixed limits (for example −1 to +1 nA).
+All palettes are bundled with PyQtGraph; no additional package is needed.
 
 Auto current units use pA when the visible nonzero current magnitudes are all
 below 1 nA; otherwise nA. A fixed current map scale selects Auto units from

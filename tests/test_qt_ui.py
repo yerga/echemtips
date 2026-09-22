@@ -13,13 +13,31 @@ from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
-from echemtips.models import AppSettings, SettingsStore
+from echemtips.models import AppSettings, MAP_COLORMAPS, SettingsStore
 from echemtips.models import Sample
 from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot, XYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_colormaps_match_images_footprints_and_scale(self) -> None:
+        heatmap = Heatmap("nA", "Current 1")
+        try:
+            heatmap.fixed_limits = (-1, 1)
+            data = {(0, 0): -1, (0, 1): 0, (0, 2): 1}
+            for palette in MAP_COLORMAPS.values():
+                heatmap.colormap_name = palette
+                for mode in ("square", "circular"):
+                    heatmap.set_data(data, 1, 3, view_mode=mode)
+                    self.assertEqual(heatmap.values, data)
+                    self.assertEqual(heatmap.color_bar.levels(), (-1, 1))
+                    self.assertIs(heatmap.color_bar.colorMap(), heatmap.color_map)
+                    self.assertIs(heatmap.image_item.getColorMap(), heatmap.color_map)
+                    for point, fraction in zip(heatmap.footprint_item.points(), (0, 0.5, 1)):
+                        self.assertEqual(point.brush().color(), heatmap.color_map.map(fraction, mode="qcolor"))
+        finally:
+            heatmap.close()
+
     def test_analysis_current_style_preserves_source_data(self) -> None:
         plot = XYPlot("Potential (V)", "Current (nA)")
         try:
@@ -124,6 +142,8 @@ class QtLayoutTests(unittest.TestCase):
                 settings_page = window.pages["Settings"]
                 settings_page.map_view.setCurrentText("Circular footprints")
                 settings_page.map_footprint.variable.set("2.5")
+                settings_page.map_z_colormap.setCurrentText("Cividis")
+                settings_page.map_current_colormap.setCurrentText("Blue–white–red")
                 backend = window.backend
                 backend.connect()
                 experiment = window.scan_experiment
@@ -136,11 +156,15 @@ class QtLayoutTests(unittest.TestCase):
                 saved = window.store.load()
                 self.assertEqual(saved.map_view_mode, "circular")
                 self.assertEqual(saved.map_footprint_diameter_um, 2.5)
+                self.assertEqual(saved.map_z_colormap, "cividis")
+                self.assertEqual(saved.map_current_colormap, "CET-D1")
                 with patch.dict(os.environ, {"ECHEMTIPS_SETTINGS_PATH": str(window.store.path)}):
                     reopened = EChemTipsApp()
                     try:
                         self.assertEqual(reopened.pages["Settings"].map_view.get(), "Circular footprints")
                         self.assertEqual(reopened.pages["Scan hopping + I-t"].z_map.view_mode, "circular")
+                        self.assertEqual(reopened.pages["Scan hopping + I-t"].z_map.colormap_name, "cividis")
+                        self.assertEqual(reopened.pages["Scan hopping + CV"].current_map.colormap_name, "CET-D1")
                     finally:
                         reopened.close()
                 self.assertEqual(scan.z_map.values, {(0, 0): 12})
@@ -151,6 +175,8 @@ class QtLayoutTests(unittest.TestCase):
                     self.assertEqual(page.parameters().footprint_diameter_um, 2.5)
                     self.assertEqual(page.z_map.view_mode, "circular")
                     self.assertEqual(page.current_map.footprint_diameter_um, 2.5)
+                    self.assertEqual(page.z_map.colormap_name, "cividis")
+                    self.assertEqual(page.current_map.colormap_name, "CET-D1")
                 settings_page.map_view.setCurrentText("Square cells")
                 window.apply_settings(settings_page.values())
                 self.assertEqual(scan.z_map.view_mode, "square")
