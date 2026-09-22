@@ -190,6 +190,9 @@ class NIBackendSafetyTests(unittest.TestCase):
                 self.ran = False
                 self.closed = False
 
+            def reset(self) -> None:
+                self.fpga_vi_state = SimpleNamespace(name="NotRunning")
+
             def run(self) -> None:
                 self.ran = True
 
@@ -234,6 +237,84 @@ class NIBackendSafetyTests(unittest.TestCase):
             self.assertTrue(driver.verified)
             self.assertTrue(backend.startup_verified)
             self.assertTrue(backend.connected)
+
+    def test_reconnect_resets_before_configuration_and_run(self) -> None:
+        from unittest.mock import Mock
+
+        for initial_state in ("Running", "NotRunning", "NaturallyStopped"):
+            with self.subTest(initial_state=initial_state), TemporaryDirectory() as folder:
+                bitfile = Path(folder) / "target.lvbitx"
+                bitfile.touch()
+                events = []
+                session = Mock()
+                session.fpga_vi_state = SimpleNamespace(name=initial_state)
+                session.registers = {name: Mock() for name in ("External Stop", "External Pause")}
+
+                def reset():
+                    events.append("reset")
+                    session.fpga_vi_state.name = "NotRunning"
+
+                def configure(*args):
+                    self.assertEqual(session.fpga_vi_state.name, "NotRunning")
+                    self.assertFalse(session.registers["External Stop"].write.call_args.args[0])
+                    self.assertTrue(session.registers["External Pause"].write.call_args.args[0])
+                    events.append("configure")
+                    return driver
+
+                def run():
+                    events.append("run")
+                    session.fpga_vi_state.name = "Running"
+
+                session.reset.side_effect = reset
+                session.run.side_effect = run
+                driver = Mock()
+                driver.wait_until_ready.side_effect = lambda: events.append("ready")
+                driver.verify_startup_state.side_effect = lambda: events.append("verify")
+                factory = Mock(return_value=session)
+                with (
+                    patch.dict(sys.modules, {"nifpga": SimpleNamespace(Session=factory)}),
+                    patch("echemtips.backends.inspect_bitfile"),
+                    patch("echemtips.backends.validate_wec_bitfile", return_value=[]),
+                    patch("echemtips.ni_driver.create_driver", side_effect=configure),
+                ):
+                    backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile=str(bitfile)))
+                    backend.connect(allow_startup_actuation=True)
+                    backend.disconnect()
+                    self.assertEqual(session.fpga_vi_state.name, "Running")
+                    backend.connect(allow_startup_actuation=True)
+                    self.assertTrue(backend.connected)
+                    self.assertTrue(backend.startup_verified)
+                    self.assertEqual(events, ["reset", "configure", "run", "ready", "verify"] * 2)
+                    self.assertTrue(factory.call_args.kwargs["no_run"])
+                    backend.disconnect()
+
+    def test_reset_failure_closes_session_without_running(self) -> None:
+        from unittest.mock import Mock
+
+        for fails in (False, True):
+            with self.subTest(reset_raises=fails), TemporaryDirectory() as folder:
+                bitfile = Path(folder) / "target.lvbitx"
+                bitfile.touch()
+                session = Mock()
+                session.fpga_vi_state = SimpleNamespace(name="Running")
+                session.registers = {"External Pause": Mock()}
+                if fails:
+                    session.reset.side_effect = RuntimeError("reset failed")
+                with (
+                    patch.dict(sys.modules, {"nifpga": SimpleNamespace(Session=Mock(return_value=session))}),
+                    patch("echemtips.backends.inspect_bitfile"),
+                    patch("echemtips.backends.validate_wec_bitfile", return_value=[]),
+                    patch("echemtips.ni_driver.create_driver") as create_driver,
+                ):
+                    backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile=str(bitfile)))
+                    with self.assertRaisesRegex(BackendError, "reset"):
+                        backend.connect(allow_startup_actuation=True)
+                    create_driver.assert_not_called()
+                    session.run.assert_not_called()
+                    session.close.assert_called_once()
+                    self.assertFalse(backend.connected)
+                    self.assertFalse(backend.startup_verified)
+                    self.assertIsNone(backend._session)
 
     def test_emergency_stop_uses_latching_driver_operation(self) -> None:
         calls: list[str] = []

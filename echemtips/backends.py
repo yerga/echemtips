@@ -469,6 +469,8 @@ class NIFPGABackend(InstrumentBackend):
             DEPLOYED_STARTUP_RAW_OUTPUTS["Applied Z"], self.settings.z_range_um, self.settings.z_bipolar
         )
         return (
+            "Connecting resets and reinitializes the FPGA, ending any previous execution and potentially changing outputs. "
+            "Close LabVIEW and any other application controlling this device before continuing. "
             "Running the deployed FPGA immediately sets AO0/X and AO1/Y to about +5 V "
             f"(approximately X {x_um:.1f} µm, Y {y_um:.1f} µm with the configured calibration), "
             f"AO2/Z to 0 V (approximately Z {z_um:.1f} µm), and E1/E2 to 0 V. "
@@ -567,13 +569,17 @@ class NIFPGABackend(InstrumentBackend):
                     f"The selected bitfile is not compatible with this configuration ({info.target_class}): "
                     + "; ".join(compatibility_errors)
                 )
-            # no_run is essential: controls and FIFOs are configured before the
-            # FPGA loop can drive an analog output.
+            # no_run suppresses a new start but does not stop an existing VI.
+            # Reset before configuring registers/FIFOs so reconnect starts from
+            # fresh target state and does not erase the new configuration.
             self._session = Session(str(bitfile), self.settings.resource, no_run=True)
-            if self._session.fpga_vi_state.name != "NotRunning":
-                self._session.close()
-                self._session = None
-                raise BackendError("FPGA is already running or previously stopped. Reinitialize it in NI MAX/LabVIEW with actuators disabled before connecting.")
+            self._session.reset()
+            state = self._session.fpga_vi_state.name
+            if state != "NotRunning":
+                raise BackendError(
+                    f"FPGA reset did not leave the target stopped (state: {state}). "
+                    "Close other NI/LabVIEW controllers and check the device in NI MAX before reconnecting."
+                )
             self._session.registers["External Stop"].write(False)
             self._session.registers["External Pause"].write(True)
             if self.driver_module:

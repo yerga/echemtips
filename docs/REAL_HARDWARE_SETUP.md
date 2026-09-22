@@ -231,11 +231,11 @@ Hopping retraction is deliberately expressed as a positive distance rather than 
 
 Emergency stop asserts both `External Pause` and `External Stop`, verifies their register values, and permanently latches the current Python driver instance. FPGA `Internal Stop`, an unexpected NI VI state, impossible line-counter progress, or an expired command watchdog also latches the driver. None of these software checks replaces a physical emergency stop or guarantees that analog outputs are de-energized.
 
-The application refuses to attach to an already running FPGA. `no_run=True` prevents a new Run request but does not stop an existing VI. Opening a different bitfile can download it, and initialization can change outputs; keep actuators disabled during this step.
+After startup authorization, the application opens the session with `no_run=True`, resets the FPGA, verifies `NotRunning`, then configures and runs it. This supports reconnecting to a target left running by a previous session. Reset ends previous execution and can change outputs; close other NI/LabVIEW controllers and keep actuators disabled during this step. No bitfile change is required. The command-line `--connect` checker only opens the session and reports state; it does not perform this reset/run workflow.
 
 An idle Potential 1/2 change is sent as a one-waypoint FPGA jump, not as a host pulse: success requires the target line counter and waiting state to complete that waypoint and the corresponding `Applied Voltage` indicator to equal the requested raw value. An on-the-fly change is accepted only while that voltage axis is executing, remains asserted until the same applied-value acknowledgement, and is then cleared by the host. A missing acknowledgement pauses and latches the session for reinitialization. Operator and FPGA feedback pauses continue to receive health checks, but their acknowledged duration is excluded from the physical-motion watchdog deadline.
 
-- The NI session is opened with `no_run=True`; the target is configured and paused before it is run.
+- The NI session is opened with `no_run=True` and reset; the target is then configured and paused before it is run. Reset failure prevents startup and closes the session.
 - FIFO waypoints are initially filled while paused; long programs continue through bounded, complete-frame host-side refills after execution starts.
 - Contact completion uses the existing `EndCurrentLine`, `WaitingForWayPoints`, `LineNumber`, and `Internal Pause` controls without stopping acquisition.
 - Stop safely cancels physical motion but deliberately retires that acquisition stream; reinitialize and reconnect before another submission. It does not promise to zero outputs.
