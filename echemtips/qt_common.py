@@ -103,9 +103,20 @@ def button(text: str, slot=None, role: str = "") -> QtWidgets.QPushButton:
     return result
 
 
+class WrappedLabel(QtWidgets.QLabel):
+    """Reserve enough height for wrapped text inside nested form layouts."""
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """Recalculate the text height when the available width changes."""
+        super().resizeEvent(event)
+        required = self.heightForWidth(self.width())
+        if required > 0 and self.minimumHeight() != required:
+            self.setMinimumHeight(required)
+
+
 def label(text: str = "", role: str = "", *, word_wrap: bool = False) -> QtWidgets.QLabel:
     """Create a themed label with an optional object role and wrapping."""
-    result = QtWidgets.QLabel(text)
+    result = WrappedLabel(text) if word_wrap else QtWidgets.QLabel(text)
     if role:
         result.setObjectName(role)
     result.setWordWrap(word_wrap)
@@ -415,7 +426,24 @@ class ProgramDiagram(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.graph)
-        self.setFixedHeight(150)
+        self.setFixedHeight(180)
+        self.graph.getViewBox().sigResized.connect(self._fit_annotations)
+
+    def _fit_annotations(self) -> None:
+        if not self.labels:
+            return
+        values = [item.pos().y() for item in self.labels]
+        low, high = min(values), max(values)
+        span = high - low or max(abs(high) * 0.2, 1.0)
+        # TextItems use screen pixels, not data units. Reserve their real
+        # height above the peak rather than relying on curve auto-ranging.
+        height = max(self.graph.getViewBox().height(), 1.0)
+        top_pixels = max(item.boundingRect().height() * 1.35 for item in self.labels) + 8
+        top_fraction = min(top_pixels / height, 0.65)
+        bottom_fraction = 0.1
+        extent = span / (1 - top_fraction - bottom_fraction)
+        self.graph.setYRange(low - extent * bottom_fraction, high + extent * top_fraction, padding=0)
+        self.graph.setXRange(-0.4, max(len(values) - 1, 1) + 0.4, padding=0)
 
     def set_profile(self, values: list[float], names: list[str], *, stepped: bool = False) -> None:
         """Render labelled ramped or stepped parameter values."""
@@ -443,7 +471,7 @@ class ProgramDiagram(QtWidgets.QWidget):
             item.setPos(position, value)
             self.graph.addItem(item)
             self.labels.append(item)
-        self.graph.enableAutoRange()
+        self._fit_annotations()
 
 
 class Heatmap(QtWidgets.QWidget):

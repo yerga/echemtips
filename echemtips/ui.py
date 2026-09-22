@@ -86,7 +86,7 @@ def _contact_help() -> QtWidgets.QLabel:
         "After contact, the experiment continues automatically. Settling time may be zero."
     )
     text.setMaximumWidth(330)
-    text.setMinimumHeight(text.fontMetrics().lineSpacing() * 2 + 6)
+    text.setMinimumHeight(text.heightForWidth(text.maximumWidth()))
     text.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum)
     return text
 

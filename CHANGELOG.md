@@ -18,6 +18,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Wrapped experiment descriptions now reserve their full text height; waveform
+  previews leave screen-space headroom for peak-value annotations.
+
 - Parent parameter-unit labels before making them visible, preventing brief
   standalone windows from flashing during application startup on Windows.
 

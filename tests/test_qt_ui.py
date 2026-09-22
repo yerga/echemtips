@@ -13,11 +13,43 @@ from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
 from echemtips.models import AppSettings
 from echemtips.models import Sample
-from echemtips.qt_common import Heatmap, InfoButton, Plot, TimedXYPlot
+from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_wrapped_contact_text_fits_on_all_approach_pages(self) -> None:
+        window = EChemTipsApp()
+        try:
+            window.show()
+            for width in (1080, 1440):
+                window.resize(width, 680)
+                for key in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
+                    window.show_page(key)
+                    for _ in range(4):
+                        self.qt_app.processEvents()
+                    text = window.pages[key].findChild(QtWidgets.QLabel, "contactHelp")
+                    self.assertGreaterEqual(text.height(), text.heightForWidth(text.width()), key)
+        finally:
+            window.close()
+
+    def test_profile_annotations_fit_inside_plot(self) -> None:
+        diagram = ProgramDiagram("Potential E1 (V)")
+        try:
+            diagram.show()
+            for width in (330, 600):
+                diagram.resize(width, diagram.height())
+                for values in ([10, 90, 10], [-0.2, 0.6, -0.4, -0.2], [0, 0, 0], [-10, -2, -5]):
+                    for stepped in (False, True):
+                        diagram.set_profile(values, [str(i) for i in range(len(values))], stepped=stepped)
+                        for _ in range(4):
+                            self.qt_app.processEvents()
+                        bounds = diagram.graph.getViewBox().sceneBoundingRect()
+                        for item in diagram.labels:
+                            self.assertTrue(bounds.contains(item.sceneBoundingRect()), (values, bounds, item.sceneBoundingRect()))
+        finally:
+            diagram.close()
+
     def test_context_help_and_removed_clutter(self) -> None:
         window = EChemTipsApp()
         try:
