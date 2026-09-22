@@ -7,6 +7,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Reduced contextual help to six genuinely useful explanations; removed info
+  buttons from ordinary plots, page titles and waveform previews.
+
 - Standardized experiment actions, electrochemical potential terminology,
   movement speeds and plot tabs across the control interface.
 - Removed redundant implementation notes and moved background plot/setup

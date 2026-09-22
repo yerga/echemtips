@@ -21,6 +21,15 @@ class QtLayoutTests(unittest.TestCase):
     def test_context_help_and_removed_clutter(self) -> None:
         window = EChemTipsApp()
         try:
+            self.assertEqual(
+                {info.accessibleName() for info in window.findChildren(InfoButton)},
+                {"Pipette and electrolyte help", "Current at selected potential help",
+                 "Mean pulse current help", "Acquisition help",
+                 "Command voltage ratio help", "Display help"},
+            )
+            self.assertEqual(len(window.findChildren(InfoButton)), 6)
+            for key in ("Approach", "Approach + CV", "Approach + I-t", "CV", "Watch current", "Watch position"):
+                self.assertEqual(window.pages[key].findChildren(InfoButton), [])
             notes = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
             for removed in ("FPGA logic preserved", "PySide6 · PyQtGraph", "Restarts when a new approach begins.", "All approach samples from the latest 60 seconds; complete data remain recorded."):
                 self.assertNotIn(removed, notes)
