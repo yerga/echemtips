@@ -11,12 +11,34 @@ The current application includes:
 - Guided electrical preflight and an immersed-pipette characterization workflow with saved JSON reports.
 - Scan hopping with CV or current-time acquisition, serpentine or raster paths, physical-coordinate contact/current maps, square-cell or circular-footprint views, contact-relative Z retraction, and live spacing and duration estimates.
 - Bounded X/Y/Z piezo movement and controlled potential output.
-- Simulation and NI USB-7856R operation with a fixed, explicit channel map.
+- Simulation and NI R Series FPGA operation with a compatible target and an explicit channel map.
 - A separate data-analysis UI for eChemTips CSV recordings and identified legacy LabVIEW exports.
 
 The simulator requires no laboratory hardware. Real-device support uses the existing compiled FPGA target; eChemTips does not replace FPGA-side feedback or timing logic.
 
 The supported UI on `main` uses PySide6 and PyQtGraph. The final pre-migration Tkinter implementation is preserved in the `tk-legacy` branch and the immutable `tk-v0.1` tag.
+
+## Origins and reference
+
+eChemTips is a Python host/UI based on the workflows and FPGA host protocol of
+**Warwick Electrochemical Scanning Probe Microscopy (WEC-SPM)**, developed at
+the University of Warwick and by its collaborators. It retains the compatible
+FPGA-side program rather than replacing deterministic feedback with Python.
+To request the original software, use the form on the
+[Warwick WEC-SPM page](https://warwick.ac.uk/fac/sci/chemistry/research/unwin/electrochemistry/wec-spm/).
+This is a separate project, not an official Warwick release.
+
+For a detailed description of the underlying instrument and software:
+McKelvey, K.; Edwards, M. A.; Kang, M.; Brunet Cabré, M.; Jones, N. B.;
+Unwin, P. R. **A Look inside a Flexible Open-Source Scanning Electrochemical
+Probe Microscope.** *ACS Electrochemistry* **2026**, *2* (1), 78–91
+(published online December 4, 2025).
+[DOI: 10.1021/acselectrochem.5c00354](https://doi.org/10.1021/acselectrochem.5c00354).
+The paper's Supporting Information, section S7, describes software access.
+
+Original WEC-SPM software and FPGA artifacts are not distributed here and
+remain subject to their own terms (the paper describes an academic-use
+license). This repository's MIT license does not relicense those materials.
 
 ## Run the simulator
 
@@ -75,7 +97,19 @@ python run_hardware_check.py --bitfile "/path/to/target.lvbitx"
 python run_hardware_check.py --bitfile "/path/to/target.lvbitx" --connect --resource RIO0
 ```
 
-The currently supported target profile is an NI USB-7856R with:
+The host is protocol-based, not tied to a bitfile filename or one NI model.
+USB-7856R is the hardware used during development and reported real-device
+trials. Other R Series devices (for example 7852R or 7855 variants) are
+candidates, not yet verified hardware configurations: they need a bitfile
+compiled for the exact device, preserving the same WEC-SPM interface **and
+execution semantics**, and staged commissioning. A USB bitfile cannot simply
+be renamed or reused on a PCIe/PXI device. Metadata checks alone cannot prove
+behavioral compatibility; see [the target contract](docs/HARDWARE_INTEGRATION.md).
+
+Choose your `.lvbitx` in Settings and save defaults, or set `ECHEMTIPS_BITFILE`
+as the default for a new configuration. Existing saved settings take precedence.
+No private archive is searched and no particular filename is required.
+The common logical channel map is:
 
 - AO0, AO1, AO2: X, Y, Z piezo commands
 - AO3, AO4: Voltage 1 and Voltage 2

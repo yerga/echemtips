@@ -2,6 +2,19 @@
 
 Choose the path that matches what you are doing.
 
+## WEC-SPM origins
+
+eChemTips is a separate Python host/UI based on the workflows and FPGA protocol
+of Warwick Electrochemical Scanning Probe Microscopy (WEC-SPM). To request the
+original software, use the form on the
+[University of Warwick WEC-SPM page](https://warwick.ac.uk/fac/sci/chemistry/research/unwin/electrochemistry/wec-spm/).
+For the instrument and software architecture, see McKelvey et al.,
+[A Look inside a Flexible Open-Source Scanning Electrochemical Probe Microscope](https://doi.org/10.1021/acselectrochem.5c00354),
+*ACS Electrochemistry* **2026**, *2* (1), 78–91 (online December 4, 2025).
+Supporting Information section S7 describes software access. The original
+WEC-SPM software/FPGA artifacts remain under their own license terms and are
+not distributed or relicensed by this project.
+
 ## Use the simulator or operate an experiment
 
 1. Start with the project [README](https://github.com/yerga/echemtips#readme).

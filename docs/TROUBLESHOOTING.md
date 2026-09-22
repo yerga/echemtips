@@ -18,7 +18,7 @@ cannot prove that a downstream high-voltage amplifier is de-energized.
 | `RIO0` not found | USB/power/cable problem, different alias, NI driver problem, or another process owns the target. | Disable actuators, inspect the device in NI MAX, use its exact resource, close LabVIEW/other hosts, reconnect USB, and rerun `run_hardware_check.py --connect`. |
 | Target was left running by a previous session | Closing a session does not necessarily stop the FPGA. | Close other NI/LabVIEW controllers, secure the probe, and accept the startup confirmation. eChemTips resets the target before configuration and startup. |
 | FPGA reset fails or target remains running | NI reset failed or the target did not reach `NotRunning`. | Startup is blocked and the session is closed. Close other controllers and check the device in NI MAX before reconnecting. Preserve the reported state/error if this repeats. |
-| Bitfile target/signature rejected | Wrong or changed `.lvbitx`, commonly the PCIe-7852R image. | Run the offline checker. Select the USB-7856R filename/signature from the controlled instrument record. Never force a mismatched image. |
+| Bitfile target/contract rejected | Wrong target family or incompatible registers/FIFOs. | Run the offline checker. Select the device-specific build from the laboratory configuration record. A filename change cannot fix a protocol or device mismatch; NI-RIO must also accept the image for the actual device. |
 | Register/FIFO contract rejected | Bitfile does not expose the expected names, types, access, directions, or frame-compatible depth. | Preserve checker output and compare with `HARDWARE_INTEGRATION.md`. Use the verified target; do not guess aliases or cast FIFO types. |
 | Startup verification fails | Applied AO values, line state, pause/stop state, or waiting state does not match the deployed target behavior. | Keep downstream devices inhibited. Measure outputs, reset the device, ensure no other host is running, and retry once. Treat repetition as a bitfile/driver/configuration fault. |
 
@@ -59,7 +59,7 @@ identifiers, and experimental data that cannot be shared:
 eChemTips commit:
 Windows / Python architecture:
 NI-RIO / NI MAX / nifpga versions:
-USB-7856R resource and bitfile signature:
+NI device model, resource and bitfile signature:
 Backend and experiment:
 Exact error text:
 Last safe physical state:

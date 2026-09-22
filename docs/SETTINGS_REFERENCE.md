@@ -30,11 +30,12 @@ without reviewing every calibration value.
 | --- | --- | --- | --- |
 | **Backend** | Simulation | Simulation, NI FPGA | Chooses the deterministic software simulator or real RIO connection. Opening the application alone does not connect. |
 | **NI resource** | `RIO0` | Non-empty NI MAX resource in hardware mode | Passed to `nifpga.Session`. Use the exact alias shown by NI MAX. |
-| **FPGA hardware** | USB R Series | USB R Series, PCIe/PXI R Series, Auto | Constrains bitfile target validation. Use USB R Series for the USB-7856R; do not use Auto to bypass an unexplained mismatch. |
-| **Compiled bitfile** | Supported private filename or detected sibling archive | Non-empty path in hardware mode | Defines the FPGA image and its host-visible register/FIFO contract. The image is private and never packaged by eChemTips. |
+| **FPGA hardware** | Auto | USB R Series, PCIe/PXI R Series, Auto | Optionally constrains the bitfile transport family. Auto leaves exact device matching to NI-RIO; it does not bypass register/FIFO checks. |
+| **Compiled bitfile** | Empty, or `ECHEMTIPS_BITFILE` | Non-empty path in hardware mode | Defines the FPGA image and its host-visible register/FIFO contract. The image is private and never packaged by eChemTips. |
 
-The application refuses the known PCIe-7852R image when USB R Series is
-selected. Selecting a path does not make it safe; run the hardware checker and
+The application refuses a non-USB image when USB R Series is selected, and
+a USB image when PCIe/PXI R Series is selected. No filename or single build
+signature is required. Saved paths are never replaced based on their names. Selecting a path does not make it safe; run the hardware checker and
 complete physical commissioning.
 
 ## Acquisition and execution

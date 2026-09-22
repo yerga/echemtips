@@ -14,7 +14,7 @@ flowchart LR
     BE --> SIM[SimulationBackend]
     BE --> NI[NIFPGABackend]
     NI --> DRIVER[WECSPMDriver]
-    DRIVER --> FPGA[USB-7856R FPGA]
+    DRIVER --> FPGA[Compatible NI R Series FPGA]
     ACQ[AcquisitionWorker] -->|serialized read_samples| BE
     ACQ --> QUEUE[bounded complete-sample batches]
     QUEUE --> APP[Qt polling/dispatch]

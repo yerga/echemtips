@@ -114,7 +114,7 @@ explicit physical meaning and unit.
   simulator or NI FPGA hardware.
 
 **Bitfile (`.lvbitx`)**
-: Compiled LabVIEW FPGA image deployed to the USB-7856R. eChemTips drives it;
+: Compiled LabVIEW FPGA image built for the specific NI target device. eChemTips drives it;
   Python does not replace the FPGA logic.
 
 **FIFO**

@@ -13,7 +13,7 @@ This Python host keeps `FPGA Target.vi` on the NI device. It implements the host
 ## Required instrument-PC software
 
 Use a 64-bit Windows computer supported by the chosen NI-RIO release and the
-exact USB R Series model. Python 3.11 (64-bit) is the recommended initial
+exact NI R Series model. Python 3.11 (64-bit) is the recommended initial
 commissioning environment because it is conservative and reproducible; a
 newer interpreter is not considered hardware-supported here until it has
 passed this entire procedure. Install and record:
@@ -49,15 +49,24 @@ host interface for RIO devices and the USB R Series hardware setup at:
 - <https://knowledge.ni.com/KnowledgeArticleDetails?id=kA03q000000YHblCAG&l=en-US>
 - <https://download.ni.com/support/manuals/374974a.pdf>
 
-## USB-7856R target image
+## Select a target image for your device
 
-The supported `wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx` reports target class `USB-7856R` and signature `8229BC0D5A4935D854D1286878CEE54A`. It matches the native driver's WEC-SPM host interface in offline protocol tests but is not distributed in this repository. Do not call a particular installation commissioned until it has completed the physical checks below. eChemTips uses `ECHEMTIPS_BITFILE` when set and also detects that filename in a sibling `WEC_SPM/FPGA Bitfiles` archive; otherwise select the private target explicitly in Settings. The older `FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx` is a PCIe-7852R image and must not be selected for the USB device.
+Use a `.lvbitx` compiled for the exact NI model and preserving the
+[compatible target contract](HARDWARE_INTEGRATION.md). The filename is arbitrary;
+there is no required build signature. USB-7856R is the development/test
+reference, not the only permitted model. Other models require their own
+source/build review and the physical checks below before use.
+
+Select the bitfile in Settings and save defaults. `ECHEMTIPS_BITFILE` supplies
+a default when no saved configuration overrides it. No adjacent private
+LabVIEW directory is searched automatically. Existing saved paths and transport
+choices are preserved, including PCIe/PXI configurations.
 
 Copy the private image to a controlled local folder on the instrument PC. Do
 not add it to Git. To select it without relying on a remembered UI value:
 
 ```powershell
-$env:ECHEMTIPS_BITFILE = "C:\instrument\private\wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx"
+$env:ECHEMTIPS_BITFILE = "C:\instrument\private\target.lvbitx"
 python run_hardware_check.py --bitfile $env:ECHEMTIPS_BITFILE
 ```
 
@@ -68,13 +77,18 @@ the laboratory configuration record.
 
 The supported logical channel map is fixed in Python, but AO/AI names are not
 SCB screw-terminal numbers. Before wiring, identify the exact connector block
-model and use the USB-7856R manual plus its labelled terminal diagram. NI's USB
+model and use your device's manual plus its labelled terminal diagram. For the
+USB-7856R reference setup, NI's USB
 R Series guide specifies the SHC68-68-RMIO cable and SCB-68A for the MIO
 connector. If the installed block is labelled only SCB-68 or has a different
 part number, stop and verify compatibility and terminal numbering.
 
 Complete this worksheet from the actual manuals and continuity checks. Never
 copy terminal numbers from another R Series model:
+
+The NanoDrive positioner and VA-10M amplifier below are reference-setup
+examples, not required brands. Substitute your own controllers and amplifier,
+and verify their ranges, sensitivity, polarity and wiring independently.
 
 | FPGA channel | Purpose | SCB terminal | Destination BNC/controller | Signal reference | Verified |
 | --- | --- | --- | --- | --- | --- |
@@ -122,7 +136,7 @@ also matches expectation.
    inhibit the piezo high-voltage outputs and disconnect the electrochemical
    cell from the E1 command while retaining only connections required for the
    current stage.
-2. With the USB-7856R disconnected, verify the Python environment:
+2. With the NI device disconnected or outputs physically inhibited, verify the Python environment:
 
    ```powershell
    .\.venv\Scripts\Activate.ps1
@@ -137,11 +151,11 @@ also matches expectation.
    py run_hardware_check.py --bitfile "C:\path\to\target.lvbitx"
    ```
 
-   Confirm USB-7856R, signature
-   `8229BC0D5A4935D854D1286878CEE54A`, required register types/access, FIFO
+   Confirm the target model and signature against your laboratory configuration
+   record, required register types/access, FIFO
    directions, I16 element types, and frame divisibility. Do not continue on a
    warning you do not understand.
-4. Connect USB and verify the device/resource in NI MAX. With physical outputs
+4. Connect the device and verify the device/resource in NI MAX. With physical outputs
    inhibited, check that NI-RIO can open the target without running the FPGA VI:
 
    ```powershell
@@ -199,7 +213,7 @@ scope/meter captures, preflight JSON, and representative recordings.
 | Date, operator, instrument ID | ___ |
 | Windows edition/build, 64-bit | ___ |
 | NI-RIO and NI MAX versions | ___ |
-| USB-7856R serial and NI resource | ___ |
+| NI model, serial and resource | ___ |
 | Python version and architecture | ___ |
 | eChemTips Git commit | ___ |
 | `nifpga`, PySide6, PyQtGraph versions | ___ |

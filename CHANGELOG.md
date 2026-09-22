@@ -7,6 +7,15 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Changed
 
+- Bitfiles are explicitly selected or supplied through `ECHEMTIPS_BITFILE`;
+  removed private filename discovery and filename-based settings migration.
+  Preserved saved paths; new configurations default to Auto transport.
+- NI compatibility checks retain the register/FIFO and selected transport
+  contract without pinning USB hardware to one model/build signature. Other
+  builds still require matching FPGA behavior and physical commissioning.
+- Generalized hardware guides and added WEC-SPM origins, software-access link
+  and the McKelvey et al. instrument tutorial citation.
+
 - Reduced contextual help to six genuinely useful explanations; removed info
   buttons from ordinary plots, page titles and waveform previews.
 
