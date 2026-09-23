@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import csv
+from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass
 import json
 from pathlib import Path
 from typing import Any
+import numpy as np
 
 from .legacy_data import LegacyDataError, load_legacy
-from .qt_common import COLORS
 
 
 CURRENT_COLUMNS = {
@@ -20,7 +22,7 @@ CURRENT_COLUMNS = {
 RAW_SIGNALS = dict(CURRENT_COLUMNS)
 
 PLOT_COLORS = (
-    COLORS["accent"], COLORS["blue"], COLORS["danger"], COLORS["warning"],
+    "#008b83", "#287ac2", "#d83b59", "#bc7627",
     "#7857b8", "#c65f20", "#1686a5", "#b84683",
 )
 
@@ -29,13 +31,43 @@ class AnalysisError(RuntimeError):
     """A saved recording cannot be read or interpreted."""
 
 
+class NumericRows(Sequence):
+    """Read-only, compact numeric storage with a compatibility row mapping API.
+
+    Slices share the underlying array. Dictionaries are created only for rows
+    actually accessed, avoiding millions of persistent Python row objects.
+    """
+
+    def __init__(self, columns, matrix):
+        self.columns = tuple(columns)
+        self.matrix = np.asarray(matrix, dtype=float).reshape(-1, len(columns))
+        self.matrix.flags.writeable = False
+
+    def __len__(self):
+        return len(self.matrix)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return NumericRows(self.columns, self.matrix[index])
+        return dict(zip(self.columns, self.matrix[index]))
+
+
 @dataclass(slots=True)
 class AnalysisDataset:
     """Normalized numeric recording plus metadata used by the analysis UI."""
     path: Path
     columns: tuple[str, ...]
-    rows: list[dict[str, float]]
+    rows: Sequence
     metadata: dict[str, Any]
+
+    def __post_init__(self):
+        if not isinstance(self.rows, NumericRows):
+            self.rows = NumericRows(self.columns, [[row.get(c, float("nan")) for c in self.columns]
+                                                   for row in self.rows])
+
+    def column(self, name: str) -> np.ndarray:
+        """Return a read-only full-resolution column; no display downsampling."""
+        return self.rows.matrix[:, self.columns.index(name)]
 
     @classmethod
     def load(cls, path: Path | str) -> "AnalysisDataset":
@@ -50,25 +82,32 @@ class AnalysisDataset:
                 raise AnalysisError(str(exc)) from exc
             return cls(recording.path, recording.columns, recording.rows, recording.metadata)
         try:
-            with source_path.open(newline="", encoding="utf-8") as stream:
+            with source_path.open(newline="", encoding="utf-8-sig") as stream:
                 reader = csv.DictReader(stream)
                 if not reader.fieldnames:
                     raise AnalysisError("The CSV file has no header row.")
                 columns = tuple(reader.fieldnames)
-                required = {"elapsed_s", "voltage1_v", "current1_na"}
+                if len(set(columns)) != len(columns) or any(not name for name in columns):
+                    raise AnalysisError("CSV column names must be nonempty and unique.")
+                required = {"elapsed_s"}
                 missing = required.difference(columns)
                 if missing:
                     raise AnalysisError(f"Missing required columns: {', '.join(sorted(missing))}")
-                rows: list[dict[str, float]] = []
+                numbers = array("d")
                 for line_number, raw in enumerate(reader, 2):
                     try:
-                        rows.append({name: float(raw[name]) for name in columns})
+                        if None in raw:
+                            raise ValueError("Extra CSV values")
+                        numbers.extend(float(raw[name]) for name in columns)
                     except (KeyError, TypeError, ValueError) as exc:
                         raise AnalysisError(f"Invalid numeric value on CSV line {line_number}.") from exc
         except OSError as exc:
             raise AnalysisError(f"Could not read {source_path.name}: {exc}") from exc
-        if not rows:
+        rows = NumericRows(columns, np.frombuffer(numbers, dtype=float))
+        if not len(rows):
             raise AnalysisError("The recording contains no samples.")
+        if not np.isfinite(rows.matrix[:, columns.index("elapsed_s")]).all():
+            raise AnalysisError("Elapsed timestamps must be finite.")
 
         metadata: dict[str, Any] = {}
         metadata_path = source_path.with_suffix(".json")
@@ -77,8 +116,8 @@ class AnalysisDataset:
                 loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
                     metadata = loaded
-            except (OSError, ValueError, json.JSONDecodeError):
-                metadata = {}
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                metadata = {"analysis_warnings": [f"Metadata could not be read: {exc}"]}
         return cls(source_path, columns, rows, metadata)
 
     @property
@@ -87,17 +126,17 @@ class AnalysisDataset:
         value = self.metadata.get("experiment")
         if isinstance(value, str) and value.strip():
             return value.strip()
-        return "Approach then CV" if "approach_then_cv" in self.path.stem.lower() else "Watch Current"
+        return "Approach then CV" if "approach_then_cv" in self.path.stem.lower() else "Unspecified experiment"
 
     @property
     def duration_s(self) -> float:
         """Return the measured time span of the dataset in seconds."""
-        times = [row["elapsed_s"] for row in self.rows]
-        return max(times) - min(times)
+        times = self.column("elapsed_s")
+        return float(np.ptp(times)) if len(times) else 0.0
 
     def values(self, column: str) -> list[float]:
         """Return values for a column from rows that contain it."""
-        return [row[column] for row in self.rows if column in row]
+        return self.column(column).tolist() if column in self.columns else []
 
 
 @dataclass(slots=True)
@@ -175,13 +214,20 @@ def _cv_start_index(
 
 def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     """Extract completed CV cycles using the voltage program saved in metadata."""
+    if "voltage1_v" not in dataset.columns:
+        return []
     if "scan_pixel" in dataset.columns:
-        pixel_ids = sorted({int(row["scan_pixel"]) for row in dataset.rows if row.get("scan_pixel", -1) >= 0})
-        if pixel_ids:
+        grouped = {}
+        for index, pixel in enumerate(dataset.column("scan_pixel")):
+            if np.isfinite(pixel) and pixel >= 0 and pixel == int(pixel):
+                grouped.setdefault(int(pixel), []).append(index)
+        if grouped:
             separated: list[CVCycle] = []
-            for pixel in pixel_ids:
-                pixel_rows = [row for row in dataset.rows if int(row.get("scan_pixel", -1)) == pixel]
-                subset = AnalysisDataset(dataset.path, tuple(name for name in dataset.columns if name != "scan_pixel"), pixel_rows, dataset.metadata)
+            columns = tuple(name for name in dataset.columns if name != "scan_pixel")
+            keep = [dataset.columns.index(name) for name in columns]
+            for pixel, indices in sorted(grouped.items()):
+                pixel_rows = NumericRows(columns, dataset.rows.matrix[np.ix_(indices, keep)])
+                subset = AnalysisDataset(dataset.path, columns, pixel_rows, dataset.metadata)
                 for cycle in extract_cv_cycles(subset):
                     cycle.pixel = pixel
                     separated.append(cycle)
