@@ -5,6 +5,22 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Fixed
+
+- Approach, Approach + CV/I–t and hopping scans now neutralize the unused
+  secondary FPGA comparator with an unreachable I32 threshold. The target
+  ORs both comparators; Current 2 above zero previously caused unwanted pauses
+  even when the selected current had not reached its contact threshold.
+- Contact completion latches EndCurrentLine before releasing Internal Pause,
+  waits for acknowledgement and drains remaining samples before surface work.
+  Resume releases only External Pause, allowing simultaneous operator and
+  feedback pauses to be resolved without overriding contact ownership.
+- Unknown contact pauses allow bounded sample/register reconciliation, then
+  fail closed with register diagnostics. Z motion completion alone is no
+  longer accepted as contact. Fault latches cannot be bypassed using Resume.
+  These are host-only fixes; no FPGA binary change is required. Physical
+  validation remains necessary on each instrument.
+
 ### Changed
 
 - Added a packaged pipette/meniscus logo to both app sidebars and Qt window

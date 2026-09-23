@@ -50,6 +50,37 @@ cannot prove that a downstream high-voltage amplifier is de-energized.
 | CSV exists but experiment-aware analysis is incomplete | JSON sidecar is missing/damaged or parameters do not describe a complete CV. | Preserve the raw CSV, restore sidecar only from backup, and analyze as raw data. The analysis tool intentionally rejects incomplete cycles. |
 | Disk-write or acquisition-backlog error | Destination unavailable/full/slow, permissions changed, or rendering/processing could not keep up. | Secure hardware first. Preserve the error recording, check free space and destination permissions, use a local permanent data folder, and repeat in Simulation before hardware. |
 
+## Retest after the September 2026 approach-pause correction
+
+Update the Python application and restart it. Secure the probe before
+disconnecting/reconnecting: FPGA initialization still changes outputs. The
+same compatible bitfile can be used; no recompilation is required. Close
+LabVIEW and other controlling applications during the test.
+
+1. With the probe well clear of the surface, check stationary Current 1/2 and
+   confirm the chosen current, gain, threshold units and comparison direction.
+2. Run a standalone Approach over a **small, physically safe travel interval**
+   with a threshold beyond the measured current/noise. It should reach the
+   approach limit without declaring contact. Do not use a long approach toward
+   a real surface to test a deliberately unreachable threshold.
+3. Using a controlled electrical signal/load and safe mechanical clearance,
+   cross the selected threshold. Verify that Z stops and the configured
+   settling/retract or CV/I–t stage proceeds, without reconnecting merely to
+   resolve contact. Repeat with Current 2 selected as primary feedback.
+4. Test Pause/Resume during the safe approach. If contact and operator pause
+   coincide, surface work must wait for Resume. An unrequested External Pause
+   should remain held and be reported, not silently cleared; preserve that
+   report and investigate competing hosts before resuming.
+5. Only after these pass, test physical contact conservatively, then a 2×2
+   hopping scan. Verify both contact positions and current/potential traces in
+   the recorded data. Test baseline-relative detection separately if used.
+
+If "motion held; checking contact evidence" does not resolve within the
+configured hardware-ready timeout, the session faults closed. Preserve the
+CSV/JSON and the complete diagnostic text, including LineNumber, LineType,
+pause states and feedback thresholds. Do not repeatedly force Resume or raise
+the timeout to bypass an unexplained pause.
+
 ## Minimal fault report
 
 Include the following when opening an issue, but remove private paths, sample

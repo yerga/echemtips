@@ -20,6 +20,39 @@ This audit covers the reusable functionality formerly spread across `FPGA Host.v
 
 ## Verified boundary
 
+### Contact-pause protocol
+
+Direct inspection of the WEC-SPM `FPGA Target.vi` block diagram shows that its
+line-type-1 Z case ("Pause on Set Point") writes **Feedback1 OR Feedback2** to
+Internal Pause. Selecting Current 1 for primary feedback does not disable the
+second comparator. The host therefore selects a signed-I16 current source for
+the secondary comparator, sets its I32 threshold to 32768, and selects the
+greater-than direction. No signed-I16 input, including either rail, can reach
+this threshold. Zero is not a neutral secondary threshold.
+
+The axis pause loops wait for both Internal Pause and External Pause to clear.
+Once primary contact is confirmed on an approach waypoint, Python latches and
+verifies EndCurrentLine, then clears Internal Pause so the loops can process
+the request. It clears EndCurrentLine only after line advancement or the target
+waiting state acknowledges completion. Follow-up CV/I–t/retraction is submitted
+only after the final acquisition snapshot is drained. External Stop is not
+used for this transition, preserving sample framing.
+
+An operator/external pause is not cleared automatically. The status asks for
+Resume; Resume clears only External Pause, leaving the feedback latch for the
+contact protocol. Contact evidence is retained across that pause. A pause
+without primary evidence is reconciled against complete buffered samples for
+at most `hardware_ready_timeout_s`, with motion still held. If unexplained,
+the driver latches the fault and reports register values. `StopMoveZ` is an
+axis-completion indication, not contact evidence. Neither Resume nor End
+waypoint may bypass a fault latch.
+
+These semantics apply to absolute and baseline-relative thresholds; the latter
+still becomes an absolute primary threshold after the stationary baseline.
+No changes to the compatible FPGA binary are needed. Offline tests model the
+comparator OR, pause-loop release, acknowledgement and sample drain; they do
+not substitute for physical commissioning.
+
 The compatible WEC-SPM `.lvbitx` contract is checked by datatype, access role, FIFO direction, and compiled target depth. Automated fake-session tests cover long-stream refill, every feedback action code and packed flag, simultaneous compilation, holds, relative Z, acknowledged contact completion, cancellation stream retirement, baseline-to-absolute feedback translation, acknowledged idle/live potential commands, pause-aware watchdog accounting, final acquisition drain, and plotting decimation. The offline checker validates a separately supplied instrument bitfile.
 
 The generic driver limit is 65,535 waypoints in one submitted program. This is not a FIFO capacity limit. Scan plans use a stricter 32,767-tag guard until the target's U64-to-signed-I16 narrowing is confirmed, protecting unambiguous pixel assignment. Physical calibration, polarity, motion direction, and feedback response still require staged commissioning on each instrument PC and NI device.
