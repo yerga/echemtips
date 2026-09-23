@@ -7,12 +7,18 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Repeated hardware contacts now use the existing type-2 stop-on-feedback
+  waypoint, avoiding EndCurrentLine's read-only, session-wide one-shot latch
+  that caused the second scan point to stall. Added reusable, acknowledged
+  manual/no-contact exits, verified secondary-threshold restoration and multi-scan
+  regression coverage for CV/I–t and absolute/baseline-relative thresholds.
+  No bitfile change is required; controlled hardware retesting is required.
 - Approach, Approach + CV/I–t and hopping scans now neutralize the unused
   secondary FPGA comparator with an unreachable I32 threshold. The target
   ORs both comparators; Current 2 above zero previously caused unwanted pauses
   even when the selected current had not reached its contact threshold.
-- Contact completion latches EndCurrentLine before releasing Internal Pause,
-  waits for acknowledgement and drains remaining samples before surface work.
+- Contact completion waits for acknowledgement and drains remaining samples
+  before surface work, without relying on the one-shot EndCurrentLine latch.
   Resume releases only External Pause, allowing simultaneous operator and
   feedback pauses to be resolved without overriding contact ownership.
 - Unknown contact pauses allow bounded sample/register reconciliation, then

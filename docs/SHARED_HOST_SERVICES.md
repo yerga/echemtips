@@ -8,7 +8,7 @@ This audit covers the reusable functionality formerly spread across `FPGA Host.v
 |---|---|---|
 | Execution ownership and state | `WECSPMDriver`, `ExecutionSnapshot`, `ExecutionState` | One owner at a time; queued, executed, pending, drain, completion, abort, pause, and error state are reported. |
 | FIFO submission/refill | `WaypointStreamer` | Complete 14-word frames; 512-frame initial fill and 128-frame bounded refills; failed/uncertain writes latch the session. The old 585-frame limit is removed. |
-| Safe completion/cancellation | `WECSPMDriver.service`, `end_current_waypoint`, `cancel_program`, `read_samples` | Completion requires line-count agreement, unpaused waiting state, and final data drain. Contact transitions use a level-held, acknowledged `EndCurrentLine` request and keep acquisition running. True cancellation retires the possibly partial stream and requires reconnection. |
+| Safe completion/cancellation | `WECSPMDriver.service`, `cancel_program`, `read_samples` | Completion requires line-count agreement, unpaused waiting state, and final data drain. Contact uses FPGA type-2 stop-on-feedback, not the session-wide one-shot EndCurrentLine gate. True cancellation retires the possibly partial stream and requires reconnection. |
 | Waypoint scaling/compilation | `WaypointCompiler`, `PhysicalWaypoint` | X/Y/Z/V1/V2 targets and rates, concurrent axes, potential ramps/jumps, timed/indefinite holds, relative Z retracts, feedback actions, update interval, and hold-feedback. Picomotor commands are deliberately outside the current application scope. |
 | Common CV generation | `cyclic_voltammetry_plan` | Standalone CV, Approach + CV, and Scan Hopping + CV use the same start/vertex 1/vertex 2/start jump-or-ramp plan builder and compiler. |
 | Common I-t generation | `potential_step_plan` | Approach + I-t and Scan Hopping + I-t share initial/pulse/return steps; long holds are split into adjacent signed-I16 microsecond timer frames. |
@@ -22,21 +22,38 @@ This audit covers the reusable functionality formerly spread across `FPGA Host.v
 
 ### Contact-pause protocol
 
-Direct inspection of the WEC-SPM `FPGA Target.vi` block diagram shows that its
-line-type-1 Z case ("Pause on Set Point") writes **Feedback1 OR Feedback2** to
-Internal Pause. Selecting Current 1 for primary feedback does not disable the
-second comparator. The host therefore selects a signed-I16 current source for
-the secondary comparator, sets its I32 threshold to 32768, and selects the
-greater-than direction. No signed-I16 input, including either rail, can reach
-this threshold. Zero is not a neutral secondary threshold.
+Direct inspection of `FPGA Target.vi` shows that `EndCurrentLine` is guarded by
+read-only `OnlyStopLineONCE` latches, initialized only at target startup. It
+cannot be used to finish every contact in a scan. Approaches therefore use
+**line type 2**, "STOP Current Move on SetPoint", which feeds **Feedback1 OR
+Feedback2** directly into Z motion completion. This mode has no one-shot contact
+gate. Unforced completion of the terminal approach waypoint proves a hardware
+feedback event even if a brief transient was missed by host polling.
 
-The axis pause loops wait for both Internal Pause and External Pause to clear.
-Once primary contact is confirmed on an approach waypoint, Python latches and
-verifies EndCurrentLine, then clears Internal Pause so the loops can process
-the request. It clears EndCurrentLine only after line advancement or the target
-waiting state acknowledges completion. Follow-up CV/I–t/retraction is submitted
-only after the final acquisition snapshot is drained. External Stop is not
-used for this transition, preserving sample framing.
+The unused secondary comparator normally selects a signed-I16 current source,
+an I32 threshold of 32768, and the greater-than direction. No signed-I16 input
+can trigger it. The primary comparator remains the selected Current 1/2
+threshold, including a translated baseline-relative threshold.
+
+Type 2 ignores LinearMove's natural completion flag and holds at its bounded
+endpoint without contact. The acquisition service detects the exact commanded
+endpoint in Applied Z and requests completion through the secondary comparator
+with threshold -32769 (always true for signed I16). That exit is explicitly
+classified as **no contact** and cannot authorize CV/I–t. Explicit manual
+acceptance uses the same reusable request but authorizes the continuation.
+At an endpoint/contact race the host may conservatively classify no contact.
+
+After target waiting acknowledges a requested exit, the secondary threshold is
+restored to 32768 and its register readback is verified before completion is
+exposed. Feedback2 Boolean may stay latched while idle: the comparator loop
+stops when all axes finish. The ordinary positioning/baseline waypoint before
+each new approach refreshes it without feedback affecting motion. A missing
+completion acknowledgement or failed threshold restore faults closed.
+Follow-up waypoints wait for line-count agreement, unpaused waiting, verified
+threshold restoration and final sample-frame drain.
+Neither EndCurrentLine nor External Stop is used in these approach transitions.
+Global End waypoint is rejected during an approach; use the experiment's
+explicit manual-acceptance button instead.
 
 An operator/external pause is not cleared automatically. The status asks for
 Resume; Resume clears only External Pause, leaving the feedback latch for the
@@ -49,9 +66,12 @@ waypoint may bypass a fault latch.
 
 These semantics apply to absolute and baseline-relative thresholds; the latter
 still becomes an absolute primary threshold after the stationary baseline.
-No changes to the compatible FPGA binary are needed. Offline tests model the
-comparator OR, pause-loop release, acknowledgement and sample drain; they do
-not substitute for physical commissioning.
+No changes to the compatible FPGA binary are needed. Offline tests exercise
+two consecutive 3x3 scans per method and threshold mode in one session, with
+the one-shot latch already consumed, transient contacts, partial sample frames,
+manual acceptance, no-contact exits, latched idle indicators and missing
+completion/threshold-restore acknowledgements. They
+do not substitute for physical commissioning.
 
 The compatible WEC-SPM `.lvbitx` contract is checked by datatype, access role, FIFO direction, and compiled target depth. Automated fake-session tests cover long-stream refill, every feedback action code and packed flag, simultaneous compilation, holds, relative Z, acknowledged contact completion, cancellation stream retirement, baseline-to-absolute feedback translation, acknowledged idle/live potential commands, pause-aware watchdog accounting, final acquisition drain, and plotting decimation. The offline checker validates a separately supplied instrument bitfile.
 

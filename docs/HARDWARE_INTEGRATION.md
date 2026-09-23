@@ -115,7 +115,7 @@ class Driver:
         ...
 
     def start_approach_cv(self, parameters) -> None:
-        # Submit positioning and a line-type-1 pause-on-contact approach.
+        # Submit positioning and a line-type-2 stop-on-feedback approach.
         # Submit CV/retract separately only after the FPGA pause and feedback
         # event are confirmed. Current thresholds arrive in nA and must be
         # converted to the target's signed-I16 ADC scale.

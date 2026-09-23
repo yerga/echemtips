@@ -8,7 +8,7 @@ This Python host keeps `FPGA Target.vi` on the NI device. It implements the host
 - Current 1 and Current 2 on AI3 and AI4, with each amplifier sensitivity entered in V/nA
 - AO5–AO7 and AI5–AI7 left unused; eChemTips has no picomotor controls
 - FPGA-side feedback for the approach and FPGA-side waypoints for CV
-- Scan Hopping + CV as staged waypoint programs: XY positioning at retracted Z and a selected Current 1 or Current 2 pause-on-contact approach, followed by CV and a contact-relative retract only after contact is confirmed at each pixel
+- Scan Hopping + CV as staged waypoint programs: XY positioning at retracted Z and a selected Current 1 or Current 2 stop-on-feedback approach, followed by CV and a contact-relative retract only after contact is confirmed at each pixel
 
 ## Required instrument-PC software
 
@@ -237,7 +237,7 @@ Completed programs can be followed by another program in the same connection. Co
 
 Programs are no longer limited to the target FIFO's 585 complete frames. The host configures 1,048,576 elements of host-side DMA memory, initially submits 512 complete 14-word frames, and refills in 128-frame chunks while tracking submitted and executed lines. The generic driver ceiling is 65,535 frames. Scan plans retain a stricter 32,767-tag guard because acquired samples expose a signed-I16 line tag and target narrowing above its positive range has not been physically confirmed. The total Scan Hopping + CV plan uses one initial Z-only retract plus `4 + 3 × cycles` waypoints per pixel, and still stages approach separately from CV so end-of-travel can never start electrochemistry without confirmed contact.
 
-Normal contact completion does not assert `External Stop`: Python holds `EndCurrentLine` until the target acknowledges it through `WaitingForWayPoints` or line advancement, drains the completed acquisition snapshot, and only then submits the follow-up. A true Stop can interrupt the target between fields of its 14-word acquisition frame. Python therefore retains complete pre-stop samples, discards all post-stop residual words, leaves `External Stop` asserted, and requires disconnection plus FPGA reinitialization before another command. This conservative boundary avoids silently decoding misaligned measurements without requiring a new bitfile.
+Normal contact completion uses FPGA type 2 (stop on feedback), not `External Stop` or the session-wide one-shot `EndCurrentLine` gate. Python waits for `WaitingForWayPoints` and the expected line count, drains the completed acquisition snapshot, and only then submits the follow-up. Manual acceptance and a no-contact endpoint hold use a separately classified, reusable secondary-comparator request; its threshold is restored and verified before proceeding. A true Stop can interrupt the target between fields of its 14-word acquisition frame. Python therefore retains complete pre-stop samples, discards all post-stop residual words, leaves `External Stop` asserted, and requires disconnection plus FPGA reinitialization before another command. This conservative cancellation boundary avoids silently decoding misaligned measurements without requiring a new bitfile.
 
 The experiment-local **Accept current Z as contact and continue** button is an explicit operator override for an active approach. It records the current Z as manually accepted contact and submits the gated CV or I–t continuation only after the approach FIFO is fully drained. The toolbar **End waypoint** button does not confirm contact and must not be used as a substitute. Use manual acceptance only while independently observing a safe probe state.
 
@@ -251,7 +251,7 @@ An idle Potential 1/2 change is sent as a one-waypoint FPGA jump, not as a host 
 
 - The NI session is opened with `no_run=True` and reset; the target is then configured and paused before it is run. Reset failure prevents startup and closes the session.
 - FIFO waypoints are initially filled while paused; long programs continue through bounded, complete-frame host-side refills after execution starts.
-- Contact completion uses the existing `EndCurrentLine`, `WaitingForWayPoints`, `LineNumber`, and `Internal Pause` controls without stopping acquisition.
+- Contact completion uses the existing type-2 waypoint, `WaitingForWayPoints` and `LineNumber`, without stopping acquisition or relying on the one-shot `EndCurrentLine` gate.
 - Stop safely cancels physical motion but deliberately retires that acquisition stream; reinitialize and reconnect before another submission. It does not promise to zero outputs.
 - Emergency Stop asserts the FPGA `External Stop` control.
 - The host checks all position ranges, voltages, and positive velocities before encoding a waypoint.

@@ -74,6 +74,11 @@ LabVIEW and other controlling applications during the test.
 5. Only after these pass, test physical contact conservatively, then a 2×2
    hopping scan. Verify both contact positions and current/potential traces in
    the recorded data. Test baseline-relative detection separately if used.
+6. Run a second complete scan **without reconnecting**. Test both Scan + CV
+   and Scan + I–t, and include a manual-acceptance test with safe clearance.
+   The corrected path uses type-2 stop-on-feedback, not the target's one-shot
+   EndCurrentLine command. A high-threshold/no-contact test over a short, safe
+   travel interval must never start surface electrochemistry.
 
 If "motion held; checking contact evidence" does not resolve within the
 configured hardware-ready timeout, the session faults closed. Preserve the
