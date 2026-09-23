@@ -11,7 +11,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, RAW_SIGNALS, extract_cv_cycles
 from .models import SettingsStore
-from .qt_common import COLORS, Card, XYPlot, button, label
+from .branding import application_icon, logo_label
+from .qt_common import COLORS, Card, XYPlot, application_stylesheet, button, label
 
 
 class AnalysisWindow(QtWidgets.QMainWindow):
@@ -19,6 +20,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def __init__(self, initial_path: Path | str | None = None) -> None:
         super().__init__()
         self.setWindowTitle("eChemTips — Data Analysis")
+        self.setWindowIcon(application_icon())
         self.resize(1440, 900)
         self.setMinimumSize(1040, 680)
         self.dataset: AnalysisDataset | None = None
@@ -26,6 +28,13 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.data_folder = self._default_data_folder()
         self.file_paths: list[Path] = []
         self._build_ui()
+        preferences = SettingsStore().load()
+        self.setStyleSheet(application_stylesheet(preferences.font_size_pt))
+        for plot in self.findChildren(XYPlot):
+            plot.current_display_unit = preferences.current_display_unit
+            plot.font_size_pt = preferences.font_size_pt
+            plot.trace_width_px = preferences.trace_width_px
+            plot.redraw()
         self.refresh_files()
         if initial_path:
             self.load_recording(Path(initial_path))
@@ -50,7 +59,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         side = QtWidgets.QVBoxLayout(sidebar)
         side.setContentsMargins(18, 22, 18, 18)
         side.setSpacing(8)
-        side.addWidget(label("eChemTips", "brand"))
+        brand_row = QtWidgets.QWidget(); brand_layout = QtWidgets.QHBoxLayout(brand_row)
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.addWidget(logo_label()); brand_layout.addWidget(label("eChemTips", "brand")); brand_layout.addStretch(1)
+        side.addWidget(brand_row)
         side.addWidget(label("DATA ANALYSIS", "sidebarMuted"))
         side.addSpacing(14)
         side.addWidget(label("RECORDINGS", "sidebarMuted"))
@@ -104,7 +116,6 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.raw_signal.currentTextChanged.connect(self._refresh_raw_plot)
         controls.addWidget(self.raw_signal)
         controls.addStretch(1)
-        controls.addWidget(label("Full recording · interactive pan and zoom", "muted"))
         layout.addLayout(controls)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.raw_current_plot = XYPlot("Elapsed time (s)", "Current (nA)")
@@ -114,7 +125,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
-        self.tabs.addTab(tab, "Raw traces")
+        self.tabs.addTab(tab, "Experiment traces")
 
     def _build_cv_tab(self) -> None:
         tab = QtWidgets.QWidget()
@@ -131,7 +142,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         controls.addWidget(self.export_button)
         layout.addLayout(controls)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        summary = Card("Detected cycles", "Select a cycle or overlay every completed cycle.")
+        summary = Card("Detected cycles")
         summary.setMinimumWidth(285)
         summary.setMaximumWidth(380)
         summary_layout = QtWidgets.QVBoxLayout(summary.body)
@@ -148,7 +159,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.cv_plot)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
-        self.tabs.addTab(tab, "Voltammograms")
+        self.tabs.addTab(tab, "CV")
 
     def _build_table_tab(self) -> None:
         tab = QtWidgets.QWidget()

@@ -6,14 +6,38 @@
 
 This document records the boundary between the Python host and the existing WEC-SPM FPGA target. It is intended for the instrument owner who validates a specific workstation; it is not a substitute for a dry-run and oscilloscope check.
 
-## Supplied target
+## Compatible target contract
 
-The supported target filename is shown below for identification. The binary
-is private instrument firmware and is not included in this repository:
+Select a locally supplied `.lvbitx` compiled for the exact NI device. Its
+filename and compilation signature may differ between laboratories and builds.
+Neither is used as a hard-coded allowlist; signatures remain useful identifiers
+in the laboratory commissioning record. Binaries are not distributed here.
 
-`wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx`
+The reference hardware is USB-7856R, used in development and real-device trials.
+Other NI R Series models are candidates only when the same target behavior can
+be compiled for them. A model-specific rebuild may be necessary; an existing
+USB image is not portable to PCIe/PXI merely because the host protocol matches.
+NI-RIO checks whether the selected compiled image can open on the actual device.
 
-Its metadata identifies a USB-7856R, signature `8229BC0D5A4935D854D1286878CEE54A`, a `Host_To_FPGA_Positions` I16 host-to-target FIFO with 8197 target elements, and an `FPGA_To_Host_FIFO` I16 target-to-host FIFO with 32767 target elements. Its 114-register interface, register datatypes/access roles, and FIFO contract exactly match the legacy PCIe-7852R WEC-SPM image. The Python adapter addresses registers by the names embedded in this file rather than hard-coded offsets.
+The shared contract includes:
+
+- The register names, datatypes and control/indicator roles in
+  `REGISTER_CONTRACT` in `echemtips/ni_protocol.py`.
+- `Host_To_FPGA_Positions`: signed I16, host-to-target, 8197 target elements;
+  `FPGA_To_Host_FIFO`: signed I16, target-to-host, 32767 target elements.
+  These capacities are still checked exactly; changing them needs a driver review.
+- Fourteen-word waypoint and sample framing, channel assignments, feedback
+  enums/flags, line tags, biased interval encoding and 40 MHz timing units.
+- The existing analog raw-value scaling, startup AO values, pause/contact/stop
+  semantics and command acknowledgement behavior. Matching XML metadata does
+  **not** establish these behavioral properties.
+
+For a new model/build, review the compiled FPGA source and device I/O ranges,
+run the offline checker, then commission outputs/readback with actuators
+inhibited, a controlled electrical load, approach/contact and a small scan.
+Do not enable motion based solely on a successful metadata check. If any
+contract or behavior changes, the native adapter needs corresponding changes
+and tests; this is not a generic driver for arbitrary NI FPGA programs.
 
 The offline preflight validates the required register datatypes and whether each is a control or indicator. It also validates each FIFO's signed-I16 datatype, direction, and configured target depth; name-only compatibility is not accepted.
 
@@ -91,7 +115,7 @@ class Driver:
         ...
 
     def start_approach_cv(self, parameters) -> None:
-        # Submit positioning and a line-type-1 pause-on-contact approach.
+        # Submit positioning and a line-type-2 stop-on-feedback approach.
         # Submit CV/retract separately only after the FPGA pause and feedback
         # event are confirmed. Current thresholds arrive in nA and must be
         # converted to the target's signed-I16 ADC scale.

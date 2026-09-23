@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import math
 import os
@@ -11,32 +11,22 @@ import sys
 from typing import Any
 
 
-TARGET_BITFILE_NAME = "wecspm_FPGATarget2_FPGATarget_MAn-McsWIiw.lvbitx"
-LEGACY_BITFILE_NAMES = {"FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx"}
-
-
 def _default_bitfile() -> str:
-    """Find a locally supplied target without ever packaging it.
-
-    The sibling lookup supports a layout where the private LabVIEW archive and
-    public eChemTips checkout share a parent directory. Other installations
-    get a filename placeholder that must be selected before connecting.
-    """
+    """Use an explicit environment path, otherwise require operator selection."""
     configured = os.environ.get("ECHEMTIPS_BITFILE")
     if configured:
         return str(Path(configured).expanduser())
-    project_root = Path(__file__).resolve().parent.parent
-    candidates = (
-        project_root.parent / "WEC_SPM" / "FPGA Bitfiles" / TARGET_BITFILE_NAME,
-        project_root / "FPGA Bitfiles" / TARGET_BITFILE_NAME,
-    )
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    return TARGET_BITFILE_NAME
+    return ""
 
 
 DEFAULT_BITFILE = _default_bitfile()
+
+# Bundled PyQtGraph palettes: no optional matplotlib dependency is required.
+MAP_COLORMAPS = {
+    "Viridis": "viridis", "Cividis": "cividis", "Plasma": "plasma",
+    "Inferno": "inferno", "Magma": "magma", "Grayscale": "CET-L1",
+    "Blue–white–red": "CET-D1",
+}
 
 
 def default_settings_path() -> Path:
@@ -83,7 +73,7 @@ class AppSettings:
     mode: str = "Simulation"
     resource: str = "RIO0"
     bitfile: str = DEFAULT_BITFILE
-    hardware_transport: str = "USB R Series"
+    hardware_transport: str = "Auto"
     x_range_um: float = 100.0
     y_range_um: float = 100.0
     z_range_um: float = 100.0
@@ -100,6 +90,21 @@ class AppSettings:
     save_directory: str = "data"
     auto_save: bool = True
     display_max_points: int = 12_000
+    map_view_mode: str = "square"
+    map_footprint_diameter_um: float = 1.0
+    map_z_auto_limits: bool = True
+    map_z_colormap: str = "viridis"
+    map_current_colormap: str = "viridis"
+    map_z_min_um: float = 0.0
+    map_z_max_um: float = 100.0
+    map_current_auto_limits: bool = True
+    map_current_min_na: float = -1.0
+    map_current_max_na: float = 1.0
+    monitor_window_s: float = 30.0
+    experiment_window_s: float = 60.0
+    current_display_unit: str = "nA"
+    font_size_pt: float = 10.0
+    trace_width_px: float = 2.0
 
     @property
     def effective_period_s(self) -> float:
@@ -141,6 +146,29 @@ class AppSettings:
             errors.append("Display buffer must contain between 500 and 100,000 points.")
         if self.mode == "NI FPGA" and (not isinstance(self.resource, str) or not self.resource.strip()):
             errors.append("NI FPGA resource must not be empty.")
+        if not isinstance(self.map_view_mode, str) or self.map_view_mode not in {"square", "circular"}:
+            errors.append("Scan map shape must be square or circular.")
+        if not _finite_number(self.map_footprint_diameter_um) or self.map_footprint_diameter_um <= 0:
+            errors.append("Meniscus footprint diameter must be finite and positive.")
+        for name, auto, low, high in (
+            ("Contact Z", self.map_z_auto_limits, self.map_z_min_um, self.map_z_max_um),
+            ("Current", self.map_current_auto_limits, self.map_current_min_na, self.map_current_max_na),
+        ):
+            if not isinstance(auto, bool) or not _finite_number(low) or not _finite_number(high) or low >= high:
+                errors.append(f"{name} map limits must be finite with minimum below maximum.")
+        for name, value, low, high in (
+            ("Monitor window", self.monitor_window_s, 1, 3600),
+            ("Experiment window", self.experiment_window_s, 1, 3600),
+            ("Font size", self.font_size_pt, 8, 14),
+            ("Trace thickness", self.trace_width_px, 0.5, 6),
+        ):
+            if not _finite_number(value) or not low <= value <= high:
+                errors.append(f"{name} must be between {low} and {high}.")
+        if not isinstance(self.current_display_unit, str) or self.current_display_unit not in {"nA", "pA", "Auto"}:
+            errors.append("Current display units must be nA, pA or Auto.")
+        for name, value in (("Contact Z", self.map_z_colormap), ("Current", self.map_current_colormap)):
+            if not isinstance(value, str) or value not in MAP_COLORMAPS.values():
+                errors.append(f"{name} colormap must be one of the supported palettes.")
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
             errors.append("NI FPGA bitfile must not be empty.")
         return errors
@@ -196,11 +224,6 @@ class SettingsStore:
             return AppSettings()
         try:
             raw = json.loads(source.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                saved_bitfile = raw.get("bitfile")
-                if isinstance(saved_bitfile, str) and Path(saved_bitfile).name in LEGACY_BITFILE_NAMES:
-                    raw["bitfile"] = DEFAULT_BITFILE
-                    raw["hardware_transport"] = "USB R Series"
             return AppSettings.from_dict(raw)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return AppSettings()
@@ -441,9 +464,65 @@ class ApproachITParameters(ApproachParameters):
         return errors
 
 
+class BoundedScanRetraction:
+    """Shared execution-time travel limits and recording diagnostics for scans."""
+
+    __slots__ = ()
+
+    def completion_z(self, current_z: float) -> float:
+        """Return toward initial Z only in the direction away from the surface."""
+        return (min(self.start_z_um, current_z) if self.end_z_um > self.start_z_um
+                else max(self.start_z_um, current_z))
+
+    def scan_retract_z(self, point: int, contact_z: float, maximum_z: float,
+                       *, minimum_travel_um: float = 1e-9) -> float:
+        """Use contact-relative clearance between hops, initial Z after the last."""
+        if point + 1 == self.point_count:
+            if not math.isfinite(contact_z) or not 0 <= contact_z <= maximum_z:
+                raise ValueError("Contact Z is outside the configured range.")
+            return self.completion_z(contact_z)
+        return self.bounded_retract_z(point, contact_z, maximum_z,
+                                      minimum_travel_um=minimum_travel_um)
+
+    def bounded_retract_z(self, point: int, contact_z: float, maximum_z: float,
+                          *, minimum_travel_um: float = 1e-9) -> float:
+        """Resolve a contact-relative command, recording shortened travel once per hop.
+
+        The contact coordinate must be in the same coordinate system as the
+        commanded target. Hardware callers use the applied output at contact.
+        A command limit is not a guarantee of physical probe clearance.
+        """
+        if not math.isfinite(contact_z) or not 0 <= contact_z <= maximum_z:
+            raise ValueError("Contact Z is outside the configured range.")
+        requested = self.retract_distance_for_point(point)
+        target = max(0.0, min(maximum_z, self.retract_z_for_point(point, contact_z)))
+        actual = abs(target - contact_z)
+        self.retraction_events[:] = [e for e in self.retraction_events if e["scan_pixel"] != point]
+        if actual < requested - 1e-9 or actual <= minimum_travel_um:
+            self.retraction_events.append(dict(
+                scan_pixel=point, contact_z_um=contact_z, target_z_um=target,
+                requested_distance_um=requested, actual_distance_um=actual,
+                no_travel=actual <= minimum_travel_um,
+            ))
+        return target
+
+    def retract_has_no_travel(self, point: int) -> bool:
+        """Block automatic continuation when the contact is at the retract limit."""
+        return any(e["scan_pixel"] == point and e["no_travel"] for e in self.retraction_events)
+
+    def retraction_notice(self) -> str:
+        """Keep shortened-travel information visible after later stage updates."""
+        if not self.retraction_events:
+            return ""
+        e = self.retraction_events[-1]
+        return (f" · Hop {e['scan_pixel'] + 1}: retract limited to {e['actual_distance_um']:g} µm "
+                f"of {e['requested_distance_um']:g} µm requested")
+
+
 @dataclass(slots=True)
-class ScanHoppingCVParameters:
+class ScanHoppingCVParameters(BoundedScanRetraction):
     """Physical grid, hopping motion, contact, and per-pixel CV configuration."""
+    retraction_events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False, compare=False)
     x_start_um: float = 35.0
     x_end_um: float = 65.0
     x_points: int = 3
@@ -521,7 +600,8 @@ class ScanHoppingCVParameters:
             for point in range(1, self.point_count)
         )
         retracts = sum(
-            self.retract_distance_for_point(point) / self.retract_rate_um_s
+            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.point_count
+             else self.retract_distance_for_point(point)) / self.retract_rate_um_s
             for point in range(self.point_count)
         )
         cv_per_point = self.cycles * (
@@ -570,14 +650,6 @@ class ScanHoppingCVParameters:
             errors.append("Raster extra line retract must be finite and non-negative.")
         if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
-        if math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
-            targets = [
-                self.retract_z_for_point(point, contact_z)
-                for point in range(self.point_count)
-                for contact_z in (self.start_z_um, self.end_z_um)
-            ]
-            if any(not 0 <= target <= settings.z_range_um for target in targets):
-                errors.append("Contact-relative retract would move Z outside the configured range.")
         for name, value in (
             ("Lateral rate", self.lateral_rate_um_s),
             ("Approach rate", self.approach_rate_um_s),
@@ -618,8 +690,9 @@ class ScanHoppingCVParameters:
 
 
 @dataclass(slots=True)
-class ScanHoppingITParameters:
+class ScanHoppingITParameters(BoundedScanRetraction):
     """Physical grid, hopping motion, contact, and per-pixel I–t configuration."""
+    retraction_events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False, compare=False)
     x_start_um: float = 35.0
     x_end_um: float = 65.0
     x_points: int = 3
@@ -694,7 +767,8 @@ class ScanHoppingITParameters:
             for point in range(1, self.point_count)
         )
         retracts = sum(
-            self.retract_distance_for_point(point) / self.retract_rate_um_s
+            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.point_count
+             else self.retract_distance_for_point(point)) / self.retract_rate_um_s
             for point in range(self.point_count)
         )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
@@ -753,14 +827,6 @@ class ScanHoppingITParameters:
             errors.append("Raster extra line retract must be finite and non-negative.")
         if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
-        if math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
-            targets = [
-                self.retract_z_for_point(point, contact_z)
-                for point in range(self.point_count)
-                for contact_z in (self.start_z_um, self.end_z_um)
-            ]
-            if any(not 0 <= target <= settings.z_range_um for target in targets):
-                errors.append("Contact-relative retract would move Z outside the configured range.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
         total_tags = 1 + self.point_count * (
             3 + int(self.feedback_mode == "baseline_relative")

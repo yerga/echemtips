@@ -43,3 +43,6 @@ Issues = "https://github.com/yerga/echemtips/issues"
 
 [tool.setuptools.packages.find]
 include = ["echemtips*"]
+
+[tool.setuptools.package-data]
+echemtips = ["assets/*.png"]

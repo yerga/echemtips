@@ -8,6 +8,7 @@ from PySide6 import QtWidgets
 
 from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, extract_cv_cycles
 from .analysis_window import AnalysisWindow
+from .branding import configure_application_identity
 from .qt_common import application_stylesheet, configure_pyqtgraph
 
 AnalysisApp = AnalysisWindow
@@ -25,7 +26,7 @@ def main() -> None:
     parser.add_argument("--smoke-test", action="store_true", help="build and exercise the analysis UI, then exit")
     args = parser.parse_args()
     qt_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    qt_app.setApplicationName("eChemTips Data Analysis")
+    configure_application_identity(qt_app)
     qt_app.setStyle("Fusion")
     qt_app.setStyleSheet(application_stylesheet())
     configure_pyqtgraph()

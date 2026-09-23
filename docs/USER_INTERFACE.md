@@ -8,6 +8,18 @@ values in a persistent strip at the bottom.
 
 ## Navigation
 
+Experiment names and parameter labels are consistent across pages. Both hopping
+methods use **Start scan** and **Stop experiment**. **Experiment traces** separates
+time-domain data from **CV** or **I–t** results; scans show **CV at hop** or **I–t at hop**.
+
+**ⓘ** is reserved for non-obvious details: command voltage ratio, acquisition
+timing, display versus recording, pipette-radius assumptions and current-map
+definitions. Ordinary plots and page headings have no help buttons. Hover for
+a tooltip or click/keyboard-
+activate it for a persistent, wrapped help dialog. Essential setup instructions,
+units, recording state and hardware safety warnings remain visible. The normal
+hardware stop/reconnect behavior is unchanged.
+
 - Select an experiment from the left sidebar. `Ctrl+1` through `Ctrl+9` open
   the first nine pages in sidebar order.
 - **Connect** opens the simulator immediately. In NI FPGA mode it first shows

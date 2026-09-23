@@ -159,10 +159,44 @@ retracts by a positive distance away from the measured contact Z.
 - **Raster flyback extra retract** is added only before the longer line return.
 - **Initial approach Z** applies only to the first hop. Later approaches start
   from contact-relative retract positions.
+- After the final hop, both scan methods return Z directly to **Initial approach
+  Z** at **Retract speed**, leaving X/Y at the final pixel. If Z is already
+  farther retracted, it stays there instead of moving toward the surface.
+  The scan stays active and records until that return completes. Intermediate
+  hops still use the requested contact-relative distance. Approach-only,
+  Approach + CV and Approach + I–t retain their existing return/retract options;
+  standalone CV does not move Z. Stop/fault behaviour on the production branch
+  is unchanged and does not automatically return Z.
+- Both hopping CV and hopping I–t allow an initial Z of zero. Retraction is
+  calculated at contact, then limited to the configured 0–Z maximum command
+  range. For an increasing-Z approach, contact at 8 µm with a 10 µm retract
+  results in a target of 0 µm; contact at 80 µm results in 70 µm. The same limit
+  applies to raster flyback extra retraction and, in the opposite direction,
+  to the upper Z boundary. Subsequent hops use the bounded retract position.
+- A shortened retract is shown in the scan status and recorded in the JSON
+  `parameters.retraction_events` list, using zero-based `scan_pixel` indices.
+  Entries include contact/target Z, requested/available command travel, and a
+  `no_travel` flag. Hardware calculations use the applied Z output at contact;
+  the sensor Z in the CSV remains a separate measurement. These events describe
+  commanded clearance, not independently verified physical movement.
+- If no usable retract travel remains (including travel within one hardware
+  output increment), the scan stops after the point's electrochemical program
+  without submitting another XY move. Inspect clearance before manually moving
+  or starting again; the generic Resume button does not restart this scan.
+  A shortened, nonzero retract can continue, so choose scan bounds and flyback
+  clearance conservatively. A command limit does not prove meniscus detachment.
 - The duration estimate includes deterministic CV, settling, lateral, repeated
   approach, and retract time. It excludes the initial move and first approach.
 - Square cells show the sampled grid; circular footprints show the configured
-  meniscus diameter in physical coordinates.
+  meniscus diameter in physical coordinates. Choose the shared shape and
+  diameter under **Settings → Maps**, not on individual scan pages. These
+  preferences change rendering only, not the scan path or feedback.
+
+**Settings → Maps** also offers independent Z/current colormaps and
+automatic/fixed color limits. **Settings → Plots** contains rolling history
+durations, current display units, font size and trace thickness. The save/apply
+button below the tabs applies all categories. Saved recording units and
+full-rate data are unaffected.
 
 The maps contain only confirmed contacts. A no-contact hop cannot start a CV or
 produce a valid contact/current map value. Start with 1×1, then 2×2, during

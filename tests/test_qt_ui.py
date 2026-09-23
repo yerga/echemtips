@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import math
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
@@ -11,13 +13,296 @@ from PySide6 import QtCore, QtWidgets
 
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.backends import SimulationBackend
-from echemtips.models import AppSettings
+from echemtips.branding import application_icon
+from echemtips.models import AppSettings, MAP_COLORMAPS, SettingsStore
 from echemtips.models import Sample
-from echemtips.qt_common import Heatmap, Plot, TimedXYPlot
+from echemtips.qt_common import Heatmap, InfoButton, Plot, ProgramDiagram, TimedXYPlot, XYPlot
 from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_shared_logo_and_application_identity(self) -> None:
+        self.assertEqual(self.qt_app.applicationDisplayName(), "eChemTips")
+        self.assertFalse(self.qt_app.windowIcon().isNull())
+        for size in (16, 32, 64, 256):
+            self.assertFalse(application_icon().pixmap(size, size).isNull())
+        windows = (EChemTipsApp(), AnalysisWindow())
+        try:
+            self.assertEqual(windows[0].windowTitle(), "eChemTips — Instrument Control")
+            self.assertEqual(windows[1].windowTitle(), "eChemTips — Data Analysis")
+            for window in windows:
+                self.assertFalse(window.windowIcon().isNull())
+                logos = window.findChildren(QtWidgets.QLabel, "applicationLogo")
+                self.assertEqual(len(logos), 1)
+                self.assertFalse(logos[0].pixmap().isNull())
+                self.assertIn("pipette", logos[0].accessibleName())
+        finally:
+            for window in windows:
+                window.close()
+
+    def test_settings_tabs_keep_save_action_visible_at_laptop_sizes(self) -> None:
+        window = EChemTipsApp()
+        try:
+            window.resize(1080, 680); window.show(); window.show_page("Settings")
+            settings = window.pages["Settings"]
+            names = ("Connection", "Acquisition", "Piezos", "Amplifiers", "Saving", "Plots", "Maps")
+            self.assertEqual(tuple(settings.tabs.tabText(i) for i in range(settings.tabs.count())), names)
+            for font_size in (10, 14):
+                window.settings.font_size_pt = font_size
+                window._apply_display_settings()
+                for index, name in enumerate(names):
+                    settings.tabs.setCurrentIndex(index)
+                    for _ in range(4): self.qt_app.processEvents()
+                    viewport = settings.tab_scrolls[name]
+                    viewport.verticalScrollBar().setValue(viewport.verticalScrollBar().maximum())
+                    self.qt_app.processEvents()
+                    save = settings.save_defaults_button
+                    self.assertTrue(save.isVisible(), name)
+                    self.assertFalse(viewport.isAncestorOf(save), name)
+                    rectangle = QtCore.QRect(save.mapTo(window, QtCore.QPoint()), save.size())
+                    self.assertTrue(window.rect().contains(rectangle), (font_size, name, rectangle))
+            settings.tabs.setCurrentIndex(5)
+            settings.monitor_window.variable.set("15")
+            settings.tabs.setCurrentIndex(6)
+            settings.map_z_colormap.setCurrentText("Magma")
+            settings.tabs.setCurrentIndex(0)
+            self.assertEqual(settings.values().monitor_window_s, 15)
+            self.assertEqual(settings.values().map_z_colormap, "magma")
+        finally:
+            window.close()
+
+    def test_colormaps_match_images_footprints_and_scale(self) -> None:
+        heatmap = Heatmap("nA", "Current 1")
+        try:
+            heatmap.fixed_limits = (-1, 1)
+            data = {(0, 0): -1, (0, 1): 0, (0, 2): 1}
+            for palette in MAP_COLORMAPS.values():
+                heatmap.colormap_name = palette
+                for mode in ("square", "circular"):
+                    heatmap.set_data(data, 1, 3, view_mode=mode)
+                    self.assertEqual(heatmap.values, data)
+                    self.assertEqual(heatmap.color_bar.levels(), (-1, 1))
+                    self.assertIs(heatmap.color_bar.colorMap(), heatmap.color_map)
+                    self.assertIs(heatmap.image_item.getColorMap(), heatmap.color_map)
+                    for point, fraction in zip(heatmap.footprint_item.points(), (0, 0.5, 1)):
+                        self.assertEqual(point.brush().color(), heatmap.color_map.map(fraction, mode="qcolor"))
+        finally:
+            heatmap.close()
+
+    def test_analysis_current_style_preserves_source_data(self) -> None:
+        plot = XYPlot("Potential (V)", "Current (nA)")
+        try:
+            xs, ys = [-0.2, 0.3], [0.25, -0.5]
+            plot.current_display_unit = "pA"; plot.trace_width_px = 4
+            plot.set_data([("CV", xs, ys, "red")])
+            curve = plot.graph.listDataItems()[0]
+            self.assertEqual(list(curve.getData()[1]), [250, -500])
+            self.assertEqual(ys, [0.25, -0.5])
+            self.assertEqual(curve.opts["pen"].widthF(), 4)
+        finally:
+            plot.close()
+
+    def setUp(self) -> None:
+        self.settings_directory = TemporaryDirectory()
+        self.addCleanup(self.settings_directory.cleanup)
+        path = Path(self.settings_directory.name) / "settings.json"
+        SettingsStore(path).save(AppSettings())
+        environment = patch.dict(os.environ, {"ECHEMTIPS_SETTINGS_PATH": str(path)})
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_current_display_conversion_does_not_modify_buffer(self) -> None:
+        plot = Plot("Current", "Current 1 (nA)", ("red",))
+        try:
+            plot.append(0, 0.25); plot.append(1, -0.5)
+            plot.set_display_style("pA", 12, 3)
+            self.assertEqual(plot.series[0], [0.25, -0.5])
+            self.assertEqual(list(plot.curves[0].getData()[1]), [250, -500])
+            self.assertEqual(plot.graph.getAxis("left").labelText, "Current 1 (pA)")
+            self.assertEqual(plot.curves[0].opts["pen"].widthF(), 3)
+            plot.set_display_style("Auto", 10, 2)
+            self.assertEqual(list(plot.curves[0].getData()[1]), [250, -500])
+            plot.append(2, 2)
+            self.assertEqual(plot.graph.getAxis("left").labelText, "Current 1 (nA)")
+            self.assertEqual(list(plot.curves[0].getData()[1]), [0.25, -0.5, 2])
+        finally:
+            plot.close()
+
+    def test_fixed_map_limits_scale_with_units_without_changing_values(self) -> None:
+        heatmap = Heatmap("nA", "Current 1")
+        try:
+            heatmap.current_display_unit = "pA"
+            heatmap.fixed_limits = (-0.5, 0.5)
+            values = {(0, 0): -1, (0, 1): 0.25}
+            for mode in ("square", "circular"):
+                heatmap.set_data(values, 1, 2, view_mode=mode)
+                self.assertEqual(heatmap.values, values)
+                self.assertEqual(heatmap.color_bar.levels(), (-500, 500))
+                self.assertEqual(heatmap.unit, "pA")
+                self.assertEqual(list(heatmap.image_item.image[0]), [-1000, 250])
+            heatmap.current_display_unit = "nA"
+            heatmap.fixed_limits = None
+            heatmap.set_data(values, 1, 2)
+            self.assertEqual(heatmap.color_bar.levels(), (-1, 0.25))
+        finally:
+            heatmap.close()
+
+    def test_display_controls_apply_to_windows_styles_and_readbacks(self) -> None:
+        window = EChemTipsApp()
+        try:
+            controls = window.pages["Settings"]
+            controls.monitor_window.variable.set("10")
+            controls.experiment_window.variable.set("20")
+            controls.current_units.setCurrentText("pA")
+            controls.font_size.variable.set("14")
+            controls.trace_width.variable.set("3")
+            controls.map_current_auto.setChecked(False)
+            controls.map_current_min.variable.set("-0.1")
+            controls.map_current_max.variable.set("0.5")
+            watch = window.pages["Watch current"].current1_plot
+            for i in range(30): watch.append(i, 0.25, redraw=False)
+            history = window.pages["Approach"].approach_history
+            for i in range(30): history.append_timed(i, 30-i, 0.1, redraw=False)
+            with patch.object(window.store, "save"):
+                window.apply_settings(controls.values())
+            self.assertEqual(watch.x_values[0], 19)
+            self.assertEqual(history.clock_values[0], 9)
+            self.assertEqual(len(history.clock_values), len(history.x_values))
+            self.assertEqual(window.pages["CV"].cv_plot.rolling_window_s, None)
+            self.assertEqual(window.pages["CV"].current_plot.rolling_window_s, 20)
+            self.assertEqual(window.pages["Scan hopping + CV"].current_map.fixed_limits, (-0.1, 0.5))
+            window.instrument_readout.set_sample(Sample(0, 0, 0, 0, 0, 0, 0.25, -0.5))
+            self.assertIn("250.000 pA", window.instrument_readout.value_labels["current1_na"].text())
+            for width in (1080, 1440):
+                window.resize(width, 680); window.show(); window.show_page("Approach")
+                for _ in range(4): self.qt_app.processEvents()
+                text = window.pages["Approach"].findChild(QtWidgets.QLabel, "contactHelp")
+                self.assertGreaterEqual(text.height(), text.heightForWidth(text.width()))
+                for nav in window.nav_buttons.values():
+                    self.assertGreaterEqual(nav.width(), nav.sizeHint().width())
+                emergency = next(b for b in window.findChildren(QtWidgets.QPushButton) if b.text() == "EMERGENCY STOP")
+                self.assertGreaterEqual(emergency.width(), emergency.sizeHint().width())
+        finally:
+            window.close()
+
+    def test_map_preferences_are_shared_saved_and_do_not_reset_connection(self) -> None:
+        window = EChemTipsApp()
+        try:
+            with TemporaryDirectory() as folder:
+                window.store = SettingsStore(Path(folder) / "settings.json")
+                settings_page = window.pages["Settings"]
+                settings_page.map_view.setCurrentText("Circular footprints")
+                settings_page.map_footprint.variable.set("2.5")
+                settings_page.map_z_colormap.setCurrentText("Cividis")
+                settings_page.map_current_colormap.setCurrentText("Blue–white–red")
+                backend = window.backend
+                backend.connect()
+                experiment = window.scan_experiment
+                scan = window.pages["Scan hopping + CV"]
+                scan.z_map.set_data({(0, 0): 12}, 1, 1, x_values=[20], y_values=[30])
+                window.apply_settings(settings_page.values())
+                self.assertIs(window.backend, backend)
+                self.assertTrue(backend.connected)
+                self.assertIs(window.scan_experiment, experiment)
+                saved = window.store.load()
+                self.assertEqual(saved.map_view_mode, "circular")
+                self.assertEqual(saved.map_footprint_diameter_um, 2.5)
+                self.assertEqual(saved.map_z_colormap, "cividis")
+                self.assertEqual(saved.map_current_colormap, "CET-D1")
+                with patch.dict(os.environ, {"ECHEMTIPS_SETTINGS_PATH": str(window.store.path)}):
+                    reopened = EChemTipsApp()
+                    try:
+                        self.assertEqual(reopened.pages["Settings"].map_view.get(), "Circular footprints")
+                        self.assertEqual(reopened.pages["Scan hopping + I-t"].z_map.view_mode, "circular")
+                        self.assertEqual(reopened.pages["Scan hopping + I-t"].z_map.colormap_name, "cividis")
+                        self.assertEqual(reopened.pages["Scan hopping + CV"].current_map.colormap_name, "CET-D1")
+                    finally:
+                        reopened.close()
+                self.assertEqual(scan.z_map.values, {(0, 0): 12})
+                for key in ("Scan hopping + CV", "Scan hopping + I-t"):
+                    page = window.pages[key]
+                    self.assertFalse(hasattr(page, "footprint"))
+                    self.assertFalse(hasattr(page, "map_view"))
+                    self.assertEqual(page.parameters().footprint_diameter_um, 2.5)
+                    self.assertEqual(page.z_map.view_mode, "circular")
+                    self.assertEqual(page.current_map.footprint_diameter_um, 2.5)
+                    self.assertEqual(page.z_map.colormap_name, "cividis")
+                    self.assertEqual(page.current_map.colormap_name, "CET-D1")
+                settings_page.map_view.setCurrentText("Square cells")
+                window.apply_settings(settings_page.values())
+                self.assertEqual(scan.z_map.view_mode, "square")
+        finally:
+            window.close()
+
+    def test_wrapped_contact_text_fits_on_all_approach_pages(self) -> None:
+        window = EChemTipsApp()
+        try:
+            window.show()
+            for width in (1080, 1440):
+                window.resize(width, 680)
+                for key in ("Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t"):
+                    window.show_page(key)
+                    for _ in range(4):
+                        self.qt_app.processEvents()
+                    text = window.pages[key].findChild(QtWidgets.QLabel, "contactHelp")
+                    self.assertGreaterEqual(text.height(), text.heightForWidth(text.width()), key)
+        finally:
+            window.close()
+
+    def test_profile_annotations_fit_inside_plot(self) -> None:
+        diagram = ProgramDiagram("Potential E1 (V)")
+        try:
+            diagram.show()
+            for width in (330, 600):
+                diagram.resize(width, diagram.height())
+                for values in ([10, 90, 10], [-0.2, 0.6, -0.4, -0.2], [0, 0, 0], [-10, -2, -5]):
+                    for stepped in (False, True):
+                        diagram.set_profile(values, [str(i) for i in range(len(values))], stepped=stepped)
+                        for _ in range(4):
+                            self.qt_app.processEvents()
+                        bounds = diagram.graph.getViewBox().sceneBoundingRect()
+                        for item in diagram.labels:
+                            self.assertTrue(bounds.contains(item.sceneBoundingRect()), (values, bounds, item.sceneBoundingRect()))
+        finally:
+            diagram.close()
+
+    def test_context_help_and_removed_clutter(self) -> None:
+        window = EChemTipsApp()
+        try:
+            self.assertEqual(
+                {info.accessibleName() for info in window.findChildren(InfoButton)},
+                {"Pipette and electrolyte help", "Current at selected potential help",
+                 "Mean pulse current help", "Acquisition help",
+                 "Command voltage ratio help", "Display help"},
+            )
+            self.assertEqual(len(window.findChildren(InfoButton)), 6)
+            for key in ("Approach", "Approach + CV", "Approach + I-t", "CV", "Watch current", "Watch position"):
+                self.assertEqual(window.pages[key].findChildren(InfoButton), [])
+            notes = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
+            for removed in ("FPGA logic preserved", "PySide6 · PyQtGraph", "Restarts when a new approach begins.", "All approach samples from the latest 60 seconds; complete data remain recorded."):
+                self.assertNotIn(removed, notes)
+            info = window.pages["Settings"].command_ratio_help
+            self.assertIsInstance(info, InfoButton)
+            self.assertEqual(info.focusPolicy(), QtCore.Qt.FocusPolicy.StrongFocus)
+            info.click()
+            self.qt_app.processEvents()
+            self.assertTrue(info._help_dialog.isVisible())
+            self.assertTrue(info.accessibleDescription())
+            info._help_dialog.close()
+        finally:
+            window.close()
+
+    def test_experiment_action_terminology(self) -> None:
+        window = EChemTipsApp()
+        try:
+            for key in ("Scan hopping + CV", "Scan hopping + I-t"):
+                self.assertEqual(window.pages[key].status.start_button.text(), "Start scan")
+                self.assertEqual(window.pages[key].status.stop_button.text(), "Stop experiment")
+            self.assertIn("I–t", window.nav_buttons["Approach + I-t"].text())
+            self.assertEqual(window.pages["CV"].status.start_button.text(), "Start CV")
+        finally:
+            window.close()
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.qt_app = create_application([])
@@ -65,9 +350,9 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertGreater(page.height(), 0, name)
                 self.assertTrue(window.instrument_readout.isVisible(), name)
             settings = window.pages["Settings"]
-            self.assertGreater(settings.viewport.verticalScrollBar().maximum(), 0)
+            viewport = settings.tab_scrolls["Connection"]
             self.assertEqual(
-                settings.viewport.horizontalScrollBarPolicy(),
+                viewport.horizontalScrollBarPolicy(),
                 QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
             )
             settings_text = " ".join(
@@ -149,15 +434,11 @@ class QtLayoutTests(unittest.TestCase):
                 window.show_page(page_name)
                 scan_page.visual_tabs.setCurrentIndex(map_index)
                 self.qt_app.processEvents()
-                self.assertIs(
-                    scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner),
-                    scan_page.map_view_toolbar,
-                )
-                self.assertTrue(scan_page.map_view_toolbar.isVisible())
+                self.assertIsNone(scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner))
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
-                ("Time traces", "Voltammogram", "Approach curves"),
+                ("Experiment traces", "CV", "Approach curves"),
             )
             expected_sections = {
                 "Approach": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition"),
@@ -204,7 +485,7 @@ class QtLayoutTests(unittest.TestCase):
         self.qt_app.processEvents()
         try:
             labels = [window.tabs.tabText(index) for index in range(window.tabs.count())]
-            self.assertEqual(labels, ["Raw traces", "Voltammograms", "Raw data table", "Metadata"])
+            self.assertEqual(labels, ["Experiment traces", "CV", "Raw data table", "Metadata"])
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()

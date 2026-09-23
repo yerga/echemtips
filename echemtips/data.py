@@ -290,6 +290,10 @@ class DataRecorder:
             pass
 
     def _write_metadata(self) -> None:
+        # Include execution diagnostics (such as limited retractions) in each
+        # checkpoint, not just the final sidecar after a successful run.
+        if self._parameters is not None:
+            self._metadata["parameters"] = self._json_value(self._parameters)
         path = self._metadata_path
         if path is None:
             return

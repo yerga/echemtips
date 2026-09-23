@@ -15,13 +15,46 @@ from echemtips.experiments import (
     ExperimentState, ScanHoppingCVExperiment, ScanHoppingITExperiment, contact_threshold_hit,
 )
 from echemtips.models import (
-    DEFAULT_BITFILE, AppSettings, ApproachCVParameters, ApproachITParameters,
+    AppSettings, ApproachCVParameters, ApproachITParameters,
     ApproachParameters, CVParameters, Sample, ScanHoppingCVParameters,
     ScanHoppingITParameters, SettingsStore, default_settings_path,
 )
 
 
 class SettingsTests(unittest.TestCase):
+    def test_colormap_preferences_round_trip_and_validate(self) -> None:
+        for field in ("map_z_colormap", "map_current_colormap"):
+            self.assertTrue(AppSettings(**{field: "not-a-palette"}).validate())
+        self.assertEqual(AppSettings.from_dict({}).map_z_colormap, "viridis")
+        with TemporaryDirectory() as folder:
+            store = SettingsStore(Path(folder) / "settings.json")
+            settings = AppSettings(map_z_colormap="cividis", map_current_colormap="CET-D1")
+            store.save(settings)
+            self.assertEqual(store.load(), settings)
+
+    def test_display_settings_reject_invalid_ranges_and_units(self) -> None:
+        for kwargs in (
+            {"map_z_min_um": 10, "map_z_max_um": 10},
+            {"map_current_min_na": 2, "map_current_max_na": 1},
+            {"monitor_window_s": 0}, {"experiment_window_s": float("nan")},
+            {"font_size_pt": 50}, {"trace_width_px": 0},
+            {"current_display_unit": "uA"}, {"map_z_auto_limits": "yes"},
+        ):
+            self.assertTrue(AppSettings(**kwargs).validate(), kwargs)
+        with TemporaryDirectory() as folder:
+            store = SettingsStore(Path(folder) / "settings.json")
+            expected = AppSettings(map_current_auto_limits=False, map_current_min_na=-0.1,
+                map_current_max_na=0.2, monitor_window_s=15, experiment_window_s=90,
+                current_display_unit="pA", font_size_pt=12, trace_width_px=3)
+            store.save(expected)
+            self.assertEqual(store.load(), expected)
+
+    def test_map_display_preferences_are_validated(self) -> None:
+        for diameter in (0, -1, float("nan"), float("inf"), "bad", True):
+            self.assertTrue(AppSettings(map_footprint_diameter_um=diameter).validate())
+        self.assertTrue(AppSettings(map_view_mode="unknown").validate())
+        self.assertEqual(AppSettings.from_dict({}).map_view_mode, "square")
+
     def test_default_settings_are_valid(self) -> None:
         settings = AppSettings()
         self.assertEqual(settings.validate(), [])
@@ -67,6 +100,7 @@ class SettingsTests(unittest.TestCase):
             expected = AppSettings(
                 z_range_um=38.0,
                 mode="NI FPGA",
+                bitfile="my-instrument.lvbitx",
                 current2_v_per_na=2.5,
             )
             store.save(expected)
@@ -75,16 +109,24 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(actual.mode, "NI FPGA")
             self.assertEqual(actual.current2_v_per_na, 2.5)
 
-    def test_legacy_default_bitfile_is_migrated_to_usb_target(self) -> None:
+    def test_saved_bitfile_and_transport_are_preserved(self) -> None:
         with TemporaryDirectory() as folder:
             path = Path(folder) / "settings.json"
             path.write_text(json.dumps({
-                "bitfile": "FPGA Bitfiles/FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx",
+                "bitfile": "FPGA Bitfiles/my-custom-build.lvbitx",
                 "hardware_transport": "PCIe/PXI R Series",
             }), encoding="utf-8")
             settings = SettingsStore(path).load()
-            self.assertEqual(settings.bitfile, DEFAULT_BITFILE)
-            self.assertEqual(settings.hardware_transport, "USB R Series")
+            self.assertEqual(settings.bitfile, "FPGA Bitfiles/my-custom-build.lvbitx")
+            self.assertEqual(settings.hardware_transport, "PCIe/PXI R Series")
+
+    def test_default_bitfile_requires_explicit_selection_or_environment(self) -> None:
+        from echemtips.models import _default_bitfile
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(_default_bitfile(), "")
+        with patch.dict("os.environ", {"ECHEMTIPS_BITFILE": "/private/any-build.lvbitx"}):
+            self.assertEqual(_default_bitfile(), "/private/any-build.lvbitx")
+        self.assertTrue(any("bitfile" in e for e in AppSettings(mode="NI FPGA", bitfile="").validate()))
 
 
 class SimulationTests(unittest.TestCase):
@@ -167,7 +209,7 @@ class NIBackendSafetyTests(unittest.TestCase):
             backend.connect()
 
     def test_fpga_connection_requires_explicit_startup_actuation_permission(self) -> None:
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile="target.lvbitx"))
         self.assertIn("AO0/X", backend.startup_notice)
         self.assertIn("+5 V", backend.startup_notice)
         self.assertIn("X 50.0 µm", backend.startup_notice)
@@ -660,7 +702,95 @@ class ExperimentTests(unittest.TestCase):
             x_points=2, y_points=2, serpentine=False,
             start_z_um=2, end_z_um=80, raster_line_retract_um=5,
         )
-        self.assertTrue(any("outside" in error for error in invalid.validate(AppSettings())))
+        self.assertEqual(invalid.validate(AppSettings()), [])
+
+    def test_scan_retraction_limits_and_diagnostics(self) -> None:
+        for cls in (ScanHoppingCVParameters, ScanHoppingITParameters):
+            p = cls(start_z_um=0, end_z_um=90, x_points=2, y_points=2,
+                    serpentine=False, raster_line_retract_um=8)
+            self.assertEqual(p.validate(AppSettings()), [])
+            self.assertEqual(p.bounded_retract_z(0, 80, 100), 70)
+            self.assertEqual(p.retraction_events, [])
+            self.assertEqual(p.bounded_retract_z(0, 8, 100), 0)
+            self.assertFalse(p.retract_has_no_travel(0))
+            self.assertIn("8 µm of 10 µm", p.retraction_notice())
+            self.assertEqual(p.bounded_retract_z(1, 12, 100), 0)
+            self.assertEqual(p.retraction_events[-1]["requested_distance_um"], 18)
+            self.assertEqual(p.bounded_retract_z(2, 0, 100), 0)
+            self.assertTrue(p.retract_has_no_travel(2))
+            p.start_z_um, p.end_z_um = 100, 0
+            self.assertEqual(p.validate(AppSettings()), [])
+            self.assertEqual(p.bounded_retract_z(0, 95, 100), 100)
+            with self.assertRaises(ValueError):
+                p.bounded_retract_z(0, -1, 100)
+
+    def test_simulated_final_hop_returns_to_initial_before_complete(self) -> None:
+        for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
+                                (ScanHoppingITExperiment, ScanHoppingITParameters)):
+            settings = AppSettings()
+            backend = SimulationBackend(settings)
+            backend.connect()
+            experiment = cls(backend, settings)
+            p = params_cls(start_z_um=0, end_z_um=90, x_points=1, y_points=1)
+            experiment.start(p)
+            experiment.contact_z[(0, 0)] = 68
+            if cls is ScanHoppingCVExperiment:
+                experiment.state = ExperimentState.CV
+                experiment._segments = [0]
+                experiment._cv_voltage = 0
+            else:
+                experiment.state = ExperimentState.IT
+                experiment._step_index = len(experiment._steps) - 1
+                experiment._step_deadline = -1
+            experiment.tick_samples([Sample(0, 35, 35, 68, 0, 0, 0, 0)])
+            self.assertEqual(experiment._retract_target_z, 0)
+            self.assertEqual(experiment.state, ExperimentState.RETRACTING)
+            experiment.tick_samples([Sample(1, 35, 35, 0, 0, 0, 0, 0)])
+            self.assertEqual(experiment.state, ExperimentState.COMPLETE)
+
+    def test_simulated_scans_reuse_bounded_target_and_stop_without_travel(self) -> None:
+        for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
+                                (ScanHoppingITExperiment, ScanHoppingITParameters)):
+            for contact in (0, 8):
+                with self.subTest(method=cls.__name__, contact=contact):
+                    settings = AppSettings()
+                    backend = SimulationBackend(settings)
+                    backend.connect()
+                    experiment = cls(backend, settings)
+                    p = params_cls(start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    experiment.start(p)
+                    experiment.contact_z[(0, 0)] = contact
+                    if cls is ScanHoppingCVExperiment:
+                        experiment.state = ExperimentState.CV
+                        experiment._segments = [0]
+                        experiment._cv_voltage = 0
+                    else:
+                        experiment.state = ExperimentState.IT
+                        experiment._step_index = len(experiment._steps) - 1
+                        experiment._step_deadline = -1
+                    with patch.object(backend, "move", wraps=backend.move) as move:
+                        experiment.tick_samples([Sample(0, 35, 35, contact, 0, 0, 0, 0)])
+                        self.assertEqual(experiment._retract_target_z, 0)
+                        experiment.tick_samples([Sample(1, 35, 35, 0, 0, 0, 0, 0)])
+                        if contact == 0:
+                            self.assertEqual(experiment.state, ExperimentState.ABORTED)
+                            self.assertEqual(experiment.point_index, 0)
+                            self.assertFalse(any(call.args[0] in ("X", "Y") for call in move.call_args_list))
+                        else:
+                            self.assertEqual(experiment.point_index, 1)
+                            self.assertEqual(experiment._z_position_target, 0)
+
+    def test_limited_retraction_is_checkpointed_in_metadata(self) -> None:
+        with TemporaryDirectory() as folder:
+            settings = AppSettings(save_directory=folder)
+            params = ScanHoppingCVParameters(start_z_um=0)
+            recorder = DataRecorder()
+            recorder.start("Scan Hopping CV", settings, params)
+            params.bounded_retract_z(0, 8, settings.z_range_um)
+            recorder._write_metadata()
+            metadata = json.loads(next(Path(folder).glob("*.json")).read_text())
+            self.assertEqual(metadata["parameters"]["retraction_events"][0]["actual_distance_um"], 8)
+            recorder.finish(settings, params, status="aborted")
 
     def test_scan_end_of_travel_aborts_pixel_without_cv(self) -> None:
         settings = AppSettings()

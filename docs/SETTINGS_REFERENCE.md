@@ -30,11 +30,12 @@ without reviewing every calibration value.
 | --- | --- | --- | --- |
 | **Backend** | Simulation | Simulation, NI FPGA | Chooses the deterministic software simulator or real RIO connection. Opening the application alone does not connect. |
 | **NI resource** | `RIO0` | Non-empty NI MAX resource in hardware mode | Passed to `nifpga.Session`. Use the exact alias shown by NI MAX. |
-| **FPGA hardware** | USB R Series | USB R Series, PCIe/PXI R Series, Auto | Constrains bitfile target validation. Use USB R Series for the USB-7856R; do not use Auto to bypass an unexplained mismatch. |
-| **Compiled bitfile** | Supported private filename or detected sibling archive | Non-empty path in hardware mode | Defines the FPGA image and its host-visible register/FIFO contract. The image is private and never packaged by eChemTips. |
+| **FPGA hardware** | Auto | USB R Series, PCIe/PXI R Series, Auto | Optionally constrains the bitfile transport family. Auto leaves exact device matching to NI-RIO; it does not bypass register/FIFO checks. |
+| **Compiled bitfile** | Empty, or `ECHEMTIPS_BITFILE` | Non-empty path in hardware mode | Defines the FPGA image and its host-visible register/FIFO contract. The image is private and never packaged by eChemTips. |
 
-The application refuses the known PCIe-7852R image when USB R Series is
-selected. Selecting a path does not make it safe; run the hardware checker and
+The application refuses a non-USB image when USB R Series is selected, and
+a USB image when PCIe/PXI R Series is selected. No filename or single build
+signature is required. Saved paths are never replaced based on their names. Selecting a path does not make it safe; run the hardware checker and
 complete physical commissioning.
 
 ## Acquisition and execution
@@ -98,7 +99,64 @@ Starting a recording creates its files immediately. This protects partial data
 from process interruption but means the destination must remain writable for
 the entire experiment.
 
-## Display
+## Plots and Maps
+
+Settings uses seven tabs: **Connection**, **Acquisition**, **Piezos**,
+**Amplifiers**, **Saving**, **Plots**, and **Maps**. The
+**Save as defaults and apply** button remains visible below the tabs and saves
+all categories together. Each tab scrolls independently when needed.
+Plot buffers, rolling windows, current units, font size and trace thickness
+are in **Plots**; map shape, footprint diameter, colormaps and color limits
+are in **Maps**. The defaults-file location is shown in **Saving**.
+
+| Preference | Default | Options / range |
+| --- | --- | --- |
+| Contact Z / Current colormap | Viridis (each) | Independent choices: Viridis, Cividis, Plasma, Inferno, Magma, Grayscale, Blue–white–red |
+| Contact Z color scale | Automatic | Automatic, or fixed minimum/maximum in µm |
+| Current color scale | Automatic | Automatic, or fixed minimum/maximum entered in nA |
+| Monitor rolling window | 30 s | 1–3600 s; Watch current and Watch position |
+| Experiment rolling window | 60 s | 1–3600 s; time-domain traces and rolling approach history |
+| Current display units | nA | nA, pA, Auto |
+| Font size | 10 pt | 8–14 pt |
+| Trace thickness | 2 px | 0.5–6 px |
+
+Fixed color limits require minimum below maximum. Values beyond these limits
+use the end colors without changing the measurements. Z and current limits
+are independent and shared between scan methods. Current limits are always
+entered in **nA**, even when maps display pA (1 nA = 1000 pA). The range summary
+reports the actual data range; the color bar shows the selected scale.
+
+Colormap selections apply to both scan methods, square cells, circular
+footprints and their color bars. Save and apply to recolor existing maps;
+measurements and scale limits are unchanged. For Blue–white–red to represent
+zero at its midpoint, choose symmetric fixed limits (for example −1 to +1 nA).
+All palettes are bundled with PyQtGraph; no additional package is needed.
+
+Auto current units use pA when the visible nonzero current magnitudes are all
+below 1 nA; otherwise nA. A fixed current map scale selects Auto units from
+its limits, so new map values do not change those units. Plot axes, current-map
+scales/hover values, Watch current readouts and the instrument strip use the
+chosen units. Feedback thresholds, amplifier sensitivities, diagnostic reports,
+CSV recordings and analysis exports keep their explicit original units.
+The analysis window loads unit/font/thickness preferences when opened.
+
+Rolling windows apply only to live time traces and approach history, not CV
+curves, the latest approach curve, maps or post-recording analysis. Increasing
+a window cannot restore points already pruned from the live buffer; the saved
+recording retains them. Settings tabs provide scrollbars where required at
+larger fonts; emergency controls remain outside scrolling content.
+
+**Scan map shape** selects Square cells (default) or Circular footprints for
+both scan experiments. **Meniscus footprint diameter** defaults to 1 µm and
+must be finite and positive. It sets the circle diameter in physical
+coordinates, and the fallback cell width for single-row/column square maps.
+It changes rendering only, not hop spacing, feedback or physical meniscus size.
+
+Use **Save as defaults and apply** to update both scan pages and retain these
+preferences after restart. Display-only changes preserve the connection,
+experiment objects and existing maps; stop an active experiment before saving
+settings. Footprint diameter is also copied into scan parameters in the JSON
+metadata for interpretation of the recorded map.
 
 | Setting | Default | Valid range | Effect |
 | --- | --- | --- | --- |

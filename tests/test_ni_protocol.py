@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import replace
+from contextlib import redirect_stderr
+import io
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -12,6 +15,7 @@ from echemtips.models import (
 from echemtips.ni_driver import WECSPMDriver
 from echemtips.ni_protocol import (
     ANALOG_INPUT_CHANNELS,
+    BitfileInfo, REGISTER_CONTRACT, FIFO_CONTRACT,
     ANALOG_OUTPUT_CHANNELS,
     FEEDBACK_ACTION_CODES,
     FEEDBACK_SIGNAL_CODES,
@@ -32,20 +36,38 @@ from echemtips.waypoints import PhysicalWaypoint
 
 
 BITFILE = Path(DEFAULT_BITFILE)
-LEGACY_BITFILE = BITFILE.with_name("FPGAProject_FPGATarget_FPGATarget2_ACEEEF6E.lvbitx")
 
 
 class ProtocolTests(unittest.TestCase):
-    @unittest.skipUnless(BITFILE.is_file() and LEGACY_BITFILE.is_file(), "private FPGA bitfiles are not installed")
-    def test_usb_7856_bitfile_contract_and_legacy_guard(self) -> None:
+    def test_checker_requires_a_selected_bitfile_and_defaults_to_auto_transport(self) -> None:
+        from echemtips.hardware_check import _parser, main
+        self.assertEqual(_parser().parse_args([]).transport, "auto")
+        output = io.StringIO()
+        with redirect_stderr(output):
+            self.assertEqual(main(["--bitfile", ""]), 2)
+        self.assertIn("supply --bitfile", output.getvalue())
+
+    @unittest.skipUnless(BITFILE.is_file(), "set ECHEMTIPS_BITFILE to test a private FPGA bitfile")
+    def test_locally_supplied_bitfile_contract(self) -> None:
         info = inspect_bitfile(BITFILE)
-        self.assertEqual(info.target_class, "USB-7856R")
-        self.assertEqual(info.signature, "8229BC0D5A4935D854D1286878CEE54A")
-        self.assertEqual(validate_wec_bitfile(info, "USB R Series"), [])
-        legacy = inspect_bitfile(LEGACY_BITFILE)
-        self.assertTrue(any("not a USB" in error for error in validate_wec_bitfile(legacy, "USB R Series")))
-        self.assertEqual(info.register_contract, legacy.register_contract)
-        self.assertEqual(info.fifo_contract, legacy.fifo_contract)
+        self.assertEqual(validate_wec_bitfile(info), [])
+
+    def test_compatible_builds_are_not_pinned_to_filename_model_or_signature(self) -> None:
+        for model in ("USB-7856R", "USB-7855R", "PCIe-7852R", "PXI-7852R"):
+            info = BitfileInfo(Path("user-selected-name.lvbitx"), model, "new-build-signature",
+                               frozenset(REGISTER_CONTRACT), frozenset(FIFO_CONTRACT),
+                               dict(REGISTER_CONTRACT), dict(FIFO_CONTRACT))
+            self.assertEqual(validate_wec_bitfile(info), [])
+            transport = "USB R Series" if info.is_usb_target else "PCIe/PXI R Series"
+            self.assertEqual(validate_wec_bitfile(info, transport), [])
+            other = "PCIe/PXI R Series" if info.is_usb_target else "USB R Series"
+            self.assertTrue(validate_wec_bitfile(info, other))
+            name = next(iter(REGISTER_CONTRACT))
+            self.assertTrue(validate_wec_bitfile(replace(info, registers=info.registers - {name})))
+            self.assertTrue(validate_wec_bitfile(replace(info, register_contract={name: ("WrongType", False)})))
+            fifo = next(iter(FIFO_CONTRACT))
+            for contract in (("U16", "HostToTarget", 8197), ("I16", "WrongDirection", 8197), ("I16", "HostToTarget", 1)):
+                self.assertTrue(validate_wec_bitfile(replace(info, fifo_contract={fifo: contract})))
 
     def test_deployed_semantic_channel_and_feedback_profile(self) -> None:
         self.assertEqual(ANALOG_OUTPUT_CHANNELS, {
@@ -180,7 +202,7 @@ class NativeDriverTests(unittest.TestCase):
             "ExpandVelScaller Y", "ExpandVelScaller Z", "ExpandVelScaller V", "FeedBackType", "Feedback_Threshold",
             "GreaterThan", "LineNumber", "WaitingForWayPoints",
             "V on Fly", "V2 on Fly", "Change V on Fly", "Change V on Fly 2",
-            "EndCurrentLine", "LineType", "Feedback1 Boolean", "Feedback1 Error", "Z END", "StopMoveZ",
+            "EndCurrentLine", "LineType", "Feedback1 Boolean", "Feedback2 Boolean", "Feedback1 Error", "Z END", "StopMoveZ",
             "ExpandVelScaller V2", "FeedBackType 2", "Feedback_Threshold 2", "GreaterThan 2", "P",
             "Upper limit Of dZ", "P2AvgWhole", "P2AvgMinus", "Feedback1 on  Hold",
             "DistanceToBulk", "DistanceToBulk 2", "DistanceToBulk 3",
@@ -223,7 +245,7 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.configure_feedback(config)
         self.assertEqual(self.session.registers["Feedback_Threshold"].value, current_to_raw(2.5, 1.0))
         self.assertEqual(self.session.registers["FeedBackType 2"].value, 2)
-        self.assertEqual(self.session.registers["Feedback_Threshold 2"].value, 0)
+        self.assertEqual(self.session.registers["Feedback_Threshold 2"].value, 32768)
         self.assertTrue(self.session.registers["GreaterThan 2"].value)
         self.assertEqual(self.session.registers["P"].value, 0.0)
         self.assertEqual(self.session.registers["Upper limit Of dZ"].value, 10)
@@ -292,7 +314,8 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["Internal Pause"].value = True
         self.session.registers["WaitingForWayPoints"].value = False
         self.assertEqual(self.driver.method_status()["stage"], "contact")
-        self.assertTrue(self.session.registers["EndCurrentLine"].value)
+        self.assertFalse(self.session.registers["EndCurrentLine"].value)
+        self.assertEqual(self.session.registers["Feedback_Threshold 2"].value, -32769)
         self.assertFalse(self.session.registers["External Stop"].value)
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
@@ -337,6 +360,8 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.start_method("approach_it", params)
         self.session.registers["External Pause"].value = False
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["Applied Z"].value = self.driver._program_waypoints[-1].z_position
+        self.driver.service()  # Type 2 holds at End Z; request a no-contact exit.
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
         self.assertEqual(self.driver.method_status()["stage"], "retracting")
@@ -399,7 +424,8 @@ class NativeDriverTests(unittest.TestCase):
             self.assertEqual(self.driver.method_context(approach_end + 2), (point, "it:pulse"))
             self.assertEqual(self.driver.method_context(approach_end + 4), (point, "retract"))
             retract = self.driver.positions_fifo.writes[-1][-14:]
-            self.assertEqual(retract[8], position_to_raw(58, self.settings.z_range_um, self.settings.z_bipolar))
+            self.assertEqual(retract[8], position_to_raw(58 if point == 0 else params.start_z_um,
+                                                       self.settings.z_range_um, self.settings.z_bipolar))
 
             self.session.registers["Feedback1 Boolean"].value = False
             self.session.registers["Internal Pause"].value = False
@@ -431,9 +457,272 @@ class NativeDriverTests(unittest.TestCase):
         self.assertIn(-1, self.driver._method_contact_observed)
 
     def test_resume_does_not_override_an_fpga_feedback_pause(self) -> None:
+        self.driver.pause()
         self.session.registers["Internal Pause"].value = True
-        with self.assertRaisesRegex(RuntimeError, "feedback pause"):
+        self.driver.resume()
+        self.assertFalse(self.session.registers["External Pause"].value)
+        self.assertTrue(self.session.registers["Internal Pause"].value)
+
+    def _start_contact_case(self, name):
+        """Start any contact-gated hardware method at its approach waypoint."""
+        self.setUp()
+        if name == "approach_cv":
+            self.driver.start_approach_cv(ApproachCVParameters())
+            status = self.driver.approach_cv_status
+        elif name == "scan_cv":
+            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1))
+            status = self.driver.scan_hopping_cv_status
+        else:
+            params = {"approach": ApproachParameters(), "approach_it": ApproachITParameters(),
+                      "scan_hopping_it": ScanHoppingITParameters(x_points=1, y_points=1)}[name]
+            self.driver.start_method(name, params)
+            status = self.driver.method_status
+        self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["WaitingForWayPoints"].value = False
+        return status
+
+    def test_unused_comparator_cannot_pause_any_approach(self) -> None:
+        # Target line type 1 wires Feedback1 OR Feedback2 to Internal Pause.
+        # Emulate that OR, including positive/noisy/rail Current 2 values.
+        for name in ("approach", "approach_it", "approach_cv", "scan_cv", "scan_hopping_it"):
+            with self.subTest(method=name):
+                status = self._start_contact_case(name)
+                regs = self.session.registers
+                for raw in (-32768, -1, 0, 1, 1000, 32767):
+                    secondary_hit = raw >= regs["Feedback_Threshold 2"].value
+                    regs["Feedback1 Boolean"].value = False
+                    regs["Internal Pause"].value = secondary_hit
+                    self.assertFalse(secondary_hit)
+                    self.assertEqual(status()["stage"], "approaching")
+                    self.assertFalse(regs["EndCurrentLine"].value)
+                    self.assertEqual(len(self.driver.positions_fifo.writes), 1)
+
+    def test_native_contact_scans_repeat_in_one_session_with_consumed_stop_latch(self) -> None:
+        """Two 3x3 scans per mode; a consumed one-shot must never be needed."""
+        for method in ("cv", "it"):
+            for mode in ("absolute", "baseline_relative"):
+                with self.subTest(method=method, mode=mode):
+                    self.setUp()
+                    d, regs = self.driver, self.session.registers
+                    regs["OnlyStopLineONCE Z"] = _Register(True)
+                    def forbid_end(value):
+                        self.assertFalse(value, "Contact must not use the one-shot EndCurrentLine")
+                        regs["EndCurrentLine"].value = value
+                    regs["EndCurrentLine"].write = forbid_end
+                    status = d.scan_hopping_cv_status if method == "cv" else d.method_status
+                    def complete_program():
+                        regs["LineNumber"].value = d._program_baseline + d._program_total
+                        regs["WaitingForWayPoints"].value = True
+                        frame = [0] * SAMPLE_WORDS
+                        frame[9] = regs["LineNumber"].value
+                        d.data_fifo.data.extend(frame)
+                        d.read_samples()
+                    for run in range(2):
+                        if method == "cv":
+                            d.start_scan_hopping_cv(ScanHoppingCVParameters(
+                                x_points=3, y_points=3, cycles=1, feedback_mode=mode))
+                        else:
+                            d.start_method("scan_hopping_it", ScanHoppingITParameters(
+                                x_points=3, y_points=3, feedback_mode=mode))
+                        for point in range(9):
+                            if mode == "baseline_relative":
+                                complete_program()
+                                self.assertEqual(status()["stage"], "approaching")
+                            self.assertEqual(d._program_waypoints[-1].line_type, 2)
+                            regs["LineNumber"].value = d._program_baseline + d._program_total
+                            regs["Applied Z"].value = d._program_waypoints[-1].z_position - 200
+                            regs["WaitingForWayPoints"].value = False
+                            d.service()
+                            # Type 2 completes on a brief feedback event. By the
+                            # next host poll the primary comparator is false.
+                            regs["Feedback1 Boolean"].value = False
+                            regs["WaitingForWayPoints"].value = True
+                            frame = [0] * SAMPLE_WORDS
+                            frame[9] = regs["LineNumber"].value
+                            d.data_fifo.data.extend(frame[:-1])
+                            before = len(d.positions_fifo.writes)
+                            d.read_samples()
+                            status()
+                            self.assertEqual(len(d.positions_fifo.writes), before)
+                            d.data_fifo.data.append(frame[-1])
+                            self.assertEqual(len(d.read_samples()), 1)
+                            self.assertEqual(status()["stage"], "cv" if method == "cv" else "it")
+                            self.assertEqual(regs["Feedback_Threshold 2"].value, 32768)
+                            self.assertFalse(regs["External Stop"].value)
+                            self.assertTrue(regs["OnlyStopLineONCE Z"].value)
+                            complete_program()
+                            update = status()
+                        self.assertEqual(update["stage"], "complete")
+                        d.ensure_idle()
+
+    def test_no_contact_exit_and_manual_acceptance_restore_threshold_with_idle_indicator_latched(self) -> None:
+        for name in ("approach", "approach_it", "approach_cv", "scan_cv", "scan_hopping_it"):
+            for manual in (False, True):
+                with self.subTest(method=name, manual=manual):
+                    status = self._start_contact_case(name)
+                    d, regs = self.driver, self.session.registers
+                    if manual:
+                        d.accept_approach()
+                    else:
+                        regs["Applied Z"].value = d._program_waypoints[-1].z_position
+                        d.service()
+                    self.assertEqual(regs["Feedback_Threshold 2"].value, -32769)
+                    self.assertFalse(regs["EndCurrentLine"].value)
+                    regs["Feedback2 Boolean"].value = True
+                    regs["WaitingForWayPoints"].value = True
+                    before = len(d.positions_fifo.writes)
+                    d.read_samples()
+                    self.assertEqual(len(d.positions_fifo.writes), before)
+                    self.assertFalse(d._submitted)
+                    self.assertEqual(regs["Feedback_Threshold 2"].value, 32768)
+                    self.assertTrue(regs["Feedback2 Boolean"].value)
+                    result = status()
+                    if manual:
+                        self.assertNotEqual(result["stage"], "aborted")
+                    else:
+                        self.assertIn(result["stage"], ("aborted", "retracting"))
+                        self.assertNotIn(result["stage"], ("cv", "it", "contact"))
+
+    def test_feedback_completion_timeout_and_failed_disarm_latch_safely(self) -> None:
+        for failed_disarm in (False, True):
+            with self.subTest(failed_disarm=failed_disarm):
+                self._start_contact_case("scan_cv")
+                d, regs = self.driver, self.session.registers
+                d.accept_approach()
+                regs["WaitingForWayPoints"].value = failed_disarm
+                if failed_disarm:
+                    regs["Feedback_Threshold 2"].write = lambda value: None
+                with patch("echemtips.ni_driver.time.monotonic", return_value=d._contact_finish_deadline + 1):
+                    with self.assertRaises(RuntimeError if failed_disarm else TimeoutError):
+                        d.service()
+                self.assertTrue(regs["External Pause"].value)
+                self.assertTrue(d._stopped)
+                self.assertEqual(len(d.positions_fifo.writes), 1)
+                update = d.scan_hopping_cv_status()
+                self.assertEqual(update["stage"], "aborted")
+                self.assertNotIn("press Resume", update["detail"])
+
+    def test_manual_acceptance_cannot_arm_secondary_after_completion(self) -> None:
+        self._start_contact_case("scan_cv")
+        self.session.registers["WaitingForWayPoints"].value = True
+        with self.assertRaisesRegex(RuntimeError, "already completed"):
+            self.driver.accept_approach()
+        self.assertEqual(self.session.registers["Feedback_Threshold 2"].value, 32768)
+
+    def test_contact_unpauses_only_after_end_request_and_drains_before_followup(self) -> None:
+        for name in ("approach", "approach_it", "approach_cv", "scan_cv", "scan_hopping_it"):
+            with self.subTest(method=name):
+                status = self._start_contact_case(name)
+                regs = self.session.registers
+                regs["Feedback1 Boolean"].value = True
+                regs["Internal Pause"].value = True
+                original_write = regs["Internal Pause"].write
+                def release(value):
+                    # Model the paused axis loops: they cannot acknowledge an
+                    # end request until the pause latch is explicitly released.
+                    if not value:
+                        self.assertFalse(regs["EndCurrentLine"].value)
+                        self.assertEqual(regs["Feedback_Threshold 2"].value, -32769)
+                        self.assertFalse(regs["External Pause"].value)
+                        regs["WaitingForWayPoints"].value = True
+                    original_write(value)
+                with patch.object(regs["Internal Pause"], "write", side_effect=release):
+                    self.assertEqual(status()["stage"], "contact")
+                self.assertFalse(regs["Internal Pause"].value)
+                self.assertFalse(regs["External Stop"].value)
+                self.assertEqual(len(self.driver.positions_fifo.writes), 1)
+                frame = [0] * SAMPLE_WORDS
+                self.driver.data_fifo.data.extend(frame)
+                self.assertEqual(len(self.driver.read_samples()), 1)
+                self.assertFalse(regs["EndCurrentLine"].value)
+                self.assertNotEqual(status()["stage"], "aborted")
+                self.assertGreater(len(self.driver.positions_fifo.writes), 1)
+
+    def test_external_and_feedback_pause_coexist_without_deadlock(self) -> None:
+        for operator in (False, True):
+            for name in ("approach", "approach_it", "approach_cv", "scan_cv", "scan_hopping_it"):
+                with self.subTest(method=name, operator=operator):
+                    status = self._start_contact_case(name)
+                    regs = self.session.registers
+                    regs["Feedback1 Boolean"].value = True
+                    regs["Internal Pause"].value = True
+                    if operator:
+                        self.driver.pause()
+                    else:
+                        regs["External Pause"].value = True
+                    update = status()
+                    self.assertIn("press Resume", update["detail"])
+                    self.assertFalse(regs["EndCurrentLine"].value)
+                    self.assertTrue(regs["Internal Pause"].value)
+                    regs["Feedback1 Boolean"].value = False  # Event must remain latched.
+                    self.driver.resume()
+                    self.assertTrue(regs["Internal Pause"].value)
+                    self.assertEqual(status()["stage"], "contact")
+                    self.assertFalse(regs["Internal Pause"].value)
+
+    def test_unconfirmed_pause_waits_for_evidence_then_fails_closed(self) -> None:
+        for name in ("approach", "approach_it", "approach_cv", "scan_cv", "scan_hopping_it"):
+            with self.subTest(method=name):
+                status = self._start_contact_case(name)
+                regs = self.session.registers
+                regs["Internal Pause"].value = True
+                regs["StopMoveZ"].value = True  # Movement completion is NOT contact.
+                with patch("echemtips.ni_driver.time.monotonic", return_value=10.0):
+                    self.assertIn("checking contact evidence", status()["detail"])
+                self.assertTrue(regs["Internal Pause"].value)
+                self.assertFalse(regs["EndCurrentLine"].value)
+                with patch("echemtips.ni_driver.time.monotonic", return_value=100.0):
+                    result = status()
+                self.assertEqual(result["stage"], "aborted")
+                self.assertIn("Feedback1 Boolean=", result["detail"])
+                self.assertTrue(regs["External Pause"].value)
+                self.assertFalse(regs["External Stop"].value)
+                self.assertEqual(len(self.driver.positions_fifo.writes), 1)
+                with self.assertRaisesRegex(RuntimeError, "latched"):
+                    self.driver.resume()
+                with self.assertRaisesRegex(RuntimeError, "latched"):
+                    self.driver.end_current_waypoint()
+                self.assertTrue(regs["External Pause"].value)
+
+    def test_end_acknowledgement_deadline_excludes_operator_pause(self) -> None:
+        self._start_contact_case("approach_cv")
+        regs = self.session.registers
+        with patch("echemtips.ni_driver.time.monotonic", return_value=0.0):
+            self.driver.accept_approach()
+            self.driver.pause()
+        with patch("echemtips.ni_driver.time.monotonic", return_value=100.0):
+            self.driver.service()
             self.driver.resume()
+            self.driver.service()
+        self.assertFalse(self.driver._stopped)
+        self.assertEqual(regs["Feedback_Threshold 2"].value, -32769)
+        regs["WaitingForWayPoints"].value = True
+        self.driver.read_samples()
+        self.assertFalse(regs["EndCurrentLine"].value)
+
+    def test_delayed_contact_sample_is_recorded_exactly_once(self) -> None:
+        status = self._start_contact_case("approach_cv")
+        regs = self.session.registers
+        regs["Internal Pause"].value = True
+        self.assertIn("checking contact evidence", status()["detail"])
+        # Sample layout: line tag at 9, current 1 at 5. Comparator can already
+        # be false again by the time this buffered threshold crossing arrives.
+        frame = [0] * SAMPLE_WORDS
+        frame[9] = regs["LineNumber"].value
+        frame[5] = current_to_raw(3.0, self.settings.current1_v_per_na)
+        self.driver.data_fifo.data.extend(frame)
+        self.assertEqual(status()["stage"], "contact")
+        self.assertEqual(len(self.driver.read_samples()), 1)
+        self.assertEqual(self.driver.read_samples(), [])
+
+    def test_preposition_pause_is_never_accepted_as_contact(self) -> None:
+        status = self._start_contact_case("approach_cv")
+        regs = self.session.registers
+        regs["LineNumber"].value = self.driver._program_baseline + 1
+        regs["Internal Pause"].value = True
+        regs["Feedback1 Boolean"].value = True
+        self.assertIn("checking contact evidence", status()["detail"])
+        self.assertFalse(regs["EndCurrentLine"].value)
 
     def test_approach_cv_is_gated_by_confirmed_contact(self) -> None:
         params = ApproachCVParameters(cycles=2, retract_after=True, feedback_channel="Current 1")
@@ -445,7 +734,7 @@ class NativeDriverTests(unittest.TestCase):
         # present in the FPGA queue until Python confirms the feedback pause.
         self.assertEqual(len(writes[-1]), 2 * 14)
         approach = writes[-1][14:28]
-        self.assertEqual(approach[0], 1)
+        self.assertEqual(approach[0], 2)
         self.assertTrue(approach[13] & (1 << 2))
         self.assertEqual(self.session.registers["FeedBackType"].value, 1)
         self.session.registers["LineNumber"].value = 2
@@ -454,7 +743,7 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["WaitingForWayPoints"].value = False
         status = self.driver.approach_cv_status()
         self.assertEqual(status["stage"], "contact")
-        self.assertTrue(self.session.registers["EndCurrentLine"].value)
+        self.assertFalse(self.session.registers["EndCurrentLine"].value)
         self.assertFalse(self.session.registers["External Stop"].value)
         self.assertEqual(len(writes), before + 1)
         self.session.registers["WaitingForWayPoints"].value = True
@@ -486,7 +775,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(status["stage"], "approaching")
         approach = self.driver.positions_fifo.writes[-1]
         self.assertEqual(len(approach), 14)
-        self.assertEqual(approach[0], 1)
+        self.assertEqual(approach[0], 2)
         self.assertEqual(self.session.registers["Feedback_Threshold"].value, current_to_raw(1.6, 1.0))
         self.assertEqual(self.session.registers["P2AvgWhole"].value, 1)
         self.assertEqual(self.session.registers["P2AvgMinus"].value, 0)
@@ -504,7 +793,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(contexts[:3], ["settling", "settling", "settling"])
         self.assertEqual(contexts[3:], ["cv", "cv", "cv", "cv"])
 
-    def test_shared_approach_uses_stationary_baseline_then_type_one_feedback(self) -> None:
+    def test_shared_approach_uses_stationary_baseline_then_type_two_feedback(self) -> None:
         params = ApproachParameters(
             feedback_mode="baseline_relative", feedback_threshold=0.4, retract_after=False,
         )
@@ -522,7 +811,7 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
         self.assertEqual(self.driver.method_status()["stage"], "approaching")
-        self.assertEqual(self.driver.positions_fifo.writes[-1][0], 1)
+        self.assertEqual(self.driver.positions_fifo.writes[-1][0], 2)
         self.assertEqual(self.session.registers["Feedback_Threshold"].value, current_to_raw(2.5, 1.0))
         self.assertEqual(self.driver.method_context(3), (-1, "approach"))
 
@@ -545,7 +834,7 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.read_samples()
         status = self.driver.scan_hopping_cv_status()
         self.assertEqual(status["stage"], "approaching")
-        self.assertEqual(self.driver.positions_fifo.writes[-1][0], 1)
+        self.assertEqual(self.driver.positions_fifo.writes[-1][0], 2)
         self.assertEqual(self.session.registers["Feedback_Threshold"].value, current_to_raw(1.15, 1.0))
         self.assertEqual(self.driver.scan_context(4), (0, "approach"))
 
@@ -610,6 +899,7 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.scan_hopping_cv_status()
         self.driver.start_method("scan_hopping_it", ScanHoppingITParameters(x_points=1, y_points=1))
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["WaitingForWayPoints"].value = False
         self.driver.accept_approach()
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.session.registers["WaitingForWayPoints"].value = True
@@ -641,6 +931,8 @@ class NativeDriverTests(unittest.TestCase):
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
         self.session.registers["External Pause"].value = False
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
+        self.session.registers["Applied Z"].value = self.driver._program_waypoints[-1].z_position
+        self.driver.service()
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
         status = self.driver.approach_cv_status()
@@ -676,6 +968,83 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.approach_context(47), "retract")
         self.assertEqual(self.driver.approach_context(48), "")
 
+    def test_final_scan_return_keeps_xy_and_waits_for_framed_completion(self) -> None:
+        for method in ("cv", "it"):
+            for start, end, contact, expected in ((0, 90, 68, 0), (10, 90, 8, 8), (90, 0, 30, 90)):
+                with self.subTest(method=method, start=start, contact=contact):
+                    self.setUp()
+                    d, regs = self.driver, self.session.registers
+                    cls = ScanHoppingCVParameters if method == "cv" else ScanHoppingITParameters
+                    p = cls(start_z_um=start, end_z_um=end, x_points=1, y_points=1)
+                    if method == "cv":
+                        d.start_scan_hopping_cv(p)
+                    else:
+                        d.start_method("scan_hopping_it", p)
+                    status = d.scan_hopping_cv_status if method == "cv" else d.method_status
+                    regs["Applied Z"].value = position_to_raw(contact, 100, False)
+                    # Supply the fallback sensor coordinate for a later hop
+                    # whose surface lies below the initial approach position.
+                    if method == "cv": d._scan_last_approach_z[0] = contact
+                    else: d._method_last_approach_z[0] = contact
+                    regs["LineNumber"].value = d._program_baseline + d._program_total
+                    regs["WaitingForWayPoints"].value = True
+                    d.read_samples()
+                    self.assertEqual(status()["stage"], method)
+                    wp = d._program_waypoints[-1]
+                    self.assertEqual(wp.z_position, position_to_raw(expected, 100, False))
+                    self.assertEqual(wp.x_position, regs["Applied X"].value)
+                    self.assertEqual(wp.y_position, regs["Applied Y"].value)
+                    self.assertNotEqual(status()["stage"], "complete")
+                    regs["LineNumber"].value = d._program_baseline + d._program_total
+                    frame = [0] * SAMPLE_WORDS
+                    frame[9] = regs["LineNumber"].value
+                    d.data_fifo.data.extend(frame[:-1])
+                    d.read_samples()
+                    self.assertNotEqual(status()["stage"], "complete")
+                    d.data_fifo.data.append(frame[-1])
+                    d.read_samples()
+                    self.assertEqual(status()["stage"], "complete")
+
+    def test_scan_bounded_retract_and_no_travel_interlock(self) -> None:
+        for method in ("cv", "it"):
+            for contact in (0.0, 8.0, 50.0):
+                with self.subTest(method=method, contact=contact):
+                    self.setUp()
+                    d, regs = self.driver, self.session.registers
+                    cls = ScanHoppingCVParameters if method == "cv" else ScanHoppingITParameters
+                    p = cls(start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    if method == "cv":
+                        d.start_scan_hopping_cv(p)
+                    else:
+                        d.start_method("scan_hopping_it", p)
+                    status = d.scan_hopping_cv_status if method == "cv" else d.method_status
+                    def finish():
+                        regs["LineNumber"].value = d._program_baseline + d._program_total
+                        regs["WaitingForWayPoints"].value = True
+                        frame = [0] * SAMPLE_WORDS
+                        frame[9] = regs["LineNumber"].value
+                        d.data_fifo.data.extend(frame)
+                        d.read_samples()
+                    regs["Applied Z"].value = position_to_raw(contact, 100, False)
+                    finish()
+                    self.assertEqual(status()["stage"], method)
+                    target = d._program_waypoints[-1].z_position
+                    self.assertEqual(target, position_to_raw(max(0, contact - 10), 100, False))
+                    regs["Applied Z"].value = target
+                    finish()
+                    writes = len(d.positions_fifo.writes)
+                    result = status()
+                    if contact == 0:
+                        self.assertEqual(result["stage"], "aborted")
+                        self.assertIn("no Z retraction", result["detail"])
+                        status()
+                        self.assertEqual(len(d.positions_fifo.writes), writes)
+                        self.assertFalse(regs["External Stop"].value)
+                    else:
+                        self.assertNotEqual(result["stage"], "aborted")
+                        self.assertEqual(len(d.positions_fifo.writes), writes + 1)
+                    self.assertEqual(bool(p.retraction_events), contact < 10)
+
     def test_scan_hopping_submits_cv_only_after_each_confirmed_contact(self) -> None:
         params = ScanHoppingCVParameters(x_points=2, y_points=2, cycles=1)
         self.driver.start_scan_hopping_cv(params)
@@ -686,7 +1055,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(frames[0][13], 1 << 2)
         self.assertTrue(frames[1][13] & (1 << 0))
         self.assertTrue(frames[1][13] & (1 << 1))
-        self.assertEqual(frames[2][0], 1)
+        self.assertEqual(frames[2][0], 2)
         self.assertTrue(frames[2][13] & (1 << 2))
         self.assertEqual(self.driver.scan_context(0), (-1, ""))
         self.assertEqual(self.driver.scan_context(1), (0, "retract"))

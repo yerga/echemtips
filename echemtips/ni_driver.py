@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import math
 import statistics
 import time
-from typing import Any
+from typing import Any, Callable
 
 from .host import ExecutionSnapshot, ExecutionState, WaypointStreamer
 from .models import (
@@ -61,6 +61,10 @@ class WECSPMDriver:
 
     BASELINE_HOLD_US = 25_000
     BASELINE_SAMPLE_COUNT = 16
+    # The secondary comparator is OR'ed with the primary in FPGA line types 1/2.
+    # Its selected current is signed I16, but its threshold register is I32:
+    # one count above the entire input range makes the unused comparator false.
+    DISABLED_SECONDARY_THRESHOLD = 32768
 
     def __init__(self, session: Any, settings: AppSettings) -> None:
         self.session = session
@@ -94,6 +98,10 @@ class WECSPMDriver:
         self._last_snapshot_remainder = 0
         self._program_deadline: float | None = None
         self._pause_started_at: float | None = None
+        self._operator_paused = False
+        self._contact_pause_deadline: float | None = None
+        self._contact_finish_reason: str | None = None
+        self._contact_finish_deadline: float | None = None
         self._expected_duration_s = 0.0
         self._pending_scalers: tuple[int, ...] = ()
         self._program_waypoints: list[Waypoint] = []
@@ -243,6 +251,10 @@ class WECSPMDriver:
         self._ending_waypoint = False
         self._end_request_deadline = None
         self._pause_started_at = None
+        self._operator_paused = False
+        self._contact_pause_deadline = None
+        self._contact_finish_reason = None
+        self._contact_finish_deadline = None
         self._cancelled = False
         self._cancel_detail = ""
         self._submitted = True
@@ -268,6 +280,10 @@ class WECSPMDriver:
             return
         if self._program_deadline is not None:
             self._program_deadline += max(0.0, observed_at - self._pause_started_at)
+        if self._end_request_deadline is not None:
+            self._end_request_deadline += max(0.0, observed_at - self._pause_started_at)
+        if self._contact_finish_deadline is not None:
+            self._contact_finish_deadline += max(0.0, observed_at - self._pause_started_at)
         self._pause_started_at = None
 
     def _latch_command_timeout(self, detail: str) -> None:
@@ -562,6 +578,8 @@ class WECSPMDriver:
             return
         advanced = ((current_line - self._end_request_line) & ((1 << 64) - 1)) > 0
         if not (advanced or waiting):
+            if bool(self._read_register("External Pause")):
+                return  # An operator/external pause must not expire this handshake.
             if self._end_request_deadline is not None and time.monotonic() > self._end_request_deadline:
                 detail = (
                     "FPGA did not acknowledge EndCurrentLine through line advancement or its waiting state; "
@@ -579,6 +597,89 @@ class WECSPMDriver:
         self._write_register("EndCurrentLine", False)
         self._ending_waypoint = False
         self._end_request_deadline = None
+
+    def _active_contact_waypoint(self, line: int) -> Waypoint | None:
+        """Return only an executing, terminal stop-on-feedback Z waypoint."""
+        index = (line - self._program_baseline) & ((1 << 64) - 1)
+        if not self._submitted or index != self._program_total or not self._program_waypoints:
+            return None
+        waypoint = self._program_waypoints[-1]
+        return waypoint if waypoint.line_type == FEEDBACK_ACTION_CODES["advance_on_contact"] else None
+
+    def _request_contact_finish(self, reason: str) -> None:
+        """Finish a type-2 approach via its reusable secondary comparator.
+
+        The target's EndCurrentLine gate is one-shot for the whole session.
+        A threshold below every signed-I16 value provides a level-held request
+        through type 2's existing comparator OR. Restore it only after waiting
+        acknowledges completion. This does not pulse Stop or interrupt frames.
+        """
+        if self._stopped:
+            raise RuntimeError("Motion is latched after a fault; reconnect before continuing.")
+        if self._active_contact_waypoint(int(self._read_register("LineNumber"))) is None:
+            raise RuntimeError("No stop-on-feedback approach waypoint is executing.")
+        if bool(self._read_register("WaitingForWayPoints")):
+            if reason == "manual":
+                raise RuntimeError("The approach has already completed; contact cannot be accepted now.")
+            return  # Natural completion raced the endpoint observation.
+        if self._contact_finish_reason is not None:
+            if reason == "manual" and self._contact_finish_reason == "limit":
+                raise RuntimeError("The approach limit was reached without contact; this approach is already finishing.")
+            return
+        self._contact_finish_reason = reason
+        self._contact_finish_deadline = time.monotonic() + self.settings.hardware_ready_timeout_s
+        try:
+            self._write_register("Feedback_Threshold 2", -32769)
+            if int(self._read_register("Feedback_Threshold 2")) != -32769:
+                raise RuntimeError("threshold readback mismatch")
+        except Exception as exc:
+            self._latch_command_timeout(f"FPGA did not acknowledge approach completion request: {exc}; reconnect required")
+            raise RuntimeError(self._execution_detail) from exc
+
+    def _service_contact_completion(self, line: int, waiting: bool, paused: bool) -> bool:
+        """Classify hardware contact or end-of-travel independently of GUI polls.
+
+        Type 2 stops on feedback, but ignores LinearMove's Finished Move output:
+        at its endpoint it holds Z until feedback. The host explicitly releases
+        this no-contact hold, without authorizing any surface measurement.
+        """
+        waypoint = self._active_contact_waypoint(line)
+        if waypoint is None or paused:
+            return True
+        if waiting:
+            if self._contact_finish_deadline is not None:
+                try:
+                    self._write_register("Feedback_Threshold 2", self.DISABLED_SECONDARY_THRESHOLD)
+                    if int(self._read_register("Feedback_Threshold 2")) != self.DISABLED_SECONDARY_THRESHOLD:
+                        raise RuntimeError("threshold readback mismatch")
+                except Exception as exc:
+                    self._latch_command_timeout(f"Could not disarm secondary feedback: {exc}; reconnect required")
+                    raise RuntimeError(self._execution_detail) from exc
+                # Feedback indicators can remain latched while waiting: the
+                # comparator loop exits when all axis loops finish. Verify the
+                # writable threshold, not an idle indicator. Every next hop
+                # executes ordinary positioning (or a baseline hold) before
+                # entering type 2, refreshing the comparators while feedback
+                # cannot end motion.
+                self._contact_finish_deadline = None
+            # In type 2, unforced completion itself proves a feedback event,
+            # even if a short transient fell between host sample/readback polls.
+            if self._contact_finish_reason != "limit":
+                if self._owner == "approach-cv":
+                    self._approach_contact_observed = True
+                elif self._owner == "scan-hopping-cv":
+                    self._scan_contact_observed.add(self._scan_point)
+                else:
+                    self._method_contact_observed.add(self._method_point)
+            return True
+        if self._contact_finish_deadline is not None:
+            if time.monotonic() > self._contact_finish_deadline:
+                self._latch_command_timeout("FPGA did not acknowledge feedback-based approach completion; reconnect required")
+                raise TimeoutError(self._execution_detail)
+            return False
+        if int(self._read_register("Applied Z")) == waypoint.z_position:
+            self._request_contact_finish("limit")
+        return False
 
     def service(self) -> bool:
         """Observe completion; read_samples retires it after a final FIFO snapshot.
@@ -619,11 +720,12 @@ class WECSPMDriver:
             self._service_end_request(current, waiting)
             paused = bool(self._read_register("External Pause")) or bool(self._read_register("Internal Pause"))
             self._account_pause_state(paused)
+            contact_ready = self._service_contact_completion(current, waiting, paused)
             # A paused target is not a successful completion even if its line
             # counter and queue happen to look finished. The host must observe
             # an unpaused, waiting target and then drain the final FIFO data.
             self._hardware_complete = (
-                self.streamer.complete and waiting and delta == self._program_total and not paused
+                self.streamer.complete and waiting and delta == self._program_total and not paused and contact_ready
             )
             self._execution_state = ExecutionState.PAUSED if paused else (
                 ExecutionState.DRAINING if self._hardware_complete else ExecutionState.RUNNING
@@ -711,7 +813,7 @@ class WECSPMDriver:
             ("Feedback_Threshold", primary_raw),
             ("GreaterThan", bool(config.primary_greater_than)),
             ("FeedBackType 2", FEEDBACK_SIGNAL_CODES["Current 2"]),
-            ("Feedback_Threshold 2", 0),
+            ("Feedback_Threshold 2", self.DISABLED_SECONDARY_THRESHOLD),
             ("GreaterThan 2", True),
             ("P", 0.0),
             ("Upper limit Of dZ", 10),
@@ -745,7 +847,7 @@ class WECSPMDriver:
         *,
         baseline: float | None = None,
     ) -> float:
-        """Configure the target's verified absolute pause-on-contact path.
+        """Configure the target's absolute stop-on-feedback path.
 
         Baseline-relative mode is implemented by measuring a stationary host
         baseline first and translating the requested delta into an absolute
@@ -835,7 +937,7 @@ class WECSPMDriver:
             # Pause-on-contact is deliberately used instead of advance-on-contact:
             # Python validates the feedback/pause state before it ever submits CV.
                 **common,
-                line_type=FEEDBACK_ACTION_CODES["pause_on_contact"],
+                line_type=FEEDBACK_ACTION_CODES["advance_on_contact"],
                 z_position=end_z,
                 v_position=approach_v,
                 z_velocity=z_approach,
@@ -935,6 +1037,51 @@ class WECSPMDriver:
         self._approach_phase = "cv"
         self._write_register("External Pause", False)
 
+    def _service_contact_pause(
+        self, confirmed: Callable[[], bool], *, executing_approach: bool,
+    ) -> tuple[str, str] | None:
+        """Resolve feedback pauses without overriding external pause ownership.
+
+        Register reads and FIFO arrivals are not atomic. Keep motion held for
+        a bounded interval while reconciling primary feedback evidence. Samples
+        read here are deferred to read_samples, never discarded. An unexplained
+        pause fails closed and never authorizes surface measurements.
+        """
+        if self._stopped:
+            return "failed", self._execution_detail or "FPGA fault latched; reconnect required"
+        if bool(self._read_register("External Pause")):
+            self._contact_pause_deadline = None
+            origin = "Operator" if self._operator_paused else "External"
+            # Preserve a confirmed event even if its live comparator falls
+            # back before the operator resumes. Do not release either pause.
+            contact_held = executing_approach and bool(self._read_register("Internal Pause")) and confirmed()
+            return ("contact-held" if contact_held else "waiting"), f"{origin} pause active; press Resume to continue"
+        if not bool(self._read_register("Internal Pause")):
+            self._contact_pause_deadline = None
+            return None
+        if self._ending_waypoint:
+            return ("contact" if executing_approach and confirmed() else "waiting"), "Awaiting approach completion"
+        if executing_approach and not confirmed():
+            self._deferred_samples.extend(self._read_complete_sample_snapshot())
+        if executing_approach and confirmed():
+            self._contact_pause_deadline = None
+            self._request_contact_finish("contact")
+            self._write_register("Internal Pause", False)
+            return "contact", "Contact confirmed; awaiting feedback-based completion"
+        now = time.monotonic()
+        if self._contact_pause_deadline is None:
+            self._contact_pause_deadline = now + self.settings.hardware_ready_timeout_s
+        if now < self._contact_pause_deadline:
+            return "waiting", "FPGA motion held; checking contact evidence"
+        # Preserve diagnostic register values in the status/error recording.
+        names = ("LineNumber", "LineType", "Internal Pause", "External Pause",
+                 "Feedback1 Boolean", "StopMoveZ", "WaitingForWayPoints",
+                 "FeedBackType", "Feedback_Threshold", "Feedback_Threshold 2")
+        registers = ", ".join(f"{name}={self._read_register(name)}" for name in names)
+        detail = "FPGA paused without confirmed contact; motion held, reconnect required. " + registers
+        self._latch_command_timeout(detail)
+        return "failed", detail
+
     def approach_cv_status(self) -> dict[str, str | float]:
         """Service the staged Approach + CV program and report its UI state."""
         sequence = self._sequence
@@ -959,19 +1106,22 @@ class WECSPMDriver:
                 "progress": 0.15,
             }
         if self._approach_phase == "approach":
-            internal_pause = bool(self._read_register("Internal Pause"))
-            if internal_pause:
-                if not self._approach_contact_confirmed():
-                    self._cancel_detail = "FPGA paused during approach without a confirmed feedback event"
-                    self.cancel_program()
-                    self._cancel_detail = "FPGA paused without confirmed contact; reconnect before another command"
+            pause = self._service_contact_pause(
+                self._approach_contact_confirmed,
+                executing_approach=self.approach_context(current_line) == "approach",
+            )
+            if pause is not None:
+                action, detail = pause
+                if action == "failed":
+                    self._cancelled = True
+                    self._cancel_detail = detail
                     return {"stage": "aborted", "detail": self._cancel_detail, "progress": 0.4}
+                if action == "waiting":
+                    return {"stage": "approaching", "detail": detail, "progress": 0.4}
                 self._approach_contact_observed = True
-                if not self._ending_waypoint:
-                    self.end_current_waypoint()
-                return {"stage": "contact", "detail": "Contact confirmed; ending approach at a framed boundary", "progress": 0.42}
+                return {"stage": "contact", "detail": detail, "progress": 0.42}
             if not self._submitted and self._hardware_complete:
-                if self._approach_contact_observed or self._approach_manually_accepted:
+                if self._contact_finish_reason != "limit" and (self._approach_contact_observed or self._approach_manually_accepted):
                     self._submit_approach_cv_followup()
                     detail = "Operator accepted contact" if self._approach_manually_accepted else "FPGA contact confirmed"
                     return {"stage": "contact", "detail": f"{detail}; CV program submitted", "progress": 0.42}
@@ -1036,6 +1186,7 @@ class WECSPMDriver:
         )
         self._sequence = None
         self._scan_params = params
+        params.retraction_events.clear()
         self._scan_grid = params.grid()
         self._scan_history.clear()
         self._scan_point = 0
@@ -1083,7 +1234,7 @@ class WECSPMDriver:
                      v_position=voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio),
                      x_velocity=scale_velocity(x_raw, ex), y_velocity=scale_velocity(y_raw, ey),
                      move_x=True, move_y=True, move_v=True, jump_v=True)
-        approach = Waypoint(**common, line_type=FEEDBACK_ACTION_CODES["pause_on_contact"],
+        approach = Waypoint(**common, line_type=FEEDBACK_ACTION_CODES["advance_on_contact"],
                      z_position=position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar),
                      v_position=voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio),
                      z_velocity=scale_velocity(za_raw, ez),
@@ -1159,7 +1310,10 @@ class WECSPMDriver:
             vertex2_v=params.cv_vertex2_v,
             scan_rate_v_s=params.cv_scan_rate_v_s,
             cycles=params.cycles,
-            retract_z_um=params.retract_z_for_point(point, contact_z),
+            retract_z_um=params.scan_retract_z(
+                point, contact_z, self.settings.z_range_um,
+                minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
+            ),
             retract_rate_um_s=params.retract_rate_um_s,
         )
         compiled = self.compiler.compile(plan, current)
@@ -1219,22 +1373,27 @@ class WECSPMDriver:
                 "point_stage": "baseline",
             }
         if self._scan_phase == "approach":
-            if bool(self._read_register("Internal Pause")):
-                if not self._scan_contact_confirmed(self._scan_point):
+            pause = self._service_contact_pause(
+                lambda: self._scan_contact_confirmed(self._scan_point),
+                executing_approach=self.scan_context(current_line) == (self._scan_point, "approach"),
+            )
+            if pause is not None:
+                action, detail = pause
+                if action == "failed":
                     self._scan_failed_contact = self._scan_point
-                    self._cancel_detail = f"Point {self._scan_point + 1} paused without a confirmed feedback event"
-                    self.cancel_program()
-                    self._cancel_detail = f"Point {self._scan_point + 1} paused without confirmed contact; reconnect required"
+                    self._cancelled = True
+                    self._cancel_detail = f"Point {self._scan_point + 1}: {detail}"
                     return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
                             "point_index": self._scan_point, "point_stage": "no-contact"}
+                if action == "waiting":
+                    return {"stage": "approaching", "detail": detail, "progress": base_progress,
+                            "point_index": self._scan_point, "point_stage": "approach"}
                 self._scan_contact_observed.add(self._scan_point)
-                if not self._ending_waypoint:
-                    self.end_current_waypoint()
-                return {"stage": "contact", "detail": f"Point {self._scan_point + 1} of {point_total} · ending approach at a framed boundary",
+                return {"stage": "contact", "detail": f"Point {self._scan_point + 1} of {point_total} · {detail}",
                         "progress": base_progress + 0.45 / max(1, point_total),
                         "point_index": self._scan_point, "point_stage": "contact"}
             if not self._submitted and self._hardware_complete:
-                if self._scan_point in self._scan_contact_observed or self._scan_point in self._scan_manually_accepted:
+                if self._contact_finish_reason != "limit" and (self._scan_point in self._scan_contact_observed or self._scan_point in self._scan_manually_accepted):
                     self._submit_scan_cv(self._scan_point)
                     origin = "operator accepted" if self._scan_point in self._scan_manually_accepted else "FPGA confirmed"
                     return {"stage": "cv", "detail": f"Point {self._scan_point + 1}: {origin} contact; CV submitted",
@@ -1246,6 +1405,11 @@ class WECSPMDriver:
                 return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
                         "point_index": self._scan_point, "point_stage": "no-contact"}
         elif self._scan_phase == "cv" and not self._submitted and self._hardware_complete:
+            if self._scan_params.retract_has_no_travel(self._scan_point):
+                self._cancelled = True
+                self._cancel_detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
+                return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
+                        "point_index": self._scan_point, "point_stage": "retract-blocked"}
             if self._scan_point + 1 >= point_total:
                 self._scan_phase = "complete"
                 return {"stage": "complete", "detail": "FPGA Scan Hopping + CV complete", "progress": 1.0,
@@ -1264,7 +1428,9 @@ class WECSPMDriver:
         phase_fraction = min(0.9, completed / max(1, len(sequence.descriptors)))
         return {
             "stage": stage,
-            "detail": f"Point {point_index + 1} of {point_total} · {point_stage or stage}",
+            "detail": (f"Point {point_index + 1} of {point_total} · returning toward initial Z"
+                       if point_index + 1 == point_total and point_stage == "retract"
+                       else f"Point {point_index + 1} of {point_total} · {point_stage or stage}"),
             "progress": min(0.99, (max(0, point_index) + phase_fraction) / max(1, point_total)),
             "point_index": point_index,
             "point_stage": point_stage or stage,
@@ -1275,6 +1441,8 @@ class WECSPMDriver:
         self._method_name = name
         self._method_phase = ""
         self._method_params = parameters
+        if isinstance(parameters, ScanHoppingITParameters):
+            parameters.retraction_events.clear()
         self._method_history.clear()
         self._method_sequence = None
         self._method_terminal = ""
@@ -1398,7 +1566,7 @@ class WECSPMDriver:
         )
         approach = PhysicalWaypoint(
             z_um=parameters.end_z_um, z_rate_um_s=parameters.approach_rate_um_s,
-            feedback_action="pause_on_contact",
+            feedback_action="advance_on_contact",
             update_interval_us=self._feedback_update_interval_us,
         )
         if parameters.feedback_mode == "baseline_relative":
@@ -1427,7 +1595,7 @@ class WECSPMDriver:
             )
         approach = PhysicalWaypoint(
                 z_um=params.end_z_um, z_rate_um_s=params.approach_rate_um_s,
-                feedback_action="pause_on_contact",
+                feedback_action="advance_on_contact",
                 update_interval_us=self._feedback_update_interval_us,
             )
         plan.append(positioning)
@@ -1473,7 +1641,10 @@ class WECSPMDriver:
                 low_z, high_z = sorted((params.start_z_um, params.end_z_um))
                 if not low_z <= contact_z <= high_z:
                     contact_z = self._method_last_approach_z.get(point, params.end_z_um)
-                retract_z = params.retract_z_for_point(point, contact_z)
+                retract_z = params.scan_retract_z(
+                    point, contact_z, self.settings.z_range_um,
+                    minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
+                )
             else:
                 retract_z = params.start_z_um
             plan.append(PhysicalWaypoint(z_um=retract_z, z_rate_um_s=params.retract_rate_um_s))
@@ -1491,7 +1662,6 @@ class WECSPMDriver:
         return (
             point in self._method_contact_observed
             or bool(self._read_register("Feedback1 Boolean"))
-            or bool(self._read_register("StopMoveZ"))
         )
 
     def _method_finish_approach(self, contact: bool) -> None:
@@ -1568,27 +1738,38 @@ class WECSPMDriver:
                 "point_stage": "baseline",
             }
         if self._method_phase == "approach":
-            if bool(self._read_register("Internal Pause")):
-                if not self._method_contact_confirmed(self._method_point):
-                    self.cancel_program()
+            pause = self._service_contact_pause(
+                lambda: self._method_contact_confirmed(self._method_point),
+                executing_approach=self.method_context(int(self._read_register("LineNumber")))
+                == (self._method_point, "approach"),
+            )
+            if pause is not None:
+                action, detail = pause
+                if action == "failed":
                     self._method_terminal = "aborted"
-                    self._method_detail = "FPGA paused without confirmed contact; reconnect required"
+                    self._method_detail = detail
+                elif action == "waiting":
+                    return {"stage": "approaching", "detail": detail, "progress": 0.4,
+                            "point_index": self._method_point, "point_stage": "approach"}
                 else:
                     self._method_contact_observed.add(self._method_point)
-                    if not self._ending_waypoint:
-                        self.end_current_waypoint()
                     return {
-                        "stage": "contact", "detail": "Contact confirmed; ending approach at a framed boundary",
+                        "stage": "contact", "detail": detail,
                         "progress": 0.4, "point_index": self._method_point, "point_stage": "contact",
                     }
             elif not self._submitted and self._hardware_complete:
                 self._method_finish_approach(
-                    self._method_point in self._method_contact_observed
-                    or self._method_point in self._method_manually_accepted
+                    self._contact_finish_reason != "limit" and (
+                        self._method_point in self._method_contact_observed
+                        or self._method_point in self._method_manually_accepted
+                    )
                 )
         elif not self._submitted and self._hardware_complete:
             if self._method_name == "scan_hopping_it" and self._method_phase == "it" and not self._method_no_contact:
-                if self._method_point + 1 < len(self._method_grid):
+                if self._method_params.retract_has_no_travel(self._method_point):
+                    self._method_terminal = "aborted"
+                    self._method_detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
+                elif self._method_point + 1 < len(self._method_grid):
                     self._method_point += 1
                     self._submit_method_scan_approach(initial=False)
                 else:
@@ -1623,7 +1804,10 @@ class WECSPMDriver:
             stage = "settling"
         return {
             "stage": self._method_terminal or stage,
-            "detail": self._method_detail or f"{self._method_name.replace('_', ' ').title()} · {point_stage or stage}",
+            "detail": self._method_detail or (
+                "Returning toward initial Z" if self._method_name == "scan_hopping_it"
+                and point + 1 == total_points and point_stage == "retract"
+                else f"{self._method_name.replace('_', ' ').title()} · {point_stage or stage}"),
             "progress": 1.0 if self._method_terminal == "complete" else progress,
             "point_index": point if point >= 0 else self._method_point,
             "point_stage": point_stage or stage,
@@ -1687,27 +1871,32 @@ class WECSPMDriver:
         self._write_register("External Pause", True)
         if not bool(self._read_register("External Pause")):
             raise RuntimeError("FPGA did not acknowledge pause")
+        self._operator_paused = True
         self._account_pause_state(True)
         self._execution_state = ExecutionState.PAUSED
         self._execution_detail = "Paused by operator"
 
     def resume(self) -> None:
         """Clear an operator pause without overriding FPGA feedback pause."""
+        if self._stopped:
+            raise RuntimeError("Motion is latched after a fault; reconnect before resuming.")
         self._check_target_health()
-        # Internal Pause belongs to FPGA feedback logic and is never cleared by
-        # a generic resume command; EndCurrentLine or the method state machine
-        # must resolve it deliberately.
-        if bool(self._read_register("Internal Pause")):
-            raise RuntimeError("FPGA feedback pause is active; use End current waypoint or stop the method")
+        # Clear only External Pause, even if feedback has also paused. The
+        # internal latch keeps motion held until the contact state machine
+        # ends the waypoint. Rejecting Resume here deadlocks both controls.
         self._write_register("External Pause", False)
         if bool(self._read_register("External Pause")):
             raise RuntimeError("FPGA did not acknowledge resume")
-        self._account_pause_state(False)
-        self._execution_state = ExecutionState.RUNNING
-        self._execution_detail = "Resumed by operator"
+        self._operator_paused = False
+        internal = bool(self._read_register("Internal Pause"))
+        self._account_pause_state(internal)
+        self._execution_state = ExecutionState.PAUSED if internal else ExecutionState.RUNNING
+        self._execution_detail = "External pause released; resolving feedback pause" if internal else "Resumed by operator"
 
     def end_current_waypoint(self) -> None:
         """Hold EndCurrentLine until the target acknowledges a framed boundary."""
+        if self._stopped:
+            raise RuntimeError("Motion is latched after a fault; reconnect before ending a waypoint.")
         self._check_target_health()
         if not self._submitted:
             raise RuntimeError("No FPGA waypoint is active.")
@@ -1716,6 +1905,8 @@ class WECSPMDriver:
         if bool(self._read_register("External Pause")):
             raise RuntimeError("Resume the operator pause before ending the current FPGA waypoint.")
         current_line = int(self._read_register("LineNumber"))
+        if self._active_contact_waypoint(current_line) is not None:
+            raise RuntimeError("Use Accept current Z as contact to finish an approach; End waypoint is not repeatable on this target.")
         delta = (current_line - self._program_baseline) & ((1 << 64) - 1)
         if not 1 <= delta <= self._program_total:
             raise RuntimeError("The FPGA has not acknowledged an executing waypoint to end.")
@@ -1725,6 +1916,13 @@ class WECSPMDriver:
             raise RuntimeError("FPGA did not latch the EndCurrentLine request.")
         self._ending_waypoint = True
         self._end_request_deadline = time.monotonic() + self.settings.hardware_ready_timeout_s
+        # Axis pause loops wait for BOTH pause controls to clear. Latch the
+        # end request first, then release Internal Pause so they can reach the
+        # end-line check. Waiting for completion before releasing it deadlocks.
+        # Never clear External Pause here or pulse External Stop (which can
+        # interrupt a FIFO sample halfway through its frame).
+        if bool(self._read_register("Internal Pause")):
+            self._write_register("Internal Pause", False)
         self._execution_detail = "Ending the current FPGA waypoint; awaiting target acknowledgement"
 
     def accept_approach(self) -> None:
@@ -1749,7 +1947,11 @@ class WECSPMDriver:
             executing_approach = point == self._method_point and stage == "approach"
         if not executing_approach:
             raise RuntimeError("The FPGA is still positioning the probe; contact can be accepted only during Z approach.")
-        self.end_current_waypoint()
+        if bool(self._read_register("External Pause")):
+            raise RuntimeError("Resume the external pause before accepting contact.")
+        self._request_contact_finish("manual")
+        if bool(self._read_register("Internal Pause")):
+            self._write_register("Internal Pause", False)
         if accepted == "approach":
             self._approach_manually_accepted = True
             self._approach_contact_observed = True
@@ -1776,14 +1978,12 @@ class WECSPMDriver:
         return (
             self._approach_contact_observed
             or bool(self._read_register("Feedback1 Boolean"))
-            or bool(self._read_register("StopMoveZ"))
         )
 
     def _scan_contact_confirmed(self, point: int) -> bool:
         return (
             point in self._scan_contact_observed
             or bool(self._read_register("Feedback1 Boolean"))
-            or bool(self._read_register("StopMoveZ"))
         )
 
     def _observe_contacts(self, samples: list[Sample]) -> None:

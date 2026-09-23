@@ -26,8 +26,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transport",
         choices=("usb", "pcie", "auto"),
-        default="usb",
-        help="Expected FPGA connection type (default: usb)",
+        default="auto",
+        help="Expected FPGA connection type (default: auto; NI-RIO checks the physical target)",
     )
     parser.add_argument(
         "--connect",
@@ -40,6 +40,9 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Validate bitfile metadata and optionally open a no-run NI session."""
     args = _parser().parse_args(argv)
+    if not args.bitfile.strip():
+        print("FAIL: supply --bitfile or set ECHEMTIPS_BITFILE to your compiled target path.", file=sys.stderr)
+        return 2
     transport = {"usb": "USB R Series", "pcie": "PCIe/PXI R Series", "auto": "Auto"}[args.transport]
     try:
         info = inspect_bitfile(Path(args.bitfile))
@@ -57,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {error}", file=sys.stderr)
         return 2
     print("PASS: eChemTips register/FIFO contract and target family")
+    print("Metadata checks do not verify FPGA execution semantics, wiring, scaling or safe physical operation.")
     print("Semantic hardware profile:")
     print("  Outputs: " + ", ".join(f"{name}={channel}" for name, channel in ANALOG_OUTPUT_CHANNELS.items()))
     print("  Inputs: " + ", ".join(f"{name}={channel}" for name, channel in ANALOG_INPUT_CHANNELS.items()))
@@ -78,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Session exposes {len(session.registers)} registers and {len(session.fifos)} FIFOs")
     except Exception as exc:
         print(f"FAIL: could not open {args.resource}: {exc}", file=sys.stderr)
-        print("Check NI-RIO installation, USB cable/power, NI MAX resource name, and bitfile target model.", file=sys.stderr)
+        print("Check NI-RIO installation, device connection/power, NI MAX resource name, and bitfile target model.", file=sys.stderr)
         return 4
     return 0
 

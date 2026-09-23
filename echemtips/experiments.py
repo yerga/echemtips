@@ -313,6 +313,7 @@ class ScanHoppingCVExperiment:
             raise RuntimeError("This FPGA connection does not expose the Scan Hopping + CV waypoint interface.")
         self.params = params
         self._grid = params.grid()
+        params.retraction_events.clear()
         self.contact_z.clear()
         self.current_at_potential.clear()
         self.contact_detected.clear()
@@ -369,8 +370,7 @@ class ScanHoppingCVExperiment:
     def _start_simulated_point(self) -> None:
         row, column, x, y = self._grid[self.point_index]
         p = self.params
-        previous_contact = None if self.point_index <= 0 else self.contact_z[self._point_key(self.point_index - 1)]
-        self._z_position_target = p.approach_start_z_for_point(self.point_index, previous_contact)
+        self._z_position_target = p.start_z_um if self.point_index == 0 else self._retract_target_z
         self.backend.set_voltage(1, p.approach_voltage_v)
         self.backend.move("Z", self._z_position_target, p.retract_rate_um_s)
         self._positioning_z = True
@@ -480,10 +480,11 @@ class ScanHoppingCVExperiment:
                 if self._segment_index >= len(self._segments):
                     self._finish_point_metrics(self.point_index)
                     contact_z = self.contact_z[self._point_key()]
-                    self._retract_target_z = p.retract_z_for_point(self.point_index, contact_z)
+                    self._retract_target_z = p.scan_retract_z(self.point_index, contact_z, self.settings.z_range_um)
                     self.backend.move("Z", self._retract_target_z, p.retract_rate_um_s)
                     self.state = ExperimentState.RETRACTING
-                    self.detail = f"Point {self.point_index + 1}/{p.point_count} · retracting"
+                    self.detail = ("Returning toward initial Z" if self.point_index + 1 == p.point_count
+                                   else f"Point {self.point_index + 1}/{p.point_count} · retracting")
                 else:
                     self.backend.set_voltage(1, self._cv_voltage)
             else:
@@ -491,6 +492,10 @@ class ScanHoppingCVExperiment:
                 self.backend.set_voltage(1, self._cv_voltage)
         retract_target = p.start_z_um if self._no_contact_after_retract else self._retract_target_z
         if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < tolerance:
+            if not self._no_contact_after_retract and p.retract_has_no_travel(self.point_index):
+                self.state = ExperimentState.ABORTED
+                self.detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
+                return
             if self._no_contact_after_retract:
                 self.state = ExperimentState.ABORTED
                 self.detail = f"Scan stopped at point {self.point_index + 1}: End Z reached without contact"
@@ -969,6 +974,7 @@ class ScanHoppingITExperiment:
         if errors:
             raise ValueError("\n".join(errors))
         self.params, self._grid = params, params.grid()
+        params.retraction_events.clear()
         self.contact_z.clear(); self.current_at_pulse.clear(); self._pulse_samples.clear(); self._last_approach_z.clear()
         self.point_index, self.progress = 0, 0.0
         self._z_position_target = params.start_z_um
@@ -1009,8 +1015,7 @@ class ScanHoppingITExperiment:
 
     def _start_point(self) -> None:
         p = self.params
-        previous_contact = None if self.point_index <= 0 else self.contact_z[self._key(self.point_index - 1)]
-        self._z_position_target = p.approach_start_z_for_point(self.point_index, previous_contact)
+        self._z_position_target = p.start_z_um if self.point_index == 0 else self._retract_target_z
         self.backend.set_voltage(1, p.approach_voltage_v)
         self.backend.move("Z", self._z_position_target, p.retract_rate_um_s)
         self._positioning_z = True
@@ -1113,16 +1118,20 @@ class ScanHoppingITExperiment:
                     if self._step_index >= len(self._steps):
                         self._finish_pulse_map(self.point_index)
                         contact_z = self.contact_z[self._key(self.point_index)]
-                        self._retract_target_z = p.retract_z_for_point(self.point_index, contact_z)
+                        self._retract_target_z = p.scan_retract_z(self.point_index, contact_z, self.settings.z_range_um)
                         self.backend.move("Z", self._retract_target_z, p.retract_rate_um_s)
-                        self.state, self.detail = ExperimentState.RETRACTING, f"Point {self.point_index + 1}/{p.point_count} · retracting"
+                        self.state = ExperimentState.RETRACTING
+                        self.detail = ("Returning toward initial Z" if self.point_index + 1 == p.point_count
+                                       else f"Point {self.point_index + 1}/{p.point_count} · retracting")
                     else:
                         potential, duration, label = self._steps[self._step_index]
                         self.backend.set_voltage(1, potential); self.it_label = label
                         self._step_deadline = self.backend.experiment_time() + duration
             retract_target = p.start_z_um if self.it_label == "no-contact" else self._retract_target_z
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < .08:
-                if self.it_label == "no-contact":
+                if self.it_label != "no-contact" and p.retract_has_no_travel(self.point_index):
+                    self.state, self.detail = ExperimentState.ABORTED, "Scan stopped: no Z retraction available; inspect clearance before moving XY"
+                elif self.it_label == "no-contact":
                     self.state, self.detail = ExperimentState.ABORTED, f"No contact at point {self.point_index + 1}; I-t not run"
                 else:
                     self.point_index += 1

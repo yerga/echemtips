@@ -11,8 +11,9 @@ schema-version decision and documented compatibility behavior.
   patch releases are intended for compatible fixes and documentation.
 - `recording_schema_version` is independent of the package version. Increment
   it whenever a reader cannot safely interpret the same CSV/JSON contract.
-- FPGA compatibility is identified by target class, signature, and full
-  register/FIFO contract—not by the eChemTips package version alone.
+- Record target class and build signature for traceability. Compatibility
+  requires the full register/FIFO contract, matching FPGA behavior and physical
+  commissioning—not a particular signature or the eChemTips version alone.
 
 ## Current compatibility matrix
 
@@ -22,7 +23,7 @@ schema-version decision and documented compatibility behavior.
 | Recommended first hardware environment | 64-bit CPython 3.11 on an NI-supported 64-bit Windows installation. Record the exact tested combination. |
 | UI | PySide6 6.8–6.x and PyQtGraph 0.13.7–0.14.x as constrained by `pyproject.toml`. |
 | NI Python API | Optional `nifpga >=22.0.0`; the native NI-RIO/FPGA Interface runtime is also required. Compatibility must be commissioned as a complete stack. |
-| FPGA target | USB-7856R image with signature `8229BC0D5A4935D854D1286878CEE54A`; private bitfile not distributed. Offline protocol/contract tests pass. |
+| FPGA target | USB-7856R is the reference hardware used in development and reported real-device trials. Other NI R Series builds require the same protocol/behavior and per-device commissioning. Private bitfiles are not distributed; metadata tests are not physical qualification. |
 | Physical instrument | Not called commissioned until the site record in `REAL_HARDWARE_SETUP.md` is completed with NanoDrive, VA-10M, wiring, load, motion, contact, and small-scan evidence. |
 | Operating systems | Development/simulation is cross-platform where PySide6 supports it. Initial NI commissioning is documented for Windows. |
 

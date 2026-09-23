@@ -14,7 +14,7 @@ flowchart LR
     BE --> SIM[SimulationBackend]
     BE --> NI[NIFPGABackend]
     NI --> DRIVER[WECSPMDriver]
-    DRIVER --> FPGA[USB-7856R FPGA]
+    DRIVER --> FPGA[Compatible NI R Series FPGA]
     ACQ[AcquisitionWorker] -->|serialized read_samples| BE
     ACQ --> QUEUE[bounded complete-sample batches]
     QUEUE --> APP[Qt polling/dispatch]
@@ -75,10 +75,11 @@ for each physical grid point. A contact map is updated only from a confirmed
 contact. End-of-travel is never promoted to contact.
 
 On hardware, Python submits approach separately from the gated continuation.
-The driver observes the FPGA feedback pause, acknowledges EndCurrentLine,
-drains complete samples, resolves applied contact Z, and only then submits CV/
-I–t/retract. This preserves the existing bitfile while preventing the historic
-host-side ambiguity between contact and program completion.
+The driver uses the FPGA's reusable type-2 stop-on-feedback path, drains
+complete samples, resolves applied contact Z, and only then submits CV/I–t/
+retract. No-contact endpoint holds are released through a separately classified
+secondary-comparator request, never treated as contact. This avoids the
+session-wide one-shot EndCurrentLine latch without changing the bitfile.
 
 ## Ownership and terminal behavior
 
