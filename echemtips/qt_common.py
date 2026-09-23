@@ -763,9 +763,10 @@ class XYPlot(QtWidgets.QWidget):
             count = min(len(xs), len(ys))
             if count <= 0:
                 continue
-            stride = max(1, math.ceil(count / 12_000))
-            x = np.asarray(xs[:count:stride], dtype=float)
-            y = np.asarray(ys[:count:stride], dtype=float)
+            from .analysis_display import envelope_indices
+            full_x, full_y = np.asarray(xs[:count], dtype=float), np.asarray(ys[:count], dtype=float)
+            indices = envelope_indices(full_x, full_y)
+            x, y = full_x[indices], full_y[indices]
             self.graph.plot(x, y * scale, pen=pg.mkPen(color, width=self.trace_width_px), name=name, connect="finite")
         self.graph.enableAutoRange()
 

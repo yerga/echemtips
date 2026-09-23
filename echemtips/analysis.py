@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 from PySide6 import QtWidgets
 
@@ -35,6 +36,12 @@ def main() -> None:
         window.resize(1080, 680)
         window.show()
         qt_app.processEvents()
+        deadline = time.monotonic() + 60
+        while window.loading and time.monotonic() < deadline:
+            qt_app.processEvents()
+            time.sleep(.01)
+        if window.loading:
+            raise RuntimeError("Analysis import did not finish within the smoke-test deadline")
         for tab_index in range(window.tabs.count()):
             window.tabs.setCurrentIndex(tab_index)
             qt_app.processEvents()

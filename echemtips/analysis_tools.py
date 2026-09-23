@@ -51,10 +51,10 @@ def hop_selections(dataset: AnalysisDataset) -> list[Selection]:
             for pixel, indices in sorted(groups.items())]
 
 
-def cv_selections(dataset: AnalysisDataset) -> list[Selection]:
+def cv_selections(dataset: AnalysisDataset, cycles=None) -> list[Selection]:
     """Expose only complete, waveform-validated CV cycles as analysis subsets."""
     result = []
-    for cycle in extract_cv_cycles(dataset):
+    for cycle in extract_cv_cycles(dataset) if cycles is None else cycles:
         rows = cycle.rows
         if not isinstance(rows, NumericRows):
             columns = tuple(rows[0])
@@ -126,7 +126,7 @@ def measure(selection: Selection, x_column: str, y_column: str,
     return x, y, result
 
 
-def hop_map(dataset: AnalysisDataset, channel: str, statistic: str) -> list[dict]:
+def hop_map(dataset: AnalysisDataset, channel: str, statistic: str, selections=None) -> list[dict]:
     """Return measured hop statistics at JSON-defined physical coordinates.
 
     These are whole-hop statistics, not inferred contact heights or pulse means.
@@ -140,7 +140,7 @@ def hop_map(dataset: AnalysisDataset, channel: str, statistic: str) -> list[dict
     if not coordinates:
         raise AnalysisError("Physical hop coordinates are missing from scan_grid metadata.")
     result = []
-    for selection in hop_selections(dataset):
+    for selection in hop_selections(dataset) if selections is None else selections:
         if selection.pixel not in coordinates:
             continue
         x, y = coordinates[selection.pixel]
@@ -150,3 +150,33 @@ def hop_map(dataset: AnalysisDataset, channel: str, statistic: str) -> list[dict
             result.append({"scan_pixel": selection.pixel, "x_um": x, "y_um": y,
                            "value": float(operations[statistic](values)), "samples": len(values)})
     return result
+
+
+def potential_map(dataset: AnalysisDataset, selections: list[Selection], channel: str,
+                  potential: float, increasing: bool = True) -> list[dict]:
+    """Map current at the first requested-direction crossing per complete CV.
+
+    Interpolate adjacent samples only; never extrapolate. Repeated complete
+    cycles are averaged per hop, with the number of contributing cycles exported.
+    """
+    if not np.isfinite(potential):
+        raise AnalysisError("Map potential must be finite.")
+    coordinates = {int(p["scan_pixel"]): (float(p["x_um"]), float(p["y_um"]))
+                   for p in dataset.metadata.get("scan_grid", {}).get("pixels", [])}
+    if not coordinates:
+        raise AnalysisError("Physical hop coordinates are missing from scan_grid metadata.")
+    groups = {}
+    for selection in selections:
+        if selection.pixel not in coordinates: continue
+        matrix, columns = selection.rows.matrix, selection.rows.columns
+        e, current = matrix[:, columns.index("voltage1_v")], matrix[:, columns.index(channel)]
+        delta = np.diff(e)
+        crossing = ((delta > 0) if increasing else (delta < 0)) & (np.minimum(e[:-1], e[1:]) <= potential) & (np.maximum(e[:-1], e[1:]) >= potential)
+        crossing &= np.isfinite(current[:-1]) & np.isfinite(current[1:]) & np.isfinite(delta)
+        indices = np.flatnonzero(crossing)
+        if len(indices):
+            i = indices[0]
+            value = current[i] + (potential - e[i]) / delta[i] * (current[i + 1] - current[i])
+            groups.setdefault(selection.pixel, []).append(value)
+    return [{"scan_pixel": pixel, "x_um": coordinates[pixel][0], "y_um": coordinates[pixel][1],
+             "value": float(np.mean(values)), "samples": len(values)} for pixel, values in sorted(groups.items())]

@@ -9,24 +9,33 @@ from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, RAW_SIGNALS, extract_cv_cycles
+from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, extract_cv_cycles
+from .analysis_tools import PROVIDERS
+from .analysis_jobs import LoadRecording
+from .analysis_views import ExplorerPanel, MapPanel, RecordingTableModel
 from .models import SettingsStore
 from .branding import application_icon, logo_label
-from .qt_common import COLORS, Card, XYPlot, application_stylesheet, button, label
+from .qt_common import COLORS, Card, XYPlot, application_stylesheet, button, label, scroll_area, configure_pyqtgraph
 
 
 class AnalysisWindow(QtWidgets.QMainWindow):
     """Browse recordings, inspect raw data, separate CVs, and export cycles."""
     def __init__(self, initial_path: Path | str | None = None) -> None:
         super().__init__()
+        configure_pyqtgraph()
         self.setWindowTitle("eChemTips — Data Analysis")
         self.setWindowIcon(application_icon())
         self.resize(1440, 900)
-        self.setMinimumSize(1040, 680)
+        self.setMinimumSize(960, 640)
         self.dataset: AnalysisDataset | None = None
         self.cycles: list[CVCycle] = []
         self.data_folder = self._default_data_folder()
         self.file_paths: list[Path] = []
+        self._load_token = 0
+        self._load_tasks = {}
+        self.loading = False
+        self._pool = QtCore.QThreadPool(self)
+        self._pool.setMaxThreadCount(1)
         self._build_ui()
         preferences = SettingsStore().load()
         self.setStyleSheet(application_stylesheet(preferences.font_size_pt))
@@ -38,8 +47,6 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.refresh_files()
         if initial_path:
             self.load_recording(Path(initial_path))
-        elif self.file_paths:
-            self.file_list.setCurrentRow(0)
 
     @staticmethod
     def _default_data_folder() -> Path:
@@ -55,7 +62,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
 
         sidebar = QtWidgets.QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(285)
+        sidebar.setMinimumWidth(190)
+        sidebar.setMaximumWidth(300)
         side = QtWidgets.QVBoxLayout(sidebar)
         side.setContentsMargins(18, 22, 18, 18)
         side.setSpacing(8)
@@ -69,6 +77,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.folder_label = label("", "sidebarMuted", word_wrap=True)
         self.folder_label.setToolTip(str(self.data_folder))
         side.addWidget(self.folder_label)
+        self.file_filter = QtWidgets.QLineEdit()
+        self.file_filter.setPlaceholderText("Filter recordings…")
+        self.file_filter.textChanged.connect(self._filter_files)
+        side.addWidget(self.file_filter)
         self.file_list = QtWidgets.QListWidget()
         self.file_list.setAccessibleName("Available recordings")
         self.file_list.currentRowChanged.connect(self._load_selected_file)
@@ -76,7 +88,11 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         side.addWidget(button("Open recording…", self.open_file, "primary"))
         side.addWidget(button("Choose folder…", self.choose_folder))
         side.addWidget(button("Refresh", self.refresh_files))
-        shell.addWidget(sidebar)
+        self.browser = sidebar
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.addWidget(sidebar)
+        shell.addWidget(splitter)
 
         main = QtWidgets.QWidget()
         main_layout = QtWidgets.QVBoxLayout(main)
@@ -86,46 +102,40 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.subtitle_label = label("Raw traces and separately extracted voltammograms", "pageDescription", word_wrap=True)
         main_layout.addWidget(self.title_label)
         main_layout.addWidget(self.subtitle_label)
-        metrics = QtWidgets.QHBoxLayout()
+        browse_toggle = button("Show / hide file browser", lambda: sidebar.setVisible(not sidebar.isVisible()))
+        main_layout.removeWidget(self.title_label)
+        title_row = QtWidgets.QHBoxLayout()
+        title_row.addWidget(self.title_label, 1)
+        title_row.addWidget(browse_toggle)
+        main_layout.insertLayout(0, title_row)
+        metrics = QtWidgets.QGridLayout()
         metrics.setSpacing(8)
         self.metric_labels: dict[str, QtWidgets.QLabel] = {}
-        for key, caption in (("samples", "SAMPLES"), ("duration", "DURATION"), ("voltage", "POTENTIAL RANGE"), ("z", "Z RANGE"), ("cycles", "CV CYCLES")):
-            card = Card(caption)
-            value = label("—", "statusStrong")
-            card.body.setLayout(QtWidgets.QVBoxLayout())
-            card.body.layout().setContentsMargins(0, 2, 0, 0)
-            card.body.layout().addWidget(value)
+        for index, (key, caption) in enumerate((("samples", "Samples"), ("duration", "Duration"), ("voltage", "E1 range"), ("z", "Z range"), ("cycles", "CV cycles"))):
+            value = label("—", "muted")
+            value.setToolTip(caption)
             self.metric_labels[key] = value
-            metrics.addWidget(card, 1)
+            metrics.addWidget(value, index // 3, index % 3)
         main_layout.addLayout(metrics)
         self.tabs = QtWidgets.QTabWidget()
         main_layout.addWidget(self.tabs, 1)
-        shell.addWidget(main, 1)
+        splitter.addWidget(main)
+        splitter.setStretchFactor(1, 1)
         self._build_raw_tab()
         self._build_cv_tab()
+        self.map_panel = MapPanel()
+        self.map_panel.hop_selected.connect(self._inspect_hop)
+        self.tabs.addTab(self.map_panel, "Hop maps")
         self._build_table_tab()
         self._build_metadata_tab()
+        self.statusBar().showMessage("Open a recording. Source files are never edited by analysis.")
 
     def _build_raw_tab(self) -> None:
-        tab = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(tab)
-        controls = QtWidgets.QHBoxLayout()
-        controls.addWidget(label("Signal", "muted"))
-        self.raw_signal = QtWidgets.QComboBox()
-        self.raw_signal.addItems(("All currents", *RAW_SIGNALS))
-        self.raw_signal.currentTextChanged.connect(self._refresh_raw_plot)
-        controls.addWidget(self.raw_signal)
-        controls.addStretch(1)
-        layout.addLayout(controls)
-        splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        self.raw_current_plot = XYPlot("Elapsed time (s)", "Current (nA)")
-        self.raw_context_plot = XYPlot("Elapsed time (s)", "Applied potential (V)")
-        splitter.addWidget(self.raw_current_plot)
-        splitter.addWidget(self.raw_context_plot)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        layout.addWidget(splitter, 1)
-        self.tabs.addTab(tab, "Experiment traces")
+        self.explorer = ExplorerPanel()
+        self.explorer.setMinimumHeight(510)
+        self.raw_current_plot = self.explorer.plot
+        self.explorer_tab = scroll_area(self.explorer)
+        self.tabs.addTab(self.explorer_tab, "Explore & measure")
 
     def _build_cv_tab(self) -> None:
         tab = QtWidgets.QWidget()
@@ -150,12 +160,13 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cycle_tree = QtWidgets.QTreeWidget()
         self.cycle_tree.setHeaderLabels(("Cycle", "Max / nA", "Min / nA"))
         self.cycle_tree.setRootIsDecorated(False)
-        self.cycle_tree.currentItemChanged.connect(self._refresh_cv_plot)
+        self.cycle_tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.cycle_tree.itemSelectionChanged.connect(self._refresh_cv_plot)
         summary_layout.addWidget(self.cycle_tree, 1)
         self.cv_detail = label("", "muted", word_wrap=True)
         summary_layout.addWidget(self.cv_detail)
         splitter.addWidget(summary)
-        self.cv_plot = XYPlot("Applied potential (V)", "Current (nA)")
+        self.cv_plot = XYPlot("Potential E1 (V)", "Current (nA)")
         splitter.addWidget(self.cv_plot)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
@@ -166,7 +177,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(tab)
         self.table_status = label("", "muted")
         layout.addWidget(self.table_status)
-        self.data_table = QtWidgets.QTableWidget()
+        self.data_table = QtWidgets.QTableView()
         self.data_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.data_table.setAlternatingRowColors(True)
         self.data_table.setSortingEnabled(False)
@@ -193,6 +204,12 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.file_list.clear()
         self.file_list.addItems(path.stem.replace("_", " ") for path in self.file_paths)
         self.file_list.blockSignals(False)
+        self._filter_files()
+
+    def _filter_files(self, *_args) -> None:
+        term = self.file_filter.text().casefold()
+        for index in range(self.file_list.count()):
+            self.file_list.item(index).setHidden(term not in self.file_list.item(index).text().casefold())
 
     def choose_folder(self) -> None:
         """Prompt for a recording folder and refresh its file list."""
@@ -215,50 +232,70 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.load_recording(self.file_paths[row])
 
     def load_recording(self, path: Path) -> None:
-        """Load, normalize, and extract complete CV cycles from ``path``."""
-        try:
-            self.dataset = AnalysisDataset.load(path)
-            self.cycles = extract_cv_cycles(self.dataset)
-            self._refresh_all()
-        except AnalysisError as exc:
-            QtWidgets.QMessageBox.critical(self, "eChemTips Data Analysis", str(exc))
+        """Queue a background import; only the newest selection may update views."""
+        self._load_token += 1
+        for previous in self._load_tasks.values():
+            previous.cancelled = True
+        self.loading = True
+        self.statusBar().showMessage(f"Loading {Path(path).name}…")
+        task = LoadRecording(self._load_token, path)
+        task.signals.finished.connect(self._loaded)
+        self._load_tasks[self._load_token] = task
+        self._pool.start(task)
+
+    def _loaded(self, token, bundle, error):
+        self._load_tasks.pop(token, None)
+        if token != self._load_token:
+            return
+        self.loading = False
+        if error:
+            self.statusBar().showMessage(error)
+            QtWidgets.QMessageBox.warning(self, "Recording could not be loaded", error)
+            return
+        self.dataset, self.cycles, self.groups = bundle
+        self._refresh_all()
+        self.statusBar().showMessage(f"Loaded {len(self.dataset.rows):,} samples · full-resolution calculations; display reduced only")
+
+    def _inspect_hop(self, pixel):
+        self.tabs.setCurrentWidget(self.explorer_tab)
+        self.explorer.provider.setCurrentIndex(self.explorer.provider.findData("hops"))
+        selections = self.groups.get("hops", [])
+        index = next((i for i, group in enumerate(selections) if group.pixel == pixel), -1)
+        self.explorer.selection.setCurrentIndex(index)
+
+    def closeEvent(self, event):
+        """Discard stale load results when closing; never terminate worker I/O."""
+        self._load_token += 1
+        self.loading = False
+        super().closeEvent(event)
 
     def _refresh_all(self) -> None:
         assert self.dataset is not None
         dataset = self.dataset
-        self.title_label.setText(dataset.path.stem.replace("_", " "))
-        self.subtitle_label.setText(f"{dataset.experiment} · {dataset.metadata.get('started_at', 'Start time unavailable')} · {dataset.path}")
+        self.title_label.setText("Recording analysis")
+        self.subtitle_label.setText(f"{dataset.path.name} · {dataset.experiment} · {dataset.metadata.get('status', 'status unknown')}")
+        self.subtitle_label.setToolTip(str(dataset.path))
         voltage, z_values = dataset.values("voltage1_v"), dataset.values("z_um")
-        self.metric_labels["samples"].setText(f"{len(dataset.rows):,}")
-        self.metric_labels["duration"].setText(f"{dataset.duration_s:.2f} s")
-        self.metric_labels["voltage"].setText(f"{min(voltage):.3g} to {max(voltage):.3g} V")
-        self.metric_labels["z"].setText(f"{min(z_values):.3g} to {max(z_values):.3g} µm" if z_values else "—")
-        self.metric_labels["cycles"].setText(str(len(self.cycles)) if self.cycles else "—")
-        self._refresh_raw_plot()
+        self.metric_labels["samples"].setText(f"Samples: {len(dataset.rows):,}")
+        self.metric_labels["duration"].setText(f"Duration: {dataset.duration_s:.2f} s")
+        self.metric_labels["voltage"].setText(f"E1: {min(voltage):.3g} to {max(voltage):.3g} V" if voltage else "E1: —")
+        self.metric_labels["z"].setText(f"Z: {min(z_values):.3g} to {max(z_values):.3g} µm" if z_values else "Z: —")
+        self.metric_labels["cycles"].setText(f"Complete CVs: {len(self.cycles)}")
+        self.explorer.set_dataset(dataset, self.groups)
+        self.map_panel.set_dataset(dataset, self.groups.get("cv", []), self.groups.get("hops", []))
+        self.cv_current.blockSignals(True); self.cv_current.clear()
+        self.cv_current.addItems([name for name, column in CURRENT_COLUMNS.items() if column in dataset.columns])
+        self.cv_current.blockSignals(False)
         self._refresh_cv_view()
         self._refresh_table()
         self.metadata_text.setPlainText(json.dumps(dataset.metadata, indent=2, default=str) if dataset.metadata else "No matching JSON metadata file was found.")
 
     def _refresh_raw_plot(self, *_args: object) -> None:
-        if self.dataset is None:
-            return
-        times, selected = self.dataset.values("elapsed_s"), self.raw_signal.currentText()
-        series: list[tuple[str, list[float], list[float], str]] = []
-        if selected == "All currents":
-            for index, (name, column) in enumerate(CURRENT_COLUMNS.items()):
-                if column in self.dataset.columns:
-                    series.append((name, times, self.dataset.values(column), PLOT_COLORS[index]))
-            self.raw_current_plot.y_label = "Current (nA)"
-        else:
-            column = RAW_SIGNALS[selected]
-            series.append((selected, times, self.dataset.values(column), COLORS["accent"]))
-            self.raw_current_plot.y_label = "Current (nA)"
-        self.raw_current_plot.set_data(series)
-        self.raw_context_plot.set_data([("Voltage 1", times, self.dataset.values("voltage1_v"), COLORS["blue"])])
+        self.explorer.refresh()
 
     def _refresh_cv_view(self, *_args: object) -> None:
         self.cycle_tree.clear()
-        if not self.cycles:
+        if not self.cycles or not self.cv_current.currentText():
             self.cv_plot.set_message("No complete CV cycles detected in this recording")
             self.cv_detail.setText("Raw traces remain available. Add the voltage program for legacy files without CV metadata.")
             self.export_button.setEnabled(False)
@@ -277,38 +314,31 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cycle_tree.setCurrentItem(all_item)
 
     def _refresh_cv_plot(self, *_args: object) -> None:
-        if not self.cycles:
+        if not self.cycles or not self.cv_current.currentText():
             return
         item = self.cycle_tree.currentItem()
         index = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole)) if item else -1
-        cycles = self.cycles if index < 0 else [self.cycles[index]]
+        selected = [int(item.data(0, QtCore.Qt.ItemDataRole.UserRole)) for item in self.cycle_tree.selectedItems()]
+        cycles = self.cycles if not selected or -1 in selected else [self.cycles[i] for i in selected]
+        total = len(cycles)
+        cycles = cycles[:50]
         column = CURRENT_COLUMNS[self.cv_current.currentText()]
         self.cv_plot.set_data([(cycle.label, cycle.potential_v, cycle.current_na(column), PLOT_COLORS[i % len(PLOT_COLORS)]) for i, cycle in enumerate(cycles)])
         if len(cycles) == 1:
             maximum, max_v, minimum, min_v = cycles[0].peak_summary(column)
-            self.cv_detail.setText(f"Anodic maximum\n{maximum:+.4g} nA at {max_v:+.4g} V\n\nCathodic minimum\n{minimum:+.4g} nA at {min_v:+.4g} V")
+            self.cv_detail.setText(f"Maximum current\n{maximum:+.4g} nA at {max_v:+.4g} V\n\nMinimum current\n{minimum:+.4g} nA at {min_v:+.4g} V\n\nRaw extrema; no peak fitting or baseline correction.")
         else:
-            self.cv_detail.setText(f"Overlaying {len(cycles)} completed cycles.\n\nSelect one cycle for its peak summary.")
+            self.cv_detail.setText(f"Overlaying {len(cycles)} of {total} selected cycles (display limit 50).\nCtrl/Cmd-click to select cycles. Exports retain all cycles.")
 
     def _refresh_table(self) -> None:
         if self.dataset is None:
             return
-        columns = self.dataset.columns
-        rows = self.dataset.rows[:5_000]
-        self.data_table.clear()
-        self.data_table.setColumnCount(len(columns))
-        self.data_table.setHorizontalHeaderLabels(columns)
-        self.data_table.setRowCount(len(rows))
-        for row_index, row in enumerate(rows):
-            for column_index, column in enumerate(columns):
-                item = QtWidgets.QTableWidgetItem(f"{row[column]:.8g}")
-                item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-                self.data_table.setItem(row_index, column_index, item)
-        self.data_table.resizeColumnsToContents()
-        self.table_status.setText(
-            f"Showing the first 5,000 of {len(self.dataset.rows):,} rows; the source remains complete."
-            if len(self.dataset.rows) > 5_000 else f"Showing all {len(self.dataset.rows):,} rows from the source."
-        )
+        old = self.data_table.model()
+        self.data_table.setModel(RecordingTableModel(self.dataset, self.data_table))
+        if old is not None:
+            old.deleteLater()
+        self.data_table.horizontalHeader().setDefaultSectionSize(145)
+        self.table_status.setText(f"All {len(self.dataset.rows):,} rows · native saved units · read-only")
 
     def _edit_cv_program(self) -> None:
         if self.dataset is None:
@@ -344,9 +374,11 @@ class AnalysisWindow(QtWidgets.QMainWindow):
                 return
             values["cycles"] = int(cycle_value)
             assert self.dataset is not None
-            self.dataset.metadata["parameters"] = values
+            self.dataset.metadata["parameters"] = {**existing, **values}
             self.dataset.metadata.setdefault("experiment", "Manual CV")
             self.cycles = extract_cv_cycles(self.dataset)
+            self.groups = {key: provider.extract(self.dataset) for key, provider in PROVIDERS.items()
+                           if provider.supports(self.dataset)}
             dialog.accept()
             self._refresh_all()
 
@@ -362,6 +394,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         chosen, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export separated CVs", str(suggested), "CSV (*.csv)")
         if not chosen:
             return
+        if Path(chosen).resolve() in {self.dataset.path.resolve(), self.dataset.path.with_suffix(".json").resolve()}:
+            QtWidgets.QMessageBox.warning(self, "Source protected", "Choose a different export filename.")
+            return
         columns = ("pixel", "cycle", "point", *self.dataset.columns)
         try:
             with Path(chosen).open("w", newline="", encoding="utf-8") as stream:
@@ -369,7 +404,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
                 writer.writeheader()
                 for cycle in self.cycles:
                     for point, row in enumerate(cycle.rows):
-                        writer.writerow({"pixel": cycle.pixel, "cycle": cycle.number, "point": point, **row})
+                        values = {"pixel": cycle.pixel, "cycle": cycle.number, "point": point, **row}
+                        if "scan_pixel" in self.dataset.columns:
+                            values["scan_pixel"] = cycle.pixel
+                        writer.writerow(values)
         except OSError as exc:
             QtWidgets.QMessageBox.critical(self, "eChemTips Data Analysis", f"Could not export CVs: {exc}")
             return
