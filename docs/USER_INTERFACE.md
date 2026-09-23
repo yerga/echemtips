@@ -6,6 +6,23 @@ values in a persistent strip at the bottom.
 
 ![Scan hopping maps in the control application](images/control-scan-maps.png)
 
+## Live trace performance
+
+Hardware and simulation use the same live renderer. Visible curves refresh at
+most about 10 times per second using fast segmented lines; acquisition and
+recording continue independently. Hidden plots retain their current history and
+refresh when shown. Rolling time traces and rolling current-versus-Z histories
+keep **every sample within the selected time window**, removing only expired
+samples. They do not repeatedly thin older points. Very high sample rates or
+long windows still require more memory and rendering work.
+
+The **Non-rolling display buffer** setting only limits non-rolling curves such as
+CVs; full-rate recording is unchanged. To test without hardware, select the
+simulator, connect, and start **Watch current → Start live view**. Run longer than
+the monitor window (30 seconds by default), then switch away and back. The trace
+should advance smoothly and show the latest window. A simulated hopping scan
+exercises the same renderer in **Experiment traces** and **Approach curves**.
+
 ## Navigation
 
 Experiment names and parameter labels are consistent across pages. Both hopping

@@ -21,6 +21,70 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_simulator_monitor_uses_full_resolution_rolling_path(self):
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        backend = SimulationBackend(AppSettings())
+        try:
+            page = window.pages["Watch current"]
+            page.set_live_view(True)
+            page.current1_plot.buffer.max_points = 500
+            with patch("echemtips.backends.time.monotonic", return_value=100) as clock:
+                backend.connect()
+                samples = []
+                for i in range(5000):
+                    clock.return_value = 100 + i * .002
+                    samples.append(backend.read_sample())
+                page.on_samples(samples)
+            self.assertEqual(len(page.current1_plot.x_values), 5000)
+            self.assertEqual(page.current1_plot.series[0], [s.current1_na for s in samples])
+            self.assertFalse(page.current1_plot._render_timer.isActive())
+        finally:
+            backend.disconnect()
+            window.close()
+
+    def test_rolling_plot_keeps_all_visible_samples_despite_small_point_limit(self):
+        plot = Plot("Dense", "Current (nA)", ("#12877f",), max_points=500, rolling_window_s=30)
+        history = TimedXYPlot("History", "Current (nA)", "#12877f", 500, "Z (µm)", 30)
+        try:
+            for i in range(40001):
+                value = (-1.0 if i % 2 else 1.0) * i
+                plot.append(i / 1000, value, redraw=False)
+                history.append_timed(i / 1000, i / 2000, value, redraw=False)
+            plot.request_redraw(); history.request_redraw()
+            self.assertEqual(len(plot.x_values), 30001)
+            self.assertEqual(len(history.clock_values), 30001)
+            self.assertEqual(plot.series[0], history.series[0])
+            plot.redraw()
+            self.assertEqual(len(plot.curves[0].xData), 30001)
+            self.assertFalse(plot.curves[0].opts["antialias"])
+            self.assertEqual(plot.curves[0].curve.opts["segmentedLineMode"], "on")
+        finally:
+            plot.close(); history.close()
+
+    def test_hidden_live_plot_defers_render_and_coalesces_visible_updates(self):
+        from PySide6.QtTest import QTest
+        plot = Plot("Live", "Value", ("#12877f",), rolling_window_s=30)
+        try:
+            plot.append(0, 1)
+            self.assertFalse(plot._render_timer.isActive())
+            with patch.object(plot, "redraw", wraps=plot.redraw) as render:
+                plot.show()
+                for i in range(100):
+                    plot.append(i / 100, i)
+                self.assertEqual(render.call_count, 0)
+                QTest.qWait(160)
+                self.assertEqual(render.call_count, 1)
+                self.assertEqual(len(plot.curves[0].xData), 101)
+                plot.hide()
+                plot.append(1, 123)
+                QTest.qWait(120)
+                self.assertEqual(render.call_count, 1)
+                plot.show(); QTest.qWait(160)
+                self.assertEqual(plot.curves[0].yData[-1], 123)
+        finally:
+            plot.close()
+
     def test_shared_logo_and_application_identity(self) -> None:
         self.assertEqual(self.qt_app.applicationDisplayName(), "eChemTips")
         self.assertFalse(self.qt_app.windowIcon().isNull())
@@ -123,6 +187,7 @@ class QtLayoutTests(unittest.TestCase):
             plot.set_display_style("Auto", 10, 2)
             self.assertEqual(list(plot.curves[0].getData()[1]), [250, -500])
             plot.append(2, 2)
+            plot.redraw()  # Live updates are deferred; force this unit test's frame.
             self.assertEqual(plot.graph.getAxis("left").labelText, "Current 1 (nA)")
             self.assertEqual(list(plot.curves[0].getData()[1]), [0.25, -0.5, 2])
         finally:

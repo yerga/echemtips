@@ -123,14 +123,14 @@ class DisplayBuffer:
         for values in self.series:
             values.clear()
 
-    def append(self, x: float, values: tuple[float, ...]) -> bool:
+    def append(self, x: float, values: tuple[float, ...], *, compact: bool = True) -> bool:
         """Append one point and compact when the configured limit is exceeded."""
         if len(values) != len(self.series) or not math.isfinite(x) or any(not math.isfinite(v) for v in values):
             return False
         self.x.append(x)
         for target, value in zip(self.series, values):
             target.append(value)
-        if len(self.x) > self.max_points * 2:
+        if compact and len(self.x) > self.max_points * 2:
             self.compact()
         return True
 

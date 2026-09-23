@@ -329,9 +329,17 @@ class Plot(QtWidgets.QWidget):
         if names:
             self.graph.addLegend(offset=(8, 8), brush=pg.mkBrush(255, 255, 255, 220))
         self.curves = [
-            self.graph.plot([], [], pen=pg.mkPen(color, width=2), name=names[i] if names else None)
+            self.graph.plot([], [], pen=pg.mkPen(color, width=2), name=names[i] if names else None,
+                            antialias=False, connect="finite")
             for i, color in enumerate(colors)
         ]
+        for curve in self.curves:
+            curve.curve.setSegmentedLineMode("on")
+        self._render_pending = False
+        self._render_timer = QtCore.QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.setInterval(100)
+        self._render_timer.timeout.connect(self._render_if_visible)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.graph)
@@ -343,12 +351,11 @@ class Plot(QtWidgets.QWidget):
         self.redraw()
 
     def append(self, x: float, *values: float, redraw: bool = True) -> None:
-        """Append one display point and optionally redraw immediately."""
-        if self.buffer.append(x, values) and redraw:
-            self.redraw()
+        """Append one display point and optionally schedule a live redraw."""
+        if self.buffer.append(x, values, compact=self.rolling_window_s is None) and redraw:
+            self.request_redraw()
 
-    def redraw(self) -> None:
-        """Apply rolling-window pruning and update every graph curve."""
+    def _prune_history(self) -> None:
         if self.rolling_window_s is not None and self.x_values:
             cutoff = self.x_values[-1] - self.rolling_window_s
             first_visible = bisect_left(self.x_values, cutoff)
@@ -356,6 +363,28 @@ class Plot(QtWidgets.QWidget):
                 del self.x_values[:first_visible]
                 for values in self.series:
                     del values[:first_visible]
+
+    def request_redraw(self) -> None:
+        """Coalesce live updates to 10 Hz; keep hidden histories without painting."""
+        self._prune_history()
+        self._render_pending = True
+        if self.isVisible() and not self._render_timer.isActive():
+            self._render_timer.start()
+
+    def _render_if_visible(self) -> None:
+        if self._render_pending and self.isVisible():
+            self.redraw()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        """Refresh a newly exposed plot from its latest retained samples."""
+        super().showEvent(event)
+        self.request_redraw()
+
+    def redraw(self) -> None:
+        """Immediately render retained samples; live callers use request_redraw."""
+        self._render_timer.stop()
+        self._render_pending = False
+        self._prune_history()
         x = np.asarray(self.x_values, dtype=float)
         scale, unit = current_display_scale(self.current_display_unit, (value for series in self.series for value in series)) if "(nA)" in self.y_label else (1.0, "")
         y_label = self.y_label.replace("(nA)", f"({unit})") if unit else self.y_label
@@ -419,9 +448,8 @@ class TimedXYPlot(Plot):
         self.clock_values.append(clock_s)
         self.x_values.append(x)
         self.series[0].append(y)
-        self._prune_and_compact()
         if redraw:
-            self.redraw()
+            self.request_redraw()
 
     def add_gap(self, clock_s: float) -> None:
         """Prevent a line joining two separate approaches."""
@@ -431,7 +459,7 @@ class TimedXYPlot(Plot):
         self.x_values.append(float("nan"))
         self.series[0].append(float("nan"))
 
-    def _prune_and_compact(self) -> None:
+    def _prune_history(self) -> None:
         if self.clock_values:
             cutoff = self.clock_values[-1] - self.history_window_s
             first_visible = bisect_left(self.clock_values, cutoff)
@@ -439,17 +467,6 @@ class TimedXYPlot(Plot):
                 del self.clock_values[:first_visible]
                 del self.x_values[:first_visible]
                 del self.series[0][:first_visible]
-        if len(self.clock_values) > self.max_points * 2:
-            count = len(self.clock_values)
-            indices = [round(index * (count - 1) / (self.max_points - 1)) for index in range(self.max_points)]
-            self.clock_values[:] = [self.clock_values[index] for index in indices]
-            self.x_values[:] = [self.x_values[index] for index in indices]
-            self.series[0][:] = [self.series[0][index] for index in indices]
-
-    def redraw(self) -> None:
-        """Prune/compact against time before updating the XY curve."""
-        self._prune_and_compact()
-        super().redraw()
 
 
 class ProgramDiagram(QtWidgets.QWidget):

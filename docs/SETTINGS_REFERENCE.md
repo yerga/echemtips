@@ -160,7 +160,7 @@ metadata for interpretation of the recorded map.
 
 | Setting | Default | Valid range | Effect |
 | --- | --- | --- | --- |
-| **Display buffer** | 12,000 points/plot | integer 500–100,000 | Maximum retained plot-buffer resolution before decimation. It affects UI cost only, not saved data. Rolling time windows can remove older displayed points earlier. |
+| **Non-rolling display buffer** | 12,000 points/plot | integer 500–100,000 | Resolution limit for non-rolling plots such as CV curves. Rolling traces retain every sample in their configured time window, regardless of this limit. Saved data are unaffected. |
 
 Use the default unless the display demonstrably lacks required shape detail.
 Very large buffers increase rendering work during long experiments.

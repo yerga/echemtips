@@ -336,7 +336,7 @@ class DiagnosticWorkflowPage(BasePage):
                 current = _feedback_current(sample, channel)
                 self.trace_plot.append(elapsed, current, redraw=False)
                 self.response_plot.append(sample.voltage1_v, current, redraw=False)
-            self.trace_plot.redraw(); self.response_plot.redraw()
+            self.trace_plot.request_redraw(); self.response_plot.request_redraw()
         if self._cv_runner.active:
             self._cv_runner.tick_samples(samples)
             self.status_label.setText(self._cv_runner.detail)
@@ -754,7 +754,7 @@ class WatchPage(BasePage):
             elapsed = max(0.0, sample.elapsed_s - origin)
             self.current1_plot.append(elapsed, sample.current1_na, redraw=False)
             self.current2_plot.append(elapsed, sample.current2_na, redraw=False)
-        self.current1_plot.redraw(); self.current2_plot.redraw()
+        self.current1_plot.request_redraw(); self.current2_plot.request_redraw()
 
 
 class WatchPositionPage(BasePage):
@@ -878,7 +878,7 @@ class WatchPositionPage(BasePage):
             self.y_plot.append(elapsed, sample.y_um, redraw=False)
             self.z_plot.append(elapsed, sample.z_um, redraw=False)
         for plot in (self.x_plot, self.y_plot, self.z_plot):
-            plot.redraw()
+            plot.request_redraw()
 
 
 class ManagedExperimentPage(BasePage):
@@ -1091,7 +1091,7 @@ class StandaloneCVPage(ManagedExperimentPage):
             self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False)
         if samples:
             for plot in (self.voltage_plot, self.current_plot, self.cv_plot):
-                plot.redraw()
+                plot.request_redraw()
         self._show_update(self.experiment.tick_samples(samples))
 
 
@@ -1187,7 +1187,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
             if not self.experiment._hardware: update = self.experiment.tick_samples([sample])
         if self.experiment._hardware: update = self.experiment.tick_samples(samples)
         if samples:
-            self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
+            self.z_plot.request_redraw(); self.current_plot.request_redraw(); self.approach_curve.request_redraw(); self.approach_history.request_redraw()
         self._show_update(update)
 
 
@@ -1300,8 +1300,8 @@ class ApproachCVPage(ManagedExperimentPage):
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
             if not hardware and experiment.active: update = experiment.tick(sample)
         if hardware and experiment.active: update = experiment.tick(samples[-1])
-        self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
-        if cv_changed: self.cv_plot.redraw()
+        self.z_plot.request_redraw(); self.current_plot.request_redraw(); self.approach_curve.request_redraw(); self.approach_history.request_redraw()
+        if cv_changed: self.cv_plot.request_redraw()
         self._show_update(update)
 
 
@@ -1400,7 +1400,7 @@ class ApproachITPage(ManagedExperimentPage):
         if experiment._hardware: update = experiment.tick_samples(samples)
         elif not samples: update = experiment.tick_samples([])
         if samples:
-            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.redraw()
+            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.request_redraw()
         self._show_update(update)
 
 
@@ -1533,8 +1533,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
                     self.cv_plot.clear(); self._cv_point = point_index; row, column = experiment.params.grid()[point_index][:2]
                     self.cv_pixel_label.setText(f"Hop {point_index + 1} · row {row + 1}, column {column + 1}")
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
-        if samples: self.z_plot.redraw(); self.current_plot.redraw(); self.approach_curve.redraw(); self.approach_history.redraw()
-        if cv_changed: self.cv_plot.redraw()
+        if samples: self.z_plot.request_redraw(); self.current_plot.request_redraw(); self.approach_curve.request_redraw(); self.approach_history.request_redraw()
+        if cv_changed: self.cv_plot.request_redraw()
         self._refresh_maps()
         self._show_update(update)
 
@@ -1654,7 +1654,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
                 elapsed = sample.elapsed_s - (self._it_t0 if self._it_t0 is not None else sample.elapsed_s)
                 self.voltage_plot.append(elapsed, sample.voltage1_v, redraw=False); self.it_plot.append(elapsed, sample.current1_na, redraw=False)
         if samples:
-            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.redraw()
+            for plot in (self.z_plot, self.current_plot, self.voltage_plot, self.it_plot, self.approach_curve, self.approach_history): plot.request_redraw()
         self._refresh_maps()
         self._show_update(update)
 
@@ -1745,7 +1745,7 @@ class SettingsPage(BasePage):
         sv.addWidget(data_row); sv.addWidget(self.auto_save)
         display = Card("Display", help_text="Plot buffers are decimated for responsive viewing; recordings retain every acquired sample.")
         dg = _grid(display.body)
-        self.display_max_points = add_field(dg, Field("Display buffer", str(app.settings.display_max_points), "points/plot"), 0, 0)
+        self.display_max_points = add_field(dg, Field("Non-rolling display buffer", str(app.settings.display_max_points), "points/plot"), 0, 0)
         self.monitor_window = add_field(dg, Field("Monitor rolling window", str(app.settings.monitor_window_s), "s"), 0, 1)
         self.experiment_window = add_field(dg, Field("Experiment rolling window", str(app.settings.experiment_window_s), "s"), 1, 0)
         units_row = QtWidgets.QWidget(); units_layout = _vbox(units_row)
@@ -2110,11 +2110,11 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             plot.buffer.max_points = plot.max_points
             if isinstance(plot, TimedXYPlot):
                 plot.history_window_s = settings.experiment_window_s
-                # TimedXYPlot compacts its time and XY arrays together.
             else:
-                plot.buffer.compact()
                 if plot.time_based:
                     plot.rolling_window_s = settings.monitor_window_s if plot in monitors else settings.experiment_window_s
+                if plot.rolling_window_s is None:
+                    plot.buffer.compact()
             plot.set_display_style(settings.current_display_unit, settings.font_size_pt, settings.trace_width_px)
         for diagram in self.findChildren(ProgramDiagram):
             diagram.font_size_pt = settings.font_size_pt
