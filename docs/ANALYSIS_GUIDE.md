@@ -12,8 +12,10 @@ still require sufficient RAM (this is not an out-of-core file viewer).
 
 ## Optional current smoothing
 
-Select **Smooth currents**, choose an odd window size in samples, and press
-**Apply**. The centered moving average affects both current channels consistently
+Select **Smooth currents**, choose **Savitzky–Golay** (the default), an odd
+window size and polynomial order, then press **Apply**. Start with 11 samples
+and order 2; the order must be smaller than the window. **Moving average** remains
+available as an alternative. Both methods affect current channels consistently
 in Explore/measure, CVs, peak summaries, the numeric table, and current-based hop
 maps (including current at a selected potential). It does not smooth potentials
 or positions, or change CV identification. Uncheck it and press Apply to restore
@@ -25,15 +27,26 @@ The window counts samples, not seconds. Start with 5–11 samples; use acquisiti
 interval and scan rate to assess how much potential/time range that spans.
 Large windows can suppress real peaks and change peak currents, charge estimates,
 and map values. This is a derived analysis, not a noise-free measurement.
-Available samples are averaged at segment edges; invalid values remain gaps.
+Savitzky–Golay uses [SciPy's polynomial filter](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.savgol_filter.html)
+with polynomial edge interpolation. For short segments, the window is reduced
+to the largest fitting odd size; if it cannot exceed the selected order, that
+segment stays unchanged. Moving averages use available samples at segment edges.
+Invalid values remain gaps. Filtering is in sample index, assuming approximately
+uniform acquisition spacing; it does not resample irregular timestamps or fit
+against potential. Savitzky–Golay can overshoot or produce ringing near spikes;
+compare against original data before interpreting features.
 Filtering does not cross hop/waypoint changes, non-increasing timestamps,
 extracted CV boundaries or E1 sweep reversals. It is temporal smoothing of current,
 **not spatial smoothing between map pixels**.
 
 Source files are never rewritten. Trace, map, and separated-CV exports include
-the processing method, sample window and channel list in their JSON sidecars.
+the processing method, sample window, polynomial order (where applicable), edge
+handling and channel list in their JSON sidecars.
 Reprocessing clears a pinned reference to avoid retaining an outdated version.
 Full-resolution smoothed data require an additional numeric array in memory.
+
+SciPy is a required dependency. After updating an existing installation, run
+`python -m pip install -e .` in the activated project environment to install it.
 
 ## Launching
 

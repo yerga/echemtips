@@ -8,6 +8,39 @@ from echemtips.analysis_processing import smooth_currents
 
 
 class SmoothingTests(unittest.TestCase):
+    def test_savgol_preserves_quadratic_shape_including_edges(self):
+        x = np.arange(101, dtype=float)
+        y = .0001 * (3 * x ** 2 - 2 * x + 10)
+        columns = ("elapsed_s", "current1_na")
+        source = AnalysisDataset(Path("test.csv"), columns,
+                                 NumericRows(columns, np.column_stack((x, y))), {})
+        filtered = smooth_currents(source, 11, method="savitzky_golay", polynomial_order=2)
+        np.testing.assert_allclose(filtered.column("current1_na"), y, atol=1e-12)
+        np.testing.assert_array_equal(source.column("current1_na"), y)
+        self.assertEqual(filtered.metadata["analysis_processing"]["polynomial_order"], 2)
+
+    def test_savgol_short_segments_and_gaps_are_safe(self):
+        columns = ("elapsed_s", "current1_na", "scan_pixel")
+        y = [1, 3, np.nan, 100, 103, 108, 115, 124]
+        source = AnalysisDataset(Path("test.csv"), columns,
+            NumericRows(columns, [[i, value, int(i >= 3)] for i, value in enumerate(y)]), {})
+        filtered = smooth_currents(source, 11, method="savitzky_golay", polynomial_order=2)
+        np.testing.assert_allclose(filtered.column("current1_na"), y, atol=1e-10, equal_nan=True)
+        for order in (0, 3, 6, 2.5):
+            with self.assertRaises(ValueError):
+                smooth_currents(source, 3, method="savitzky_golay", polynomial_order=order)
+
+    def test_savgol_reduces_noise_without_moving_gaussian_peak(self):
+        x = np.linspace(-5, 5, 1001)
+        clean = np.exp(-x ** 2)
+        noisy = clean + .05 * np.random.default_rng(12).normal(size=len(x))
+        columns = ("elapsed_s", "current1_na")
+        source = AnalysisDataset(Path("test.csv"), columns,
+            NumericRows(columns, np.column_stack((x, noisy))), {})
+        result = smooth_currents(source, 31, method="savitzky_golay", polynomial_order=3).column("current1_na")
+        self.assertLess(np.mean((result-clean)**2), np.mean((noisy-clean)**2) / 3)
+        self.assertLess(abs(x[np.argmax(result)]), .2)
+
     def test_cycle_and_sweep_boundaries_do_not_blend_currents(self):
         columns = ("elapsed_s", "voltage1_v", "current1_na")
         source = AnalysisDataset(Path("test.csv"), columns,

@@ -118,15 +118,27 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         main_layout.addLayout(metrics)
         processing = QtWidgets.QHBoxLayout()
         self.smoothing_enabled = QtWidgets.QCheckBox("Smooth currents")
+        self.smoothing_method = QtWidgets.QComboBox()
+        self.smoothing_method.addItem("Savitzky–Golay", "savitzky_golay")
+        self.smoothing_method.addItem("Moving average", "centered_moving_average")
+        self.smoothing_order = QtWidgets.QSpinBox()
+        self.smoothing_order.setRange(1, 5)
+        self.smoothing_order.setValue(2)
+        self.smoothing_order.setPrefix("Order ")
+        self.smoothing_order.setToolTip("Local polynomial order; must be smaller than the sample window. Usually 2 or 3.")
+        self.smoothing_method.currentIndexChanged.connect(
+            lambda: self.smoothing_order.setEnabled(self.smoothing_method.currentData() == "savitzky_golay"))
         self.smoothing_window = QtWidgets.QSpinBox()
         self.smoothing_window.setRange(3, 10001)
         self.smoothing_window.setSingleStep(2)
         self.smoothing_window.setValue(11)
         self.smoothing_window.setSuffix(" samples")
-        self.smoothing_window.setToolTip("Centered moving average. Use an odd window; large windows can suppress real peaks. Applies to currents in traces, measurements, CVs and maps. Originals are unchanged.")
+        self.smoothing_window.setToolTip("Odd sample-count window. Large windows can suppress real peaks. Savitzky–Golay fits in sample order, not potential or time; use care with irregular sampling. Applies to currents in traces, measurements, CVs and maps. Originals are unchanged.")
         self.smoothing_apply = button("Apply", self._apply_smoothing)
         processing.addWidget(self.smoothing_enabled)
+        processing.addWidget(self.smoothing_method)
         processing.addWidget(self.smoothing_window)
+        processing.addWidget(self.smoothing_order)
         processing.addWidget(self.smoothing_apply)
         processing.addStretch(1)
         main_layout.addLayout(processing)
@@ -249,6 +261,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
 
     def load_recording(self, path: Path, *, source=None) -> None:
         """Queue a background import; only the newest selection may update views."""
+        if (self.smoothing_enabled.isChecked() and self.smoothing_method.currentData() == "savitzky_golay"
+                and self.smoothing_order.value() >= self.smoothing_window.value()):
+            QtWidgets.QMessageBox.warning(self, "Smoothing settings", "Use a sample window larger than the polynomial order.")
+            return
         self._load_token += 1
         for previous in self._load_tasks.values():
             previous.cancelled = True
@@ -258,7 +274,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if window % 2 == 0:
             window += 1
             self.smoothing_window.setValue(window)
-        task = LoadRecording(self._load_token, path, source=source, smoothing_window=window)
+        task = LoadRecording(self._load_token, path, source=source, smoothing_window=window,
+                             smoothing_method=self.smoothing_method.currentData(), polynomial_order=self.smoothing_order.value())
         task.signals.finished.connect(self._loaded)
         self._load_tasks[self._load_token] = task
         self._pool.start(task)
@@ -291,7 +308,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.explorer.bounds, self.explorer.baseline = bounds, baseline
             self.explorer.refresh()
         mode = self.dataset.metadata.get("analysis_processing", {})
-        description = (f"Smoothed currents · {mode['window_samples']}-sample centered mean"
+        method_label = "Savitzky–Golay" if mode.get("method") == "savitzky_golay" else "Moving average"
+        description = (f"Smoothed currents · {method_label} · {mode['window_samples']} samples"
                        if mode else "Original currents · smoothing off")
         self.statusBar().showMessage(f"{len(self.dataset.rows):,} samples · {description}")
 
@@ -315,7 +333,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.subtitle_label.setText(f"{dataset.path.name} · {dataset.experiment} · {dataset.metadata.get('status', 'status unknown')}")
         processing = dataset.metadata.get("analysis_processing")
         if processing:
-            self.subtitle_label.setText(self.subtitle_label.text() + f" · SMOOTHED ({processing['window_samples']} samples)")
+            method = "Savitzky–Golay" if processing['method'] == 'savitzky_golay' else "Moving average"
+            order = f", order {processing['polynomial_order']}" if 'polynomial_order' in processing else ""
+            self.subtitle_label.setText(self.subtitle_label.text() + f" · SMOOTHED: {method} ({processing['window_samples']} samples{order})")
         self.subtitle_label.setToolTip(str(dataset.path))
         voltage, z_values = dataset.values("voltage1_v"), dataset.values("z_um")
         self.metric_labels["samples"].setText(f"Samples: {len(dataset.rows):,}")

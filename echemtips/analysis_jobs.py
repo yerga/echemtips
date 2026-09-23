@@ -13,7 +13,8 @@ class LoadSignals(QtCore.QObject):
 class LoadRecording(QtCore.QRunnable):
     """Load outside the event loop; the receiver alone updates UI widgets."""
 
-    def __init__(self, token, path, *, source=None, smoothing_window=1):
+    def __init__(self, token, path, *, source=None, smoothing_window=1,
+                 smoothing_method="savitzky_golay", polynomial_order=2):
         super().__init__()
         self.token, self.path = token, path
         self.signals = LoadSignals()
@@ -21,6 +22,7 @@ class LoadRecording(QtCore.QRunnable):
         self.source = source
         self.reprocessing = source is not None
         self.smoothing_window = smoothing_window
+        self.smoothing_method, self.polynomial_order = smoothing_method, polynomial_order
 
     def run(self):
         """Normalize and prepare selectors, reporting errors without GUI calls."""
@@ -35,7 +37,8 @@ class LoadRecording(QtCore.QRunnable):
                 return
             cycles = extract_cv_cycles(dataset)
             if self.smoothing_window > 1:
-                dataset = smooth_currents(dataset, self.smoothing_window, cycles)
+                dataset = smooth_currents(dataset, self.smoothing_window, cycles,
+                                          method=self.smoothing_method, polynomial_order=self.polynomial_order)
                 cycles = extract_cv_cycles(dataset)
             groups = {key: (cv_selections(dataset, cycles) if key == "cv" else provider.extract(dataset))
                       for key, provider in PROVIDERS.items() if provider.supports(dataset)}

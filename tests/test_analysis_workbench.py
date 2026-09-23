@@ -60,7 +60,7 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 window.smoothing_window.setValue(11)
                 window._apply_smoothing(); self.wait_loaded(window)
                 self.assertLess(window.map_panel.points[0]["value"], raw_map / 2)
-                self.assertLess(max(window.cycles[0].current_na("current1_na")), 20)
+                self.assertLess(max(window.cycles[0].current_na("current1_na")), 30)
                 self.assertEqual(max(window.source_dataset.column("current1_na")), 100)
                 self.assertIn("SMOOTHED", window.subtitle_label.text())
                 self.assertEqual(window.dataset.metadata["analysis_processing"]["window_samples"], 11)
@@ -69,6 +69,8 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                     window.export_cycles()
                 exported = json.loads(export_path.with_suffix(".json").read_text())
                 self.assertEqual(exported["processing"]["window_samples"], 11)
+                self.assertEqual(exported["processing"]["method"], "savitzky_golay")
+                self.assertEqual(exported["processing"]["polynomial_order"], 2)
                 # Reapply from originals: never progressively smooth the result.
                 once = window.dataset.column("current1_na").copy()
                 window._apply_smoothing(); self.wait_loaded(window)

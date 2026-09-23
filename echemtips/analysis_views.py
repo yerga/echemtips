@@ -186,7 +186,10 @@ class ExplorerPanel(QtWidgets.QWidget):
             x, y, result = self.result
             self.reference = (result["x_column"], result["y_column"], x.copy(), y.copy(),
                               f"Reference: {self.dataset.path.stem} · {result['selection']} · "
-                              + (f"smoothed {self.dataset.metadata['analysis_processing']['window_samples']} samples"
+                              + (f"{self.dataset.metadata['analysis_processing']['method']} · "
+                                 f"{self.dataset.metadata['analysis_processing']['window_samples']} samples"
+                                 + (f" · order {self.dataset.metadata['analysis_processing']['polynomial_order']}"
+                                    if 'polynomial_order' in self.dataset.metadata['analysis_processing'] else "")
                                  if self.dataset.metadata.get('analysis_processing') else "original"))
             self.refresh()
 
