@@ -135,7 +135,10 @@ def hop_map(dataset: AnalysisDataset, channel: str, statistic: str, selections=N
     operations = {"Mean": np.mean, "Minimum": np.min, "Maximum": np.max, "Std deviation": np.std}
     if statistic not in operations:
         raise AnalysisError("Unknown map statistic")
-    pixels = dataset.metadata.get("scan_grid", {}).get("pixels", [])
+    grid = dataset.metadata.get("scan_grid")
+    if not isinstance(grid, dict) or not isinstance(grid.get("pixels"), list):
+        raise AnalysisError("Physical hop coordinates are missing from scan_grid metadata.")
+    pixels = grid["pixels"]
     coordinates = {int(p["scan_pixel"]): (float(p["x_um"]), float(p["y_um"])) for p in pixels}
     if not coordinates:
         raise AnalysisError("Physical hop coordinates are missing from scan_grid metadata.")
@@ -161,8 +164,10 @@ def potential_map(dataset: AnalysisDataset, selections: list[Selection], channel
     """
     if not np.isfinite(potential):
         raise AnalysisError("Map potential must be finite.")
-    coordinates = {int(p["scan_pixel"]): (float(p["x_um"]), float(p["y_um"]))
-                   for p in dataset.metadata.get("scan_grid", {}).get("pixels", [])}
+    grid = dataset.metadata.get("scan_grid")
+    if not isinstance(grid, dict) or not isinstance(grid.get("pixels"), list):
+        raise AnalysisError("Physical hop coordinates are missing from scan_grid metadata.")
+    coordinates = {int(p["scan_pixel"]): (float(p["x_um"]), float(p["y_um"])) for p in grid["pixels"]}
     if not coordinates:
         raise AnalysisError("Physical hop coordinates are missing from scan_grid metadata.")
     groups = {}

@@ -68,6 +68,7 @@ class ExplorerPanel(QtWidgets.QWidget):
         super().__init__()
         self.dataset, self.result = None, None
         self.groups = {}
+        self.reference = None
         self.bounds, self.baseline = None, 0.0
         layout = QtWidgets.QVBoxLayout(self)
         grid = QtWidgets.QGridLayout()
@@ -85,6 +86,12 @@ class ExplorerPanel(QtWidgets.QWidget):
         actions = QtWidgets.QHBoxLayout()
         actions.addWidget(button("Time range / baseline…", self._edit_range))
         actions.addWidget(button("Reset analysis", self._reset))
+        compare = QtWidgets.QPushButton("Compare…")
+        menu = QtWidgets.QMenu(compare)
+        menu.addAction("Pin this trace as reference", self._pin_reference)
+        menu.addAction("Clear reference", self._clear_reference)
+        compare.setMenu(menu)
+        actions.addWidget(compare)
         actions.addStretch(1)
         self.export_button = button("Export selection…", self._export)
         actions.addWidget(self.export_button); layout.addLayout(actions)
@@ -154,7 +161,12 @@ class ExplorerPanel(QtWidgets.QWidget):
         self.result = x, y, result
         self.export_button.setEnabled(True)
         self.plot.x_label, self.plot.y_label = signal_label(xcol), signal_label(ycol)
-        self.plot.set_data([(subset.label, x, y, COLORS["accent"])])
+        series = [(subset.label, x, y, COLORS["accent"])]
+        matching_reference = self.reference is not None and self.reference[0:2] == (xcol, ycol)
+        if matching_reference:
+            _xcol, _ycol, ref_x, ref_y, ref_name = self.reference
+            series.append((ref_name, ref_x, ref_y, COLORS["warning"]))
+        self.plot.set_data(series)
         self.scope.setText(subset.scope + (f" · {self.bounds[0]:g}–{self.bounds[1]:g} s" if self.bounds else " · all times") +
                            f" · baseline: {self.baseline:g} in native Y units")
         unit = SIGNALS.get(ycol, ("", ""))[1]
@@ -163,7 +175,20 @@ class ExplorerPanel(QtWidgets.QWidget):
         if "charge_nc" in result:
             text += f"\nSigned charge {result['charge_nc']:.6g} nC over {result['integrated_duration_s']:.5g} s (∫i dt)"
         if result["invalid_samples"]: text += f" · {result['invalid_samples']} invalid samples; gaps excluded"
+        if self.reference is not None:
+            text += "\nReference overlay only; statistics and export describe the active trace." if matching_reference else "\nReference hidden: choose matching X/Y channels to compare."
         self.summary.setText(text)
+
+    def _pin_reference(self):
+        if self.result is not None:
+            x, y, result = self.result
+            self.reference = (result["x_column"], result["y_column"], x.copy(), y.copy(),
+                              f"Reference: {self.dataset.path.stem} · {result['selection']}")
+            self.refresh()
+
+    def _clear_reference(self):
+        self.reference = None
+        self.refresh()
 
     def _edit_range(self):
         if self.dataset is None: return

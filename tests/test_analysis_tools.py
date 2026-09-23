@@ -48,6 +48,12 @@ class AnalysisToolsTests(unittest.TestCase):
         self.assertEqual([p["x_um"] for p in points], [20, 10])
         self.assertEqual([p["value"] for p in points], [3, 3])
 
+    def test_missing_grid_is_reported_not_guessed(self):
+        dataset = self.dataset()
+        dataset.metadata["scan_grid"] = None
+        with self.assertRaisesRegex(AnalysisError, "coordinates"):
+            hop_map(dataset, "current1_na", "Mean")
+
     def test_new_provider_can_be_registered_without_ui_changes(self):
         provider = AnalysisProvider("test_extension", "New method", lambda d: True,
                                     lambda d: [Selection("custom", d.rows[:2], "custom")])
