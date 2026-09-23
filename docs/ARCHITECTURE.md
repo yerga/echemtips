@@ -45,6 +45,9 @@ buffers.
 | `ui.py`, `qt_common.py` | Operator pages, global ownership/actions, plots, maps, status, and persistent readback. |
 | `analysis_core.py`, `legacy_data.py` | UI-independent loading, legacy normalization, and complete-CV extraction. |
 | `analysis_window.py` | Analysis UI and cycle export. |
+| `analysis_tools.py` | Explicit provider registry, full-resolution measurements and physical hop/CV maps. |
+| `analysis_jobs.py`, `analysis_views.py` | Background imports, virtual table and reusable workbench panels. |
+| `analysis_display.py` | Bounded extrema-preserving display reduction; never a calculation input. |
 | `diagnostics.py` | Pure preflight/pipette calculations and JSON report persistence. |
 | `hardware_check.py` | Explicit command-line bitfile/session contract check without normal experiment execution. |
 
@@ -154,6 +157,9 @@ repeating it in every high-rate CSV row.
 Analysis calculations belong in `analysis_core.py` or another UI-independent
 module. The Qt window should select inputs and render results, not define the
 scientific extraction algorithm. Reject ambiguous/incomplete data explicitly.
+See [Analysis workbench](ANALYSIS_GUIDE.md#add-support-for-another-experiment)
+for the provider contract. The control launcher starts a separate analysis process;
+analysis does not share or own an instrument session.
 
 ## Test boundaries
 

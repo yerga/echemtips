@@ -24,6 +24,7 @@ def main() -> None:
     """Launch the analysis window or run its noninteractive smoke test."""
     parser = argparse.ArgumentParser(description="Analyze eChemTips current and CV recordings")
     parser.add_argument("recording", nargs="?", help="recording to open")
+    parser.add_argument("--data-folder", help="initial recording browser folder")
     parser.add_argument("--smoke-test", action="store_true", help="build and exercise the analysis UI, then exit")
     args = parser.parse_args()
     qt_app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
@@ -31,7 +32,7 @@ def main() -> None:
     qt_app.setStyle("Fusion")
     qt_app.setStyleSheet(application_stylesheet())
     configure_pyqtgraph()
-    window = AnalysisWindow(args.recording)
+    window = AnalysisWindow(args.recording, data_folder=args.data_folder)
     if args.smoke_test:
         window.resize(1080, 680)
         window.show()

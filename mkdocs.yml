@@ -40,6 +40,7 @@ nav:
   - Start here: index.md
   - Operator guide: OPERATOR_GUIDE.md
   - Interface tour: USER_INTERFACE.md
+  - Analysis workbench: ANALYSIS_GUIDE.md
   - Branding and optional integrations: BRANDING.md
   - Settings: SETTINGS_REFERENCE.md
   - Terminology: GLOSSARY.md

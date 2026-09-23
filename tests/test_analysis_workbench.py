@@ -11,7 +11,7 @@ import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets
-from echemtips.ui import create_application
+from echemtips.ui import create_application, EChemTipsApp
 from echemtips.analysis_window import AnalysisWindow
 from echemtips.analysis_core import AnalysisDataset
 from echemtips.analysis_tools import cv_selections, potential_map
@@ -118,9 +118,36 @@ class AnalysisWorkbenchTests(unittest.TestCase):
                 warning.assert_called_once()
             self.assertEqual(path.read_bytes(), before)
 
+    def test_export_retains_analysis_recipe_and_full_selected_rows(self):
+        with TemporaryDirectory() as folder:
+            path = write_scan(folder)
+            dataset = AnalysisDataset.load(path)
+            target = Path(folder) / "derived.csv"
+            with patch.object(QtWidgets.QFileDialog, "getSaveFileName", return_value=(str(target), "CSV")), patch.object(QtWidgets.QMessageBox, "information"):
+                export_result(None, dataset, [(0, 1), (1, 2)], ("elapsed_s", "processed_current_na"),
+                              {"baseline": 2, "scope": "test"}, "_analysis")
+            self.assertEqual(len(target.read_text().splitlines()), 3)
+            metadata = json.loads(target.with_suffix(".json").read_text())
+            self.assertEqual(metadata["analysis"]["baseline"], 2)
+            self.assertEqual(metadata["source_status"], "complete")
+
     def test_virtual_table_has_no_5000_row_limit(self):
         from echemtips.analysis_core import NumericRows
         data = AnalysisDataset(Path("large.csv"), ("elapsed_s", "i"), NumericRows(("elapsed_s", "i"), np.zeros((100000, 2))), {})
         model = RecordingTableModel(data)
         self.assertEqual(model.rowCount(), 100000)
         self.assertEqual(model.data(model.index(99999, 1)), "0")
+
+    def test_control_launcher_uses_separate_process_and_no_hardware(self):
+        window = EChemTipsApp()
+        try:
+            with patch.object(QtCore.QProcess, "startDetached", return_value=(True, 123)) as launch:
+                window.launch_analysis()
+                args = launch.call_args.args[1]
+                self.assertIn("echemtips.analysis", args)
+                self.assertIn("--data-folder", args)
+                self.assertFalse(window.backend.connected)
+            with patch.object(QtCore.QProcess, "startDetached") as launch, patch.object(window, "show_error") as error:
+                window.launch_analysis(last_recording=True)
+                launch.assert_not_called(); error.assert_called_once()
+        finally: window.close()

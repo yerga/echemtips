@@ -77,7 +77,11 @@ For hopping scans, **Initial approach Z** is an absolute position used only befo
 python run_analysis.py
 ```
 
-The analysis UI displays raw time-domain channels and experiment metadata. CV recordings are also separated into individual cycles and plotted as potential versus Current 1. Completed cycles can be inspected, overlaid, and exported independently.
+Open analysis independently, or use **Analysis → Open analysis app** (F6) in
+control. The [analysis workbench](docs/ANALYSIS_GUIDE.md) provides arbitrary-channel
+exploration, hop/CV selection, time-window statistics and charge, reference
+overlays, physical hop maps and direction-specific CV-current maps. Full-resolution
+data stay separate from display reduction; derived exports include analysis recipes.
 
 Optional TDMS import is available for files with identified and scaled channels:
 

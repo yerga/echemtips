@@ -20,7 +20,7 @@ from .qt_common import COLORS, Card, XYPlot, application_stylesheet, button, lab
 
 class AnalysisWindow(QtWidgets.QMainWindow):
     """Browse recordings, inspect raw data, separate CVs, and export cycles."""
-    def __init__(self, initial_path: Path | str | None = None) -> None:
+    def __init__(self, initial_path: Path | str | None = None, *, data_folder: Path | str | None = None) -> None:
         super().__init__()
         configure_pyqtgraph()
         self.setWindowTitle("eChemTips — Data Analysis")
@@ -29,7 +29,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(960, 640)
         self.dataset: AnalysisDataset | None = None
         self.cycles: list[CVCycle] = []
-        self.data_folder = self._default_data_folder()
+        self.data_folder = Path(data_folder).expanduser().resolve() if data_folder else self._default_data_folder()
         self.file_paths: list[Path] = []
         self._load_token = 0
         self._load_tasks = {}
@@ -135,7 +135,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.explorer.setMinimumHeight(510)
         self.raw_current_plot = self.explorer.plot
         self.explorer_tab = scroll_area(self.explorer)
-        self.tabs.addTab(self.explorer_tab, "Explore & measure")
+        self.tabs.addTab(self.explorer_tab, "Explore and measure")
 
     def _build_cv_tab(self) -> None:
         tab = QtWidgets.QWidget()
@@ -195,11 +195,14 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.folder_label.setText(str(self.data_folder))
         self.folder_label.setToolTip(str(self.data_folder))
         supported = {".csv", ".tdms", ".tsv", ".set"}
-        self.file_paths = sorted(
-            (path for path in self.data_folder.iterdir() if path.is_file() and path.suffix.casefold() in supported),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        ) if self.data_folder.exists() else []
+        try:
+            self.file_paths = sorted(
+                (path for path in self.data_folder.iterdir() if path.is_file() and path.suffix.casefold() in supported),
+                key=lambda path: path.stat().st_mtime, reverse=True,
+            ) if self.data_folder.exists() else []
+        except OSError as exc:
+            self.file_paths = []
+            self.statusBar().showMessage(f"Could not browse folder: {exc}")
         self.file_list.blockSignals(True)
         self.file_list.clear()
         self.file_list.addItems(path.stem.replace("_", " ") for path in self.file_paths)

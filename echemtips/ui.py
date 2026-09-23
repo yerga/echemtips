@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -1882,7 +1883,31 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.backend: InstrumentBackend = create_backend(self.settings, self.driver_module); self._acquisition: AcquisitionWorker | None = None; self.recorder = DataRecorder(); self._sample: Sample | None = None
         self._make_experiments(); self._build_shell(); self._build_pages(); self.show_page("Watch current"); self._set_connection_ui(False)
         self._apply_display_settings()
+        analysis_menu = self.menuBar().addMenu("Analysis")
+        open_analysis = analysis_menu.addAction("Open analysis app…")
+        open_analysis.setShortcut(QtGui.QKeySequence("F6"))
+        open_analysis.triggered.connect(lambda: self.launch_analysis())
+        last_recording = analysis_menu.addAction("Analyze last saved recording")
+        last_recording.triggered.connect(lambda: self.launch_analysis(last_recording=True))
+        analysis_menu.aboutToShow.connect(lambda: last_recording.setEnabled(
+            not self.recorder.active and self.recorder.output_path is not None and self.recorder.output_path.exists()))
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
+
+    def launch_analysis(self, *, last_recording: bool = False) -> None:
+        """Launch an independent analysis process without touching instrument state."""
+        arguments = ["-m", "echemtips.analysis", "--data-folder", str(Path(self.settings.save_directory).expanduser().resolve())]
+        if last_recording:
+            path = self.recorder.output_path
+            if self.recorder.active or path is None or not path.exists():
+                self.show_error("Finish the recording before opening its saved data in analysis.")
+                return
+            arguments.append(str(path.resolve()))
+        executable = Path(sys.executable)
+        if sys.platform == "win32" and executable.with_name("pythonw.exe").exists():
+            executable = executable.with_name("pythonw.exe")
+        started, _pid = QtCore.QProcess.startDetached(str(executable), arguments, str(Path(__file__).resolve().parent.parent))
+        if not started:
+            self.show_error("Could not launch analysis. Run python -m echemtips.analysis in this environment.")
 
     def _make_experiments(self) -> None:
         self.experiment = ApproachCVExperiment(self.backend, self.settings); self.scan_experiment = ScanHoppingCVExperiment(self.backend, self.settings); self.cv_experiment = CVExperiment(self.backend, self.settings)

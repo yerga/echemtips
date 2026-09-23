@@ -233,9 +233,11 @@ When it is disabled, eChemTips asks whether to keep a completed experiment.
 Aborted and failed runs are retained with their terminal status for traceability.
 See [Recording data format](DATA_FORMAT.md) for exact semantics.
 
-Run `python run_analysis.py` or the `echemtips-analysis` entry point to open a
-recording. The raw tabs preserve the complete time-domain interpretation; CV
-tabs only show cycles that can be reconciled with the saved waveform program.
+Choose **Analysis → Open analysis app** (F6), or **Analyze last saved recording**,
+from control. Analysis runs in a separate process. You can also run
+`python run_analysis.py` or `echemtips-analysis` independently.
+The [Analysis workbench guide](ANALYSIS_GUIDE.md) covers signal exploration,
+time-window measurements and charge, CV overlays, physical hop maps, and exports.
 
 ## Normal stop and recovery
 

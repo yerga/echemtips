@@ -5,6 +5,18 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Added
+
+- Analysis workbench with registered experiment selectors, arbitrary numeric
+  channels, full-resolution time-window statistics and signed charge, constant
+  baseline subtraction, reference overlays, and protected provenance exports.
+- Physical whole-hop statistics maps and increasing/decreasing-sweep CV-current
+  maps, linked to hop inspection. No contact or pulse phases are guessed.
+- Compact numeric recording storage, background imports, a full virtual data
+  table, and extrema-preserving display reduction with bounded CV overlays.
+- Control **Analysis** menu and F6 launcher using a separate process, plus a
+  shortcut for the last completed/aborted saved recording.
+
 ### Fixed
 
 - Laptop experiment views now stack maps and paired traces when narrow and
