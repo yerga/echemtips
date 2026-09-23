@@ -159,6 +159,14 @@ retracts by a positive distance away from the measured contact Z.
 - **Raster flyback extra retract** is added only before the longer line return.
 - **Initial approach Z** applies only to the first hop. Later approaches start
   from contact-relative retract positions.
+- After the final hop, both scan methods return Z directly to **Initial approach
+  Z** at **Retract speed**, leaving X/Y at the final pixel. If Z is already
+  farther retracted, it stays there instead of moving toward the surface.
+  The scan stays active and records until that return completes. Intermediate
+  hops still use the requested contact-relative distance. Approach-only,
+  Approach + CV and Approach + I–t retain their existing return/retract options;
+  standalone CV does not move Z. Stop/fault behaviour on the production branch
+  is unchanged and does not automatically return Z.
 - Both hopping CV and hopping I–t allow an initial Z of zero. Retraction is
   calculated at contact, then limited to the configured 0–Z maximum command
   range. For an increasing-Z approach, contact at 8 µm with a 10 µm retract

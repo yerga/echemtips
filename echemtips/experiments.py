@@ -480,10 +480,11 @@ class ScanHoppingCVExperiment:
                 if self._segment_index >= len(self._segments):
                     self._finish_point_metrics(self.point_index)
                     contact_z = self.contact_z[self._point_key()]
-                    self._retract_target_z = p.bounded_retract_z(self.point_index, contact_z, self.settings.z_range_um)
+                    self._retract_target_z = p.scan_retract_z(self.point_index, contact_z, self.settings.z_range_um)
                     self.backend.move("Z", self._retract_target_z, p.retract_rate_um_s)
                     self.state = ExperimentState.RETRACTING
-                    self.detail = f"Point {self.point_index + 1}/{p.point_count} · retracting"
+                    self.detail = ("Returning toward initial Z" if self.point_index + 1 == p.point_count
+                                   else f"Point {self.point_index + 1}/{p.point_count} · retracting")
                 else:
                     self.backend.set_voltage(1, self._cv_voltage)
             else:
@@ -1117,9 +1118,11 @@ class ScanHoppingITExperiment:
                     if self._step_index >= len(self._steps):
                         self._finish_pulse_map(self.point_index)
                         contact_z = self.contact_z[self._key(self.point_index)]
-                        self._retract_target_z = p.bounded_retract_z(self.point_index, contact_z, self.settings.z_range_um)
+                        self._retract_target_z = p.scan_retract_z(self.point_index, contact_z, self.settings.z_range_um)
                         self.backend.move("Z", self._retract_target_z, p.retract_rate_um_s)
-                        self.state, self.detail = ExperimentState.RETRACTING, f"Point {self.point_index + 1}/{p.point_count} · retracting"
+                        self.state = ExperimentState.RETRACTING
+                        self.detail = ("Returning toward initial Z" if self.point_index + 1 == p.point_count
+                                       else f"Point {self.point_index + 1}/{p.point_count} · retracting")
                     else:
                         potential, duration, label = self._steps[self._step_index]
                         self.backend.set_voltage(1, potential); self.it_label = label

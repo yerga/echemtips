@@ -7,6 +7,11 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Normal hopping CV/I–t completion now returns Z directly toward the initial
+  approach position at the configured retract speed, without moving X/Y. If
+  already farther retracted, Z is held rather than moved toward the surface.
+  Completion and recording finalization wait for the return waypoint to finish.
+  Production Stop and Emergency Stop behaviours are unchanged.
 - Hopping CV and I–t now permit an initial Z at the travel boundary. Retraction
   is limited at runtime using the actual contact coordinate, including raster
   flyback distances. Shortened travel is displayed and saved in JSON parameters

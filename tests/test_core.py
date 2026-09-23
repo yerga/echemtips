@@ -724,6 +724,30 @@ class ExperimentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 p.bounded_retract_z(0, -1, 100)
 
+    def test_simulated_final_hop_returns_to_initial_before_complete(self) -> None:
+        for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
+                                (ScanHoppingITExperiment, ScanHoppingITParameters)):
+            settings = AppSettings()
+            backend = SimulationBackend(settings)
+            backend.connect()
+            experiment = cls(backend, settings)
+            p = params_cls(start_z_um=0, end_z_um=90, x_points=1, y_points=1)
+            experiment.start(p)
+            experiment.contact_z[(0, 0)] = 68
+            if cls is ScanHoppingCVExperiment:
+                experiment.state = ExperimentState.CV
+                experiment._segments = [0]
+                experiment._cv_voltage = 0
+            else:
+                experiment.state = ExperimentState.IT
+                experiment._step_index = len(experiment._steps) - 1
+                experiment._step_deadline = -1
+            experiment.tick_samples([Sample(0, 35, 35, 68, 0, 0, 0, 0)])
+            self.assertEqual(experiment._retract_target_z, 0)
+            self.assertEqual(experiment.state, ExperimentState.RETRACTING)
+            experiment.tick_samples([Sample(1, 35, 35, 0, 0, 0, 0, 0)])
+            self.assertEqual(experiment.state, ExperimentState.COMPLETE)
+
     def test_simulated_scans_reuse_bounded_target_and_stop_without_travel(self) -> None:
         for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
                                 (ScanHoppingITExperiment, ScanHoppingITParameters)):

@@ -424,7 +424,8 @@ class NativeDriverTests(unittest.TestCase):
             self.assertEqual(self.driver.method_context(approach_end + 2), (point, "it:pulse"))
             self.assertEqual(self.driver.method_context(approach_end + 4), (point, "retract"))
             retract = self.driver.positions_fifo.writes[-1][-14:]
-            self.assertEqual(retract[8], position_to_raw(58, self.settings.z_range_um, self.settings.z_bipolar))
+            self.assertEqual(retract[8], position_to_raw(58 if point == 0 else params.start_z_um,
+                                                       self.settings.z_range_um, self.settings.z_bipolar))
 
             self.session.registers["Feedback1 Boolean"].value = False
             self.session.registers["Internal Pause"].value = False
@@ -966,6 +967,43 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.approach_context(46), "cv")
         self.assertEqual(self.driver.approach_context(47), "retract")
         self.assertEqual(self.driver.approach_context(48), "")
+
+    def test_final_scan_return_keeps_xy_and_waits_for_framed_completion(self) -> None:
+        for method in ("cv", "it"):
+            for start, end, contact, expected in ((0, 90, 68, 0), (10, 90, 8, 8), (90, 0, 30, 90)):
+                with self.subTest(method=method, start=start, contact=contact):
+                    self.setUp()
+                    d, regs = self.driver, self.session.registers
+                    cls = ScanHoppingCVParameters if method == "cv" else ScanHoppingITParameters
+                    p = cls(start_z_um=start, end_z_um=end, x_points=1, y_points=1)
+                    if method == "cv":
+                        d.start_scan_hopping_cv(p)
+                    else:
+                        d.start_method("scan_hopping_it", p)
+                    status = d.scan_hopping_cv_status if method == "cv" else d.method_status
+                    regs["Applied Z"].value = position_to_raw(contact, 100, False)
+                    # Supply the fallback sensor coordinate for a later hop
+                    # whose surface lies below the initial approach position.
+                    if method == "cv": d._scan_last_approach_z[0] = contact
+                    else: d._method_last_approach_z[0] = contact
+                    regs["LineNumber"].value = d._program_baseline + d._program_total
+                    regs["WaitingForWayPoints"].value = True
+                    d.read_samples()
+                    self.assertEqual(status()["stage"], method)
+                    wp = d._program_waypoints[-1]
+                    self.assertEqual(wp.z_position, position_to_raw(expected, 100, False))
+                    self.assertEqual(wp.x_position, regs["Applied X"].value)
+                    self.assertEqual(wp.y_position, regs["Applied Y"].value)
+                    self.assertNotEqual(status()["stage"], "complete")
+                    regs["LineNumber"].value = d._program_baseline + d._program_total
+                    frame = [0] * SAMPLE_WORDS
+                    frame[9] = regs["LineNumber"].value
+                    d.data_fifo.data.extend(frame[:-1])
+                    d.read_samples()
+                    self.assertNotEqual(status()["stage"], "complete")
+                    d.data_fifo.data.append(frame[-1])
+                    d.read_samples()
+                    self.assertEqual(status()["stage"], "complete")
 
     def test_scan_bounded_retract_and_no_travel_interlock(self) -> None:
         for method in ("cv", "it"):

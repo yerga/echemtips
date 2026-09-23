@@ -469,6 +469,21 @@ class BoundedScanRetraction:
 
     __slots__ = ()
 
+    def completion_z(self, current_z: float) -> float:
+        """Return toward initial Z only in the direction away from the surface."""
+        return (min(self.start_z_um, current_z) if self.end_z_um > self.start_z_um
+                else max(self.start_z_um, current_z))
+
+    def scan_retract_z(self, point: int, contact_z: float, maximum_z: float,
+                       *, minimum_travel_um: float = 1e-9) -> float:
+        """Use contact-relative clearance between hops, initial Z after the last."""
+        if point + 1 == self.point_count:
+            if not math.isfinite(contact_z) or not 0 <= contact_z <= maximum_z:
+                raise ValueError("Contact Z is outside the configured range.")
+            return self.completion_z(contact_z)
+        return self.bounded_retract_z(point, contact_z, maximum_z,
+                                      minimum_travel_um=minimum_travel_um)
+
     def bounded_retract_z(self, point: int, contact_z: float, maximum_z: float,
                           *, minimum_travel_um: float = 1e-9) -> float:
         """Resolve a contact-relative command, recording shortened travel once per hop.
@@ -585,7 +600,8 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
             for point in range(1, self.point_count)
         )
         retracts = sum(
-            self.retract_distance_for_point(point) / self.retract_rate_um_s
+            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.point_count
+             else self.retract_distance_for_point(point)) / self.retract_rate_um_s
             for point in range(self.point_count)
         )
         cv_per_point = self.cycles * (
@@ -751,7 +767,8 @@ class ScanHoppingITParameters(BoundedScanRetraction):
             for point in range(1, self.point_count)
         )
         retracts = sum(
-            self.retract_distance_for_point(point) / self.retract_rate_um_s
+            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.point_count
+             else self.retract_distance_for_point(point)) / self.retract_rate_um_s
             for point in range(self.point_count)
         )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())

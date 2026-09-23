@@ -1310,7 +1310,7 @@ class WECSPMDriver:
             vertex2_v=params.cv_vertex2_v,
             scan_rate_v_s=params.cv_scan_rate_v_s,
             cycles=params.cycles,
-            retract_z_um=params.bounded_retract_z(
+            retract_z_um=params.scan_retract_z(
                 point, contact_z, self.settings.z_range_um,
                 minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
             ),
@@ -1428,7 +1428,9 @@ class WECSPMDriver:
         phase_fraction = min(0.9, completed / max(1, len(sequence.descriptors)))
         return {
             "stage": stage,
-            "detail": f"Point {point_index + 1} of {point_total} · {point_stage or stage}",
+            "detail": (f"Point {point_index + 1} of {point_total} · returning toward initial Z"
+                       if point_index + 1 == point_total and point_stage == "retract"
+                       else f"Point {point_index + 1} of {point_total} · {point_stage or stage}"),
             "progress": min(0.99, (max(0, point_index) + phase_fraction) / max(1, point_total)),
             "point_index": point_index,
             "point_stage": point_stage or stage,
@@ -1639,7 +1641,7 @@ class WECSPMDriver:
                 low_z, high_z = sorted((params.start_z_um, params.end_z_um))
                 if not low_z <= contact_z <= high_z:
                     contact_z = self._method_last_approach_z.get(point, params.end_z_um)
-                retract_z = params.bounded_retract_z(
+                retract_z = params.scan_retract_z(
                     point, contact_z, self.settings.z_range_um,
                     minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
                 )
@@ -1802,7 +1804,10 @@ class WECSPMDriver:
             stage = "settling"
         return {
             "stage": self._method_terminal or stage,
-            "detail": self._method_detail or f"{self._method_name.replace('_', ' ').title()} · {point_stage or stage}",
+            "detail": self._method_detail or (
+                "Returning toward initial Z" if self._method_name == "scan_hopping_it"
+                and point + 1 == total_points and point_stage == "retract"
+                else f"{self._method_name.replace('_', ' ').title()} · {point_stage or stage}"),
             "progress": 1.0 if self._method_terminal == "complete" else progress,
             "point_index": point if point >= 0 else self._method_point,
             "point_stage": point_stage or stage,
