@@ -10,6 +10,47 @@ from echemtips.analysis import AnalysisDataset, extract_cv_cycles
 
 
 class AnalysisTests(unittest.TestCase):
+    def test_scan_preparation_is_not_cv_and_multiple_cycles_keep_hop_identity(self):
+        import numpy as np
+        # Synthetic hardware-like quantization; no private recording fixture.
+        for polarity in (1, -1):
+            for requested in (1, 3):
+                for vertex2 in (-.4, -.2):
+                    with self.subTest(polarity=polarity, cycles=requested, vertex2=vertex2):
+                        rows = []
+                        for pixel in range(9):
+                            voltages = [-.2] * 40 + [.0, .1] + [.1] * 20
+                            for _ in range(requested):
+                                for start, end in ((-.2, .6), (.6, vertex2), (vertex2, -.2)):
+                                    voltages.extend(np.linspace(start, end, 81))
+                            voltages.extend([-.2] * 30)
+                            for value in voltages:
+                                voltage = polarity * round(value / .00006103515625) * .00006103515625
+                                rows.append({"elapsed_s": len(rows) * .00257,
+                                             "voltage1_v": voltage, "current1_na": voltage,
+                                             "scan_pixel": pixel})
+                        dataset = AnalysisDataset(Path("scan.csv"), tuple(rows[0]), rows,
+                            {"parameters": {"cv_start_v": polarity * -.2,
+                             "cv_vertex1_v": polarity * .6, "cv_vertex2_v": polarity * vertex2,
+                             "cycles": requested}})
+                        cycles = extract_cv_cycles(dataset)
+                        self.assertEqual([(c.pixel, c.number) for c in cycles],
+                                         [(p, n) for p in range(9) for n in range(1, requested + 1)])
+                        for cycle in cycles:
+                            self.assertLess(abs(cycle.potential_v[0] - polarity * -.2), .03)
+                            self.assertLess(abs(cycle.potential_v[-1] - polarity * -.2), .03)
+                            # Exclude the held preparation/approach section.
+                            self.assertLess(len(cycle.rows), 260)
+
+    def test_partial_final_cycle_is_not_reported_as_complete(self):
+        voltages = [-.2, .0, .1, .1, -.2, .2, .6, .0, -.4, -.2,
+                    .2, .6, .0, -.1]  # Second cycle never reaches vertex 2.
+        with TemporaryDirectory() as folder:
+            dataset = AnalysisDataset.load(self._write_recording(folder, voltages, cycles=2))
+            cycles = extract_cv_cycles(dataset)
+            self.assertEqual(len(cycles), 1)
+            self.assertEqual(cycles[0].potential_v, [-.2, .2, .6, .0, -.4, -.2])
+
     def _write_recording(self, folder: str, voltages: list[float], cycles: int = 2) -> Path:
         path = Path(folder) / "approach_then_cv.csv"
         columns = ("elapsed_s", "voltage1_v", "current1_na", "z_um")

@@ -177,7 +177,9 @@ def _target_index(
 ) -> int | None:
     """Find a commanded target crossing or a turning point close to it."""
     if direction == 0:
-        return min(range(start, end + 1), key=lambda index: abs(voltages[index] - target))
+        # A zero-length leg ends here; searching ahead could steal a target
+        # sample from a later cycle (especially with quantized potentials).
+        return start if abs(voltages[start] - target) <= target_tolerance else None
     previous = voltages[start]
     if direction * (previous - target) >= 0:
         return start
@@ -195,9 +197,15 @@ def _cv_start_index(
     voltages: list[float], cv_start: float, vertex1: float,
     end: int, noise_tolerance: float, target_tolerance: float,
 ) -> int | None:
-    """Find the first start-potential sample followed by the first CV leg."""
+    """Find a start sample whose outgoing sweep reaches the first vertex.
+
+    A hop may begin at the previous CV's end potential before switching to
+    approach potential. That transition is not the next CV's first sweep.
+    """
     direction = 1 if vertex1 > cv_start else -1 if vertex1 < cv_start else 0
     for index in range(end + 1):
+        if index and voltages[index] == voltages[index - 1]:
+            continue  # Evaluate a plateau once, not once for every held sample.
         if abs(voltages[index] - cv_start) > target_tolerance:
             continue
         for following in range(index + 1, end + 1):
@@ -205,7 +213,9 @@ def _cv_start_index(
             if abs(change) <= noise_tolerance:
                 continue
             if direction == 0 or direction * change > 0:
-                return index
+                if _target_index(voltages, index, end, vertex1, direction,
+                                 noise_tolerance, target_tolerance) is not None:
+                    return index
             break
     return None
 
@@ -283,7 +293,8 @@ def _extract_single_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
         for target in (vertex1, vertex2, cv_start):
             direction = 1 if target > previous_target else -1 if target < previous_target else 0
             found = _target_index(
-                voltages, cursor, end_index, target, direction,
+                voltages, cycle_end if direction == 0 and cycle_end is not None else cursor,
+                end_index, target, direction,
                 active_tolerance, target_tolerance,
             )
             if found is None:
