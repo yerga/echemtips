@@ -4,6 +4,12 @@ The analysis app is independent of the instrument connection. It never sends
 FPGA commands or modifies the original recording. No additional libraries are
 needed for eChemTips CSV/JSON files; install `.[analysis]` for legacy TDMS import.
 
+Dense traces use display-only extrema-preserving reduction and fast segmented
+line rendering. Measurements and exports still use full-resolution samples.
+Contiguous hop selections share the underlying read-only numeric array rather
+than copying each hop. Imports run in a background worker; very large recordings
+still require sufficient RAM (this is not an out-of-core file viewer).
+
 ## Open the app
 
 - In control, choose **Analysis → Open analysis app**, or press **F6**.

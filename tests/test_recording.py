@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -26,6 +27,34 @@ def sample(index: int, **tags: float | int) -> Sample:
 
 
 class StreamingRecordingTests(unittest.TestCase):
+    def test_compact_numeric_precision_preserves_small_currents_and_timestamps(self):
+        recorder = DataRecorder()
+        original = replace(sample(0), elapsed_s=10800.000000025,
+            x_um=87.109375, voltage1_v=-.20001220703125,
+            current1_na=.0001000123456789, current2_na=1.23456789123e-12)
+        row = recorder._sample_row(original)
+        self.assertEqual(row["elapsed_s"], "10800.000000025")
+        self.assertLessEqual(abs(float(row["x_um"]) - original.x_um), .0000051)
+        self.assertLessEqual(abs(float(row["voltage1_v"]) - original.voltage1_v), .000000051)
+        for name in ("current1_na", "current2_na"):
+            self.assertLess(abs(float(row[name]) / getattr(original, name) - 1), 5e-10)
+        self.assertEqual(original.x_um, 87.109375)
+        self.assertEqual(recorder._sample_row(replace(original, voltage1_v=-1e-12))["voltage1_v"], "0")
+
+    def test_streaming_records_precision_metadata_and_irregular_time(self):
+        with TemporaryDirectory() as folder:
+            recorder = DataRecorder()
+            recorder.start("Watch current", self.settings(folder))
+            for elapsed in (100.0, 100.00257, 100.010000025):
+                recorder.append(replace(sample(0), elapsed_s=elapsed))
+            path = recorder.output_path
+            recorder.finish()
+            with path.open() as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual([row["elapsed_s"] for row in rows], ["0", "0.00257", "0.010000025"])
+            metadata = json.loads(path.with_suffix(".json").read_text())
+            self.assertEqual(metadata["csv_numeric_formats"], DataRecorder.CSV_NUMERIC_FORMATS)
+
     def settings(self, folder: str) -> AppSettings:
         return AppSettings(save_directory=folder)
 

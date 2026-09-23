@@ -1,5 +1,28 @@
 # Recording data format
 
+## Numeric precision
+
+New CSV files use compact numeric text. The JSON `csv_numeric_formats` field
+records the Python format specification for each physical channel:
+
+| Channels | Saved precision | Maximum rounding error |
+| --- | --- | --- |
+| `elapsed_s` | 9 decimal places, trailing zeros removed | 0.5 ns |
+| X, Y, Z (µm) | 5 decimal places, trailing zeros removed | 0.000005 µm |
+| E1, E2 (V) | 7 decimal places, trailing zeros removed | 0.00000005 V |
+| Currents (nA) | 10 significant digits; scientific notation when useful | About 5 × 10⁻¹⁰ relative |
+
+Integer identifiers are unchanged. Formatting only affects serialization, not
+feedback, acquisition, or in-memory calculations. Existing files remain readable
+and are not rewritten. At 100 fA (0.0001 nA), current precision is far finer than
+the signal scale. This text reduction is not lossless floating-point storage;
+the bounds above document the rounding introduced.
+
+Per-sample elapsed times are retained: nominal sample settings in JSON cannot
+reconstruct actual FPGA intervals, gaps, or timing changes reliably. Nine decimal
+places preserve the deployed FPGA's 25 ns ticks, including multi-hour runs.
+The columns and units are unchanged, so the schema remains version 2.
+
 On Windows, atomic JSON replacement retries access-denied and sharing-lock
 errors (WinError 5, 32, 33) up to five times, waiting a total of 0.62 seconds.
 This covers brief file locks without marking an otherwise healthy recording

@@ -26,6 +26,14 @@ class DataRecorder:
 
     FLUSH_EVERY = 16
     MAX_RECENT_SAMPLES = 1024
+    # Serialization only: acquisition, feedback and in-memory samples retain
+    # their original precision. Nine decimal seconds retain 25 ns FPGA ticks.
+    CSV_NUMERIC_FORMATS = {
+        "elapsed_s": ".9f",
+        "x_um": ".5f", "y_um": ".5f", "z_um": ".5f",
+        "voltage1_v": ".7f", "voltage2_v": ".7f",
+        "current1_na": ".10g", "current2_na": ".10g",
+    }
     _METADATA_REPLACE_DELAYS = (0.02, 0.04, 0.08, 0.16, 0.32)
     _STATUSES = {"running", "complete", "aborted", "error", "discarded"}
     _PER_SAMPLE_OMISSIONS = {
@@ -126,6 +134,7 @@ class DataRecorder:
                 "status": "running",
                 "recording_schema_version": 2,
                 "csv_columns": list(self._csv_fieldnames),
+                "csv_numeric_formats": dict(self.CSV_NUMERIC_FORMATS),
                 "settings": self._json_value(settings),
                 "parameters": self._json_value(parameters),
             }
@@ -240,6 +249,7 @@ class DataRecorder:
             "status": status,
             "recording_schema_version": 2,
             "csv_columns": list(fieldnames),
+            "csv_numeric_formats": dict(self.CSV_NUMERIC_FORMATS),
             "settings": self._json_value(settings),
             "parameters": self._json_value(parameters),
         }
@@ -336,9 +346,20 @@ class DataRecorder:
             omitted.add("scan_pixel")
         return tuple(field.name for field in fields(Sample) if field.name not in omitted)
 
-    def _sample_row(self, sample: Sample, fieldnames: tuple[str, ...] | None = None) -> dict[str, float | int]:
+    def _sample_row(self, sample: Sample, fieldnames: tuple[str, ...] | None = None) -> dict[str, str | float | int]:
         values = sample.as_row()
-        return {name: values[name] for name in (fieldnames or self._csv_fieldnames)}
+        row = {}
+        for name in fieldnames or self._csv_fieldnames:
+            value = values[name]
+            specification = self.CSV_NUMERIC_FORMATS.get(name)
+            if specification:
+                value = format(value, specification)
+                if specification.endswith("f"):
+                    value = value.rstrip("0").rstrip(".")
+                if value == "-0":
+                    value = "0"
+            row[name] = value
+        return row
 
     @staticmethod
     def _scan_grid_metadata(parameters: Any) -> dict[str, Any] | None:
