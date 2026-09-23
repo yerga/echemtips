@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import math
 from pathlib import Path
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .analysis_core import AnalysisDataset, AnalysisError, CVCycle, CURRENT_COLUMNS, PLOT_COLORS, extract_cv_cycles
-from .analysis_tools import PROVIDERS
+from .analysis_core import AnalysisDataset, CVCycle, CURRENT_COLUMNS, PLOT_COLORS
 from .analysis_jobs import LoadRecording
 from .analysis_views import ExplorerPanel, MapPanel, RecordingTableModel
 from .models import SettingsStore
@@ -28,6 +26,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.resize(1440, 900)
         self.setMinimumSize(960, 640)
         self.dataset: AnalysisDataset | None = None
+        self.source_dataset: AnalysisDataset | None = None
         self.cycles: list[CVCycle] = []
         self.data_folder = Path(data_folder).expanduser().resolve() if data_folder else self._default_data_folder()
         self.file_paths: list[Path] = []
@@ -117,6 +116,20 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.metric_labels[key] = value
             metrics.addWidget(value, index // 3, index % 3)
         main_layout.addLayout(metrics)
+        processing = QtWidgets.QHBoxLayout()
+        self.smoothing_enabled = QtWidgets.QCheckBox("Smooth currents")
+        self.smoothing_window = QtWidgets.QSpinBox()
+        self.smoothing_window.setRange(3, 10001)
+        self.smoothing_window.setSingleStep(2)
+        self.smoothing_window.setValue(11)
+        self.smoothing_window.setSuffix(" samples")
+        self.smoothing_window.setToolTip("Centered moving average. Use an odd window; large windows can suppress real peaks. Applies to currents in traces, measurements, CVs and maps. Originals are unchanged.")
+        self.smoothing_apply = button("Apply", self._apply_smoothing)
+        processing.addWidget(self.smoothing_enabled)
+        processing.addWidget(self.smoothing_window)
+        processing.addWidget(self.smoothing_apply)
+        processing.addStretch(1)
+        main_layout.addLayout(processing)
         self.tabs = QtWidgets.QTabWidget()
         main_layout.addWidget(self.tabs, 1)
         splitter.addWidget(main)
@@ -234,20 +247,28 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if 0 <= row < len(self.file_paths):
             self.load_recording(self.file_paths[row])
 
-    def load_recording(self, path: Path) -> None:
+    def load_recording(self, path: Path, *, source=None) -> None:
         """Queue a background import; only the newest selection may update views."""
         self._load_token += 1
         for previous in self._load_tasks.values():
             previous.cancelled = True
         self.loading = True
         self.statusBar().showMessage(f"Loading {Path(path).name}…")
-        task = LoadRecording(self._load_token, path)
+        window = self.smoothing_window.value() if self.smoothing_enabled.isChecked() else 1
+        if window % 2 == 0:
+            window += 1
+            self.smoothing_window.setValue(window)
+        task = LoadRecording(self._load_token, path, source=source, smoothing_window=window)
         task.signals.finished.connect(self._loaded)
         self._load_tasks[self._load_token] = task
         self._pool.start(task)
 
+    def _apply_smoothing(self):
+        if self.source_dataset is not None and not self.loading:
+            self.load_recording(self.source_dataset.path, source=self.source_dataset)
+
     def _loaded(self, token, bundle, error):
-        self._load_tasks.pop(token, None)
+        task = self._load_tasks.pop(token, None)
         if token != self._load_token:
             return
         self.loading = False
@@ -256,8 +277,23 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Recording could not be loaded", error)
             return
         self.dataset, self.cycles, self.groups = bundle
+        self.source_dataset = task.source
+        controls = (self.explorer.provider, self.explorer.selection, self.explorer.x_signal,
+                    self.explorer.y_signal, self.map_panel.channel, self.cv_current)
+        previous = [control.currentText() for control in controls] if task.reprocessing else []
+        bounds, baseline = self.explorer.bounds, self.explorer.baseline
+        if task.reprocessing:
+            self.explorer.reference = None
         self._refresh_all()
-        self.statusBar().showMessage(f"Loaded {len(self.dataset.rows):,} samples · full-resolution calculations; display reduced only")
+        for control, text in zip(controls, previous):
+            control.setCurrentText(text)
+        if task.reprocessing:
+            self.explorer.bounds, self.explorer.baseline = bounds, baseline
+            self.explorer.refresh()
+        mode = self.dataset.metadata.get("analysis_processing", {})
+        description = (f"Smoothed currents · {mode['window_samples']}-sample centered mean"
+                       if mode else "Original currents · smoothing off")
+        self.statusBar().showMessage(f"{len(self.dataset.rows):,} samples · {description}")
 
     def _inspect_hop(self, pixel):
         self.tabs.setCurrentWidget(self.explorer_tab)
@@ -277,6 +313,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         dataset = self.dataset
         self.title_label.setText("Recording analysis")
         self.subtitle_label.setText(f"{dataset.path.name} · {dataset.experiment} · {dataset.metadata.get('status', 'status unknown')}")
+        processing = dataset.metadata.get("analysis_processing")
+        if processing:
+            self.subtitle_label.setText(self.subtitle_label.text() + f" · SMOOTHED ({processing['window_samples']} samples)")
         self.subtitle_label.setToolTip(str(dataset.path))
         voltage, z_values = dataset.values("voltage1_v"), dataset.values("z_um")
         self.metric_labels["samples"].setText(f"Samples: {len(dataset.rows):,}")
@@ -329,7 +368,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cv_plot.set_data([(cycle.label, cycle.potential_v, cycle.current_na(column), PLOT_COLORS[i % len(PLOT_COLORS)]) for i, cycle in enumerate(cycles)])
         if len(cycles) == 1:
             maximum, max_v, minimum, min_v = cycles[0].peak_summary(column)
-            self.cv_detail.setText(f"Maximum current\n{maximum:+.4g} nA at {max_v:+.4g} V\n\nMinimum current\n{minimum:+.4g} nA at {min_v:+.4g} V\n\nRaw extrema; no peak fitting or baseline correction.")
+            kind = "Smoothed" if self.dataset.metadata.get("analysis_processing") else "Raw"
+            self.cv_detail.setText(f"Maximum current\n{maximum:+.4g} nA at {max_v:+.4g} V\n\nMinimum current\n{minimum:+.4g} nA at {min_v:+.4g} V\n\n{kind} extrema; no peak fitting or baseline correction.")
         else:
             self.cv_detail.setText(f"Overlaying {len(cycles)} of {total} selected cycles (display limit 50).\nCtrl/Cmd-click to select cycles. Exports retain all cycles.")
 
@@ -341,7 +381,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if old is not None:
             old.deleteLater()
         self.data_table.horizontalHeader().setDefaultSectionSize(145)
-        self.table_status.setText(f"All {len(self.dataset.rows):,} rows · native saved units · read-only")
+        kind = "smoothed currents" if self.dataset.metadata.get("analysis_processing") else "original values"
+        self.table_status.setText(f"All {len(self.dataset.rows):,} rows · {kind} · native units · read-only")
 
     def _edit_cv_program(self) -> None:
         if self.dataset is None:
@@ -379,11 +420,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             assert self.dataset is not None
             self.dataset.metadata["parameters"] = {**existing, **values}
             self.dataset.metadata.setdefault("experiment", "Manual CV")
-            self.cycles = extract_cv_cycles(self.dataset)
-            self.groups = {key: provider.extract(self.dataset) for key, provider in PROVIDERS.items()
-                           if provider.supports(self.dataset)}
+            if self.source_dataset is not None:
+                self.source_dataset.metadata["parameters"] = {**existing, **values}
             dialog.accept()
-            self._refresh_all()
+            self._apply_smoothing()
 
         actions.rejected.connect(dialog.reject)
         actions.button(QtWidgets.QDialogButtonBox.StandardButton.Apply).clicked.connect(apply_values)
@@ -393,25 +433,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         """Export every separated CV row with explicit pixel/cycle/point IDs."""
         if self.dataset is None or not self.cycles:
             return
-        suggested = self.dataset.path.with_name(f"{self.dataset.path.stem}_separated_cvs.csv")
-        chosen, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export separated CVs", str(suggested), "CSV (*.csv)")
-        if not chosen:
-            return
-        if Path(chosen).resolve() in {self.dataset.path.resolve(), self.dataset.path.with_suffix(".json").resolve()}:
-            QtWidgets.QMessageBox.warning(self, "Source protected", "Choose a different export filename.")
-            return
+        from .analysis_views import export_result
         columns = ("pixel", "cycle", "point", *self.dataset.columns)
-        try:
-            with Path(chosen).open("w", newline="", encoding="utf-8") as stream:
-                writer = csv.DictWriter(stream, fieldnames=columns)
-                writer.writeheader()
-                for cycle in self.cycles:
-                    for point, row in enumerate(cycle.rows):
-                        values = {"pixel": cycle.pixel, "cycle": cycle.number, "point": point, **row}
-                        if "scan_pixel" in self.dataset.columns:
-                            values["scan_pixel"] = cycle.pixel
-                        writer.writerow(values)
-        except OSError as exc:
-            QtWidgets.QMessageBox.critical(self, "eChemTips Data Analysis", f"Could not export CVs: {exc}")
-            return
-        QtWidgets.QMessageBox.information(self, "eChemTips Data Analysis", f"Separated CVs saved to:\n{chosen}")
+        rows = ((cycle.pixel, cycle.number, point, *(row[name] for name in self.dataset.columns))
+                for cycle in self.cycles for point, row in enumerate(cycle.rows))
+        export_result(self, self.dataset, rows, columns,
+                      {"scope": "All complete CV cycles", "cycles": len(self.cycles)}, "_separated_cvs")

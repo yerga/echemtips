@@ -10,7 +10,32 @@ Contiguous hop selections share the underlying read-only numeric array rather
 than copying each hop. Imports run in a background worker; very large recordings
 still require sufficient RAM (this is not an out-of-core file viewer).
 
-## Open the app
+## Optional current smoothing
+
+Select **Smooth currents**, choose an odd window size in samples, and press
+**Apply**. The centered moving average affects both current channels consistently
+in Explore/measure, CVs, peak summaries, the numeric table, and current-based hop
+maps (including current at a selected potential). It does not smooth potentials
+or positions, or change CV identification. Uncheck it and press Apply to restore
+the originals. Applying again always starts from original data, not an already
+filtered trace. Processing runs in the background; the existing views remain
+active until the new result is ready. The header identifies applied smoothing.
+
+The window counts samples, not seconds. Start with 5–11 samples; use acquisition
+interval and scan rate to assess how much potential/time range that spans.
+Large windows can suppress real peaks and change peak currents, charge estimates,
+and map values. This is a derived analysis, not a noise-free measurement.
+Available samples are averaged at segment edges; invalid values remain gaps.
+Filtering does not cross hop/waypoint changes, non-increasing timestamps,
+extracted CV boundaries or E1 sweep reversals. It is temporal smoothing of current,
+**not spatial smoothing between map pixels**.
+
+Source files are never rewritten. Trace, map, and separated-CV exports include
+the processing method, sample window and channel list in their JSON sidecars.
+Reprocessing clears a pinned reference to avoid retaining an outdated version.
+Full-resolution smoothed data require an additional numeric array in memory.
+
+## Launching
 
 - In control, choose **Analysis → Open analysis app**, or press **F6**.
 - **Analysis → Analyze last saved recording** opens the last finished recording

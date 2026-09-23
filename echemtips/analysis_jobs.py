@@ -2,6 +2,7 @@
 from PySide6 import QtCore
 from .analysis_core import AnalysisDataset, extract_cv_cycles
 from .analysis_tools import PROVIDERS, cv_selections
+from .analysis_processing import smooth_currents
 
 
 class LoadSignals(QtCore.QObject):
@@ -12,11 +13,14 @@ class LoadSignals(QtCore.QObject):
 class LoadRecording(QtCore.QRunnable):
     """Load outside the event loop; the receiver alone updates UI widgets."""
 
-    def __init__(self, token, path):
+    def __init__(self, token, path, *, source=None, smoothing_window=1):
         super().__init__()
         self.token, self.path = token, path
         self.signals = LoadSignals()
         self.cancelled = False
+        self.source = source
+        self.reprocessing = source is not None
+        self.smoothing_window = smoothing_window
 
     def run(self):
         """Normalize and prepare selectors, reporting errors without GUI calls."""
@@ -24,11 +28,15 @@ class LoadRecording(QtCore.QRunnable):
             if self.cancelled:
                 self.signals.finished.emit(self.token, None, "")
                 return
-            dataset = AnalysisDataset.load(self.path)
+            dataset = self.source if self.source is not None else AnalysisDataset.load(self.path)
+            self.source = dataset
             if self.cancelled:
                 self.signals.finished.emit(self.token, None, "")
                 return
             cycles = extract_cv_cycles(dataset)
+            if self.smoothing_window > 1:
+                dataset = smooth_currents(dataset, self.smoothing_window, cycles)
+                cycles = extract_cv_cycles(dataset)
             groups = {key: (cv_selections(dataset, cycles) if key == "cv" else provider.extract(dataset))
                       for key, provider in PROVIDERS.items() if provider.supports(dataset)}
             self.signals.finished.emit(self.token, (dataset, cycles, groups), "")

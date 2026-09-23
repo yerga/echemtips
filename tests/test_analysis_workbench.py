@@ -40,6 +40,46 @@ def write_scan(folder, name="scan", points=4):
 
 
 class AnalysisWorkbenchTests(unittest.TestCase):
+    def test_smoothing_updates_cv_and_current_maps_and_can_be_disabled(self):
+        with TemporaryDirectory() as folder:
+            path = write_scan(folder)
+            with path.open() as stream:
+                rows = list(csv.reader(stream))
+            # Add a narrow current spike at E = +0.2 V in the first CV.
+            rows[51][2] = "100"
+            with path.open("w", newline="") as stream:
+                csv.writer(stream).writerows(rows)
+            original_bytes = path.read_bytes()
+            window = AnalysisWindow(path)
+            try:
+                self.wait_loaded(window)
+                window.map_panel.statistic.setCurrentText("CV at potential")
+                window.map_panel.potential.setValue(.2)
+                raw_map = window.map_panel.points[0]["value"]
+                window.smoothing_enabled.setChecked(True)
+                window.smoothing_window.setValue(11)
+                window._apply_smoothing(); self.wait_loaded(window)
+                self.assertLess(window.map_panel.points[0]["value"], raw_map / 2)
+                self.assertLess(max(window.cycles[0].current_na("current1_na")), 20)
+                self.assertEqual(max(window.source_dataset.column("current1_na")), 100)
+                self.assertIn("SMOOTHED", window.subtitle_label.text())
+                self.assertEqual(window.dataset.metadata["analysis_processing"]["window_samples"], 11)
+                export_path = Path(folder) / "smoothed_cv.csv"
+                with patch("echemtips.analysis_views.QtWidgets.QFileDialog.getSaveFileName", return_value=(str(export_path), "")), patch("echemtips.analysis_views.QtWidgets.QMessageBox.information"):
+                    window.export_cycles()
+                exported = json.loads(export_path.with_suffix(".json").read_text())
+                self.assertEqual(exported["processing"]["window_samples"], 11)
+                # Reapply from originals: never progressively smooth the result.
+                once = window.dataset.column("current1_na").copy()
+                window._apply_smoothing(); self.wait_loaded(window)
+                np.testing.assert_array_equal(window.dataset.column("current1_na"), once)
+                window.smoothing_enabled.setChecked(False)
+                window._apply_smoothing(); self.wait_loaded(window)
+                self.assertEqual(window.map_panel.points[0]["value"], raw_map)
+                self.assertEqual(path.read_bytes(), original_bytes)
+            finally:
+                window.close()
+
     def test_dense_trace_uses_fast_rendering_without_changing_source(self):
         from echemtips.qt_common import XYPlot, current_display_scale
         def unused_values():

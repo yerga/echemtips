@@ -52,7 +52,9 @@ def export_result(parent, dataset, rows, columns, recipe, suffix):
         stat = dataset.path.stat()
         payload = json.dumps({"analysis_schema": 1, "source": str(dataset.path),
             "source_size_bytes": stat.st_size, "source_mtime_ns": stat.st_mtime_ns,
-            "source_status": dataset.metadata.get("status", "unknown"), "analysis": recipe}, indent=2, allow_nan=False)
+            "source_status": dataset.metadata.get("status", "unknown"),
+            "processing": dataset.metadata.get("analysis_processing", {"method": "none"}),
+            "analysis": recipe}, indent=2, allow_nan=False)
         with target.open("w", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream); writer.writerow(columns); writer.writerows(rows)
         sidecar.write_text(payload + "\n", encoding="utf-8")
@@ -183,7 +185,9 @@ class ExplorerPanel(QtWidgets.QWidget):
         if self.result is not None:
             x, y, result = self.result
             self.reference = (result["x_column"], result["y_column"], x.copy(), y.copy(),
-                              f"Reference: {self.dataset.path.stem} · {result['selection']}")
+                              f"Reference: {self.dataset.path.stem} · {result['selection']} · "
+                              + (f"smoothed {self.dataset.metadata['analysis_processing']['window_samples']} samples"
+                                 if self.dataset.metadata.get('analysis_processing') else "original"))
             self.refresh()
 
     def _clear_reference(self):
