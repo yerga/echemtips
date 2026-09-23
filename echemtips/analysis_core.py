@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-from array import array
 from collections.abc import Sequence
 from dataclasses import dataclass
 import json
@@ -83,27 +82,26 @@ class AnalysisDataset:
             return cls(recording.path, recording.columns, recording.rows, recording.metadata)
         try:
             with source_path.open(newline="", encoding="utf-8-sig") as stream:
-                reader = csv.DictReader(stream)
-                if not reader.fieldnames:
+                header = next(csv.reader(stream), None)
+                if not header:
                     raise AnalysisError("The CSV file has no header row.")
-                columns = tuple(reader.fieldnames)
+                columns = tuple(header)
                 if len(set(columns)) != len(columns) or any(not name for name in columns):
                     raise AnalysisError("CSV column names must be nonempty and unique.")
                 required = {"elapsed_s"}
                 missing = required.difference(columns)
                 if missing:
                     raise AnalysisError(f"Missing required columns: {', '.join(sorted(missing))}")
-                numbers = array("d")
-                for line_number, raw in enumerate(reader, 2):
-                    try:
-                        if None in raw:
-                            raise ValueError("Extra CSV values")
-                        numbers.extend(float(raw[name]) for name in columns)
-                    except (KeyError, TypeError, ValueError) as exc:
-                        raise AnalysisError(f"Invalid numeric value on CSV line {line_number}.") from exc
+                try:
+                    numbers = np.loadtxt(stream, delimiter=",", ndmin=2,
+                                         comments=None, quotechar='"')
+                except ValueError as exc:
+                    raise AnalysisError(f"Invalid numeric CSV data: {exc}") from exc
+                if numbers.size and numbers.shape[1] != len(columns):
+                    raise AnalysisError("CSV row width does not match the header.")
         except OSError as exc:
             raise AnalysisError(f"Could not read {source_path.name}: {exc}") from exc
-        rows = NumericRows(columns, np.frombuffer(numbers, dtype=float))
+        rows = NumericRows(columns, numbers)
         if not len(rows):
             raise AnalysisError("The recording contains no samples.")
         if not np.isfinite(rows.matrix[:, columns.index("elapsed_s")]).all():
@@ -212,26 +210,44 @@ def _cv_start_index(
     return None
 
 
+def pixel_groups(dataset: AnalysisDataset) -> list[tuple[int, NumericRows]]:
+    """Group valid hop tags using zero-copy slices for contiguous acquisitions.
+
+    Repeated disjoint tags are combined in acquisition order. Invalid tags are
+    excluded, not silently assigned to another hop.
+    """
+    tags = dataset.column("scan_pixel")
+    boundaries = np.r_[0, np.flatnonzero(tags[1:] != tags[:-1]) + 1, len(tags)]
+    groups = {}
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
+        if start == end:
+            continue
+        pixel = tags[start]
+        if np.isfinite(pixel) and pixel >= 0 and pixel == int(pixel):
+            groups.setdefault(int(pixel), []).append(dataset.rows.matrix[start:end])
+    return [(pixel, NumericRows(dataset.columns, parts[0] if len(parts) == 1
+                               else np.concatenate(parts)))
+            for pixel, parts in sorted(groups.items())]
+
+
 def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     """Extract completed CV cycles using the voltage program saved in metadata."""
     if "voltage1_v" not in dataset.columns:
         return []
     if "scan_pixel" in dataset.columns:
-        grouped = {}
-        for index, pixel in enumerate(dataset.column("scan_pixel")):
-            if np.isfinite(pixel) and pixel >= 0 and pixel == int(pixel):
-                grouped.setdefault(int(pixel), []).append(index)
+        grouped = pixel_groups(dataset)
         if grouped:
             separated: list[CVCycle] = []
-            columns = tuple(name for name in dataset.columns if name != "scan_pixel")
-            keep = [dataset.columns.index(name) for name in columns]
-            for pixel, indices in sorted(grouped.items()):
-                pixel_rows = NumericRows(columns, dataset.rows.matrix[np.ix_(indices, keep)])
-                subset = AnalysisDataset(dataset.path, columns, pixel_rows, dataset.metadata)
-                for cycle in extract_cv_cycles(subset):
+            for pixel, pixel_rows in grouped:
+                subset = AnalysisDataset(dataset.path, dataset.columns, pixel_rows, dataset.metadata)
+                for cycle in _extract_single_cv_cycles(subset):
                     cycle.pixel = pixel
                     separated.append(cycle)
             return separated
+    return _extract_single_cv_cycles(dataset)
+
+
+def _extract_single_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     parameters = dataset.metadata.get("parameters")
     if not isinstance(parameters, dict):
         return []

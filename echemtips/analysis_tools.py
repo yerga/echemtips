@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from collections.abc import Callable
 import numpy as np
 
-from .analysis_core import AnalysisDataset, AnalysisError, NumericRows, extract_cv_cycles
+from .analysis_core import AnalysisDataset, AnalysisError, NumericRows, extract_cv_cycles, pixel_groups
 
 
 @dataclass(frozen=True)
@@ -42,13 +42,9 @@ def register_provider(provider: AnalysisProvider) -> None:
 
 def hop_selections(dataset: AnalysisDataset) -> list[Selection]:
     """Group acquisition-order samples by recorded hop, including every phase."""
-    groups = {}
-    for index, pixel in enumerate(dataset.column("scan_pixel")):
-        if np.isfinite(pixel) and pixel >= 0 and pixel == int(pixel):
-            groups.setdefault(int(pixel), []).append(index)
-    return [Selection(f"Hop {pixel + 1}", NumericRows(dataset.columns, dataset.rows.matrix[indices]),
+    return [Selection(f"Hop {pixel + 1}", rows,
                       "Whole hop: approach, electrochemistry and retraction where recorded", pixel)
-            for pixel, indices in sorted(groups.items())]
+            for pixel, rows in pixel_groups(dataset)]
 
 
 def cv_selections(dataset: AnalysisDataset, cycles=None) -> list[Selection]:

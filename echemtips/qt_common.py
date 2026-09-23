@@ -98,6 +98,10 @@ def application_stylesheet(font_size_pt: float = 10.0) -> str:
 
 def current_display_scale(mode: str, values: Iterable[float]) -> tuple[float, str]:
     """Choose display units while leaving source currents in nA."""
+    if mode == "pA":
+        return 1000.0, "pA"
+    if mode != "Auto":
+        return 1.0, "nA"
     peak = max((abs(value) for value in values if math.isfinite(value)), default=0.0)
     unit = "pA" if mode == "pA" or (mode == "Auto" and 0 < peak < 1) else "nA"
     return (1000.0 if unit == "pA" else 1.0), unit
@@ -765,9 +769,15 @@ class XYPlot(QtWidgets.QWidget):
                 continue
             from .analysis_display import envelope_indices
             full_x, full_y = np.asarray(xs[:count], dtype=float), np.asarray(ys[:count], dtype=float)
-            indices = envelope_indices(full_x, full_y)
+            # Bound the total overlay work as well as each individual curve.
+            indices = envelope_indices(full_x, full_y, limit=max(250, min(12000, 24000 // len(self.series))))
             x, y = full_x[indices], full_y[indices]
-            self.graph.plot(x, y * scale, pen=pg.mkPen(color, width=self.trace_width_px), name=name, connect="finite")
+            curve = self.graph.plot(x, y * scale, pen=pg.mkPen(color, width=self.trace_width_px),
+                                    name=name, connect="finite", antialias=False)
+            # Dense, noisy traces make Qt's thick antialiased drawPath operation
+            # take seconds, even for a small file. Segments preserve the data,
+            # gaps and requested pen width without that expensive path stroking.
+            curve.curve.setSegmentedLineMode("on")
         self.graph.enableAutoRange()
 
 

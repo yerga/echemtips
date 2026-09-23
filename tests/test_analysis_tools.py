@@ -3,11 +3,30 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 import numpy as np
-from echemtips.analysis_core import AnalysisDataset, AnalysisError, NumericRows
+from echemtips.analysis_core import AnalysisDataset, AnalysisError, NumericRows, pixel_groups
 from echemtips.analysis_tools import Selection, AnalysisProvider, PROVIDERS, register_provider, measure, hop_map
 
 
 class AnalysisToolsTests(unittest.TestCase):
+    def test_contiguous_hops_share_storage_and_repeated_tags_keep_order(self):
+        dataset = self.dataset()
+        groups = pixel_groups(dataset)
+        self.assertTrue(np.shares_memory(groups[0][1].matrix, dataset.rows.matrix))
+        columns = ("elapsed_s", "scan_pixel")
+        dataset = AnalysisDataset(Path("test.csv"), columns,
+            NumericRows(columns, [[0, 0], [1, -1], [2, 1], [3, 0], [4, .5], [5, np.nan]]), {})
+        groups = pixel_groups(dataset)
+        self.assertEqual([pixel for pixel, _ in groups], [0, 1])
+        self.assertEqual(groups[0][1].matrix[:, 0].tolist(), [0, 3])
+
+    def test_numeric_loader_rejects_bad_width_and_missing_values(self):
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "bad.csv"
+            for body in ("0\n1\n", "0,1,2\n", "0,\n", "0,1\n1,2,3\n"):
+                path.write_text("elapsed_s,current1_na\n" + body)
+                with self.assertRaises(AnalysisError):
+                    AnalysisDataset.load(path)
+
     def dataset(self):
         columns = ("elapsed_s", "current1_na", "voltage1_v", "scan_pixel")
         return AnalysisDataset(Path("test.csv"), columns,

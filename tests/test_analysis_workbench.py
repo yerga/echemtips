@@ -40,6 +40,28 @@ def write_scan(folder, name="scan", points=4):
 
 
 class AnalysisWorkbenchTests(unittest.TestCase):
+    def test_dense_trace_uses_fast_rendering_without_changing_source(self):
+        from echemtips.qt_common import XYPlot, current_display_scale
+        def unused_values():
+            raise AssertionError("Fixed display units must not scan every sample")
+            yield 0
+        self.assertEqual(current_display_scale("pA", unused_values()), (1000.0, "pA"))
+        plot = XYPlot("Time (s)", "Current (nA)")
+        xs = np.arange(100000, dtype=float)
+        ys = np.sin(xs)
+        ys[12345] = 100
+        original = ys.copy()
+        try:
+            plot.set_data([("test", xs, ys, "#008b83")])
+            curve = plot.graph.listDataItems()[0]
+            self.assertFalse(curve.opts["antialias"])
+            self.assertEqual(curve.curve.opts["segmentedLineMode"], "on")
+            self.assertLessEqual(len(curve.xData), 12000)
+            self.assertEqual(max(curve.yData), 100)
+            np.testing.assert_array_equal(ys, original)
+        finally:
+            plot.close()
+
     @classmethod
     def setUpClass(cls):
         cls.app = create_application()
