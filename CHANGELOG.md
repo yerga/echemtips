@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Laptop experiment views now stack maps and paired traces when narrow and
+  scroll instead of compressing axes. Hide setup gives plots more width;
+  Expand plots opens the live tabs in a larger window with Stop and Emergency
+  Stop available. Map color scales no longer show duplicate quantity/unit labels.
 - Normal hopping CV/I–t completion now returns Z directly toward the initial
   approach position at the configured retract speed, without moving X/Y. If
   already farther retracted, Z is held rather than moved toward the surface.

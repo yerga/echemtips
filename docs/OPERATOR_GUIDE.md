@@ -1,5 +1,13 @@
 # Operator guide
 
+## Laptop plot views
+
+Use **Hide setup** on experiment pages to give the live plots more width.
+Paired maps and traces stack vertically on narrow panels; scroll to see the
+second plot. **Expand plots** opens the same live tabs in a maximized window,
+with **Stop experiment** and **EMERGENCY STOP** still available. Use **Return to
+experiment** or close that window to restore the tabs without clearing data.
+
 This guide explains the normal eChemTips workflow and what each experiment
 does. Use Simulation while learning the interface. For a physical instrument,
 complete [Real hardware setup](REAL_HARDWARE_SETUP.md) before enabling any

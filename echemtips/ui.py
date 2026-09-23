@@ -56,6 +56,7 @@ from .qt_common import (
     Heatmap,
     InfoButton,
     Plot,
+    PlotPanel,
     ProgramDiagram,
     TimedXYPlot,
     add_field,
@@ -885,6 +886,52 @@ class ManagedExperimentPage(BasePage):
     recording_name = ""
     manual_approach = False
 
+    def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
+        super().__init__(app, title, description)
+        self.setup_toggle = button("Hide setup", self._toggle_setup)
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setToolTip("Give the plots the full page width; show setup again to edit parameters.")
+        self.layout().itemAt(0).layout().addWidget(self.setup_toggle)
+        self.expand_plots = button("Expand plots", self._expand_plots)
+        self.layout().itemAt(0).layout().addWidget(self.expand_plots)
+        self._plots_dialog = None
+
+    def _toggle_setup(self) -> None:
+        controls = self.body.layout().itemAt(0).widget()
+        controls.setVisible(not self.setup_toggle.isChecked())
+        self.setup_toggle.setText("Show setup" if self.setup_toggle.isChecked() else "Hide setup")
+
+    def _expand_plots(self) -> None:
+        if self._plots_dialog is not None:
+            self._plots_dialog.raise_()
+            return
+        tabs = self.body.findChild(QtWidgets.QTabWidget)
+        if tabs is None:
+            return
+        parent = tabs.parentWidget()
+        layout = parent.layout()
+        index = layout.indexOf(tabs)
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("eChemTips — Experiment plots")
+        dialog.setWindowModality(QtCore.Qt.WindowModality.NonModal)
+        content = _vbox(dialog, (12, 12, 12, 12))
+        close = button("Return to experiment", dialog.close)
+        actions = QtWidgets.QHBoxLayout()
+        actions.addWidget(close)
+        actions.addStretch(1)
+        actions.addWidget(button("Stop experiment", self.stop, "danger"))
+        actions.addWidget(button("EMERGENCY STOP", self.app.emergency_stop, "danger"))
+        content.addLayout(actions)
+        content.addWidget(tabs, 1)
+        def restore(_result: int) -> None:
+            """Restore the live plot tabs without recreating or clearing data."""
+            layout.insertWidget(index, tabs, 1)
+            self._plots_dialog = None
+            dialog.deleteLater()
+        dialog.finished.connect(restore)
+        self._plots_dialog = dialog
+        dialog.showMaximized()
+
     @property
     def experiment(self):
         """Return the state machine registered for this page's key."""
@@ -900,7 +947,7 @@ class ManagedExperimentPage(BasePage):
         self.stop_button = self.status.stop_button
         self.accept_approach_button: QtWidgets.QPushButton | None = None
         if self.manual_approach:
-            self.accept_approach_button = button("Accept current Z as contact and continue", self.accept_approach)
+            self.accept_approach_button = button("Accept contact and continue", self.accept_approach)
             self.accept_approach_button.setToolTip(
                 "Stops the current approach waypoint and deliberately starts the method's next step without waiting for the current threshold."
             )
@@ -1014,7 +1061,7 @@ class StandaloneCVPage(ManagedExperimentPage):
         self.current_plot = Plot("Current vs time", "Current 1 (nA)", (COLORS["blue"],), app.settings.display_max_points)
         raw_layout.addWidget(_plot_card("Potential E1", self.voltage_plot), 1)
         raw_layout.addWidget(_plot_card("Current 1", self.current_plot), 1)
-        tabs.addTab(raw, "Experiment traces")
+        tabs.addTab(PlotPanel(raw), "Experiment traces")
         right_layout.addWidget(tabs, 1)
         root.addWidget(right, 1)
 
@@ -1098,7 +1145,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
         plots_layout.addWidget(_plot_card("Z position", self.z_plot), 1)
         plots_layout.addWidget(_plot_card("Feedback current", self.current_plot), 1)
-        tabs.addTab(plots, "Experiment traces")
+        tabs.addTab(PlotPanel(plots), "Experiment traces")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["danger"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1198,7 +1245,7 @@ class ApproachCVPage(ManagedExperimentPage):
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
         plots.addWidget(_plot_card("Z position", self.z_plot), 1)
         plots.addWidget(_plot_card("Feedback current", self.current_plot), 1)
-        tabs.addTab(scroll_area(traces), "Experiment traces")
+        tabs.addTab(PlotPanel(traces), "Experiment traces")
         tabs.addTab(_plot_card("Cyclic voltammogram", self.cv_plot), "CV")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
@@ -1303,11 +1350,11 @@ class ApproachITPage(ManagedExperimentPage):
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
         fl.addWidget(_plot_card("Z position", self.z_plot), 1); fl.addWidget(_plot_card("Feedback current", self.current_plot), 1)
-        tabs.addTab(full, "Experiment traces"); it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it)
+        tabs.addTab(PlotPanel(full), "Experiment traces"); it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it)
         self.voltage_plot = Plot("Potential vs I–t time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "I–t elapsed (s)")
         self.it_plot = Plot("Current vs I–t time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "I–t elapsed (s)")
         il.addWidget(_plot_card("Potential E1", self.voltage_plot), 1); il.addWidget(_plot_card("I–t response", self.it_plot), 1)
-        tabs.addTab(it, "I–t"); rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_t0: float | None = None
+        tabs.addTab(PlotPanel(it), "I–t"); rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_t0: float | None = None
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1407,7 +1454,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.visual_tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QVBoxLayout(traces); traces.setMinimumHeight(540)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
-        tl.addWidget(_plot_card("Z position", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", self.current_plot), 1); self.visual_tabs.addTab(scroll_area(traces), "Experiment traces")
+        tl.addWidget(_plot_card("Z position", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", self.current_plot), 1); self.visual_tabs.addTab(PlotPanel(traces), "Experiment traces")
         cv_page = QtWidgets.QWidget(); cvl = _vbox(cv_page); self.cv_pixel_label = label("Waiting for a CV", "muted")
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
         cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Cyclic voltammogram", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV at hop")
@@ -1415,7 +1462,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Current 1")
-        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Current at selected potential", self.current_map, help_text='Uses Current 1 at the selected E1 potential, regardless of the current channel selected for contact detection.'), 1); self.visual_tabs.addTab(maps, "Maps")
+        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Current at selected potential", self.current_map, help_text='Uses Current 1 at the selected E1 potential, regardless of the current channel selected for contact detection.'), 1); self.visual_tabs.addTab(PlotPanel(maps), "Maps")
         rl.addWidget(self.visual_tabs, 1); root.addWidget(right, 1); self.approach_plot = self.z_plot; self._cv_point = -1; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingCVParameters:
@@ -1540,14 +1587,14 @@ class ScanHoppingITPage(ManagedExperimentPage):
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QVBoxLayout(traces); traces.setMinimumHeight(540); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
-        tl.addWidget(_plot_card("Z position", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", self.current_plot), 1); tabs.addTab(scroll_area(traces), "Experiment traces")
+        tl.addWidget(_plot_card("Z position", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", self.current_plot), 1); tabs.addTab(PlotPanel(traces), "Experiment traces")
         it = QtWidgets.QWidget(); il = QtWidgets.QHBoxLayout(it); self.voltage_plot = Plot("Potential vs local time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points, "Hop I–t elapsed (s)"); self.it_plot = Plot("Current vs local time", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Hop I–t elapsed (s)")
-        il.addWidget(_plot_card("Potential E1", self.voltage_plot), 1); il.addWidget(_plot_card("Current 1", self.it_plot), 1); tabs.addTab(it, "I–t at hop")
+        il.addWidget(_plot_card("Potential E1", self.voltage_plot), 1); il.addWidget(_plot_card("Current 1", self.it_plot), 1); tabs.addTab(PlotPanel(it), "I–t at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
         maps = QtWidgets.QWidget(); ml = QtWidgets.QHBoxLayout(maps); ml.setContentsMargins(0, 0, 0, 0); ml.setSpacing(10); self.z_map = Heatmap("µm", "Contact Z"); self.current_map = Heatmap("nA", "Pulse current")
-        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Mean pulse current", self.current_map, help_text='Uses the mean of Current 1 during the pulse hold, not the instantaneous current or the average over the whole hop.'), 1); tabs.addTab(maps, "Maps")
+        ml.addWidget(_plot_card("Contact Z map", self.z_map), 1); ml.addWidget(_plot_card("Mean pulse current", self.current_map, help_text='Uses the mean of Current 1 during the pulse hold, not the instantaneous current or the average over the whole hop.'), 1); tabs.addTab(PlotPanel(maps), "Maps")
         rl.addWidget(tabs, 1); root.addWidget(right, 1); self._it_point = -1; self._it_t0: float | None = None; self._approach_point = -1
 
     def parameters(self) -> ScanHoppingITParameters:

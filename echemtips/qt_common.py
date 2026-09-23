@@ -561,6 +561,11 @@ class Heatmap(QtWidgets.QWidget):
             pen=pg.mkPen(COLORS["text"]),
         )
         self.color_bar.setImageItem(self.image_item, insert_in=self.plot_item)
+        # ColorBarItem's constructor labels the left axis, but its active
+        # scale axis is the right one. Keep only the live, unit-aware label.
+        self.color_bar.getAxis("left").setLabel("")
+        self.color_bar.getAxis("left").showLabel(False)
+        self.color_bar.axis.enableAutoSIPrefix(False)
         # Keep a modest floor so constrained windows allocate space cleanly;
         # a large minimum makes Qt overlap the footer when the map tab is short.
         self.view.setMinimumHeight(140)
@@ -763,6 +768,42 @@ class XYPlot(QtWidgets.QWidget):
             y = np.asarray(ys[:count:stride], dtype=float)
             self.graph.plot(x, y * scale, pen=pg.mkPen(color, width=self.trace_width_px), name=name, connect="finite")
         self.graph.enableAutoRange()
+
+
+class PlotPanel(QtWidgets.QScrollArea):
+    """Keep plot cards readable, stacking and scrolling on narrow displays."""
+
+    def __init__(self, content: QtWidgets.QWidget) -> None:
+        super().__init__()
+        self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWidget(content)
+        layout = content.layout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self._cards = [layout.itemAt(i).widget() for i in range(layout.count())
+                       if layout.itemAt(i).widget() is not None]
+        for card in self._cards:
+            card.setMinimumHeight(360 if card.findChildren(Heatmap) else 290)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        layout = self.widget().layout()
+        horizontal = self.viewport().width() >= 880 and len(self._cards) == 2
+        if isinstance(layout, QtWidgets.QBoxLayout):
+            layout.setDirection(QtWidgets.QBoxLayout.Direction.LeftToRight if horizontal
+                                else QtWidgets.QBoxLayout.Direction.TopToBottom)
+        heights = [card.minimumHeight() for card in self._cards]
+        height = (max(heights, default=0) if horizontal else
+                  sum(heights) + max(0, len(heights) - 1) * layout.spacing())
+        self.widget().setMinimumHeight(height)
+        self.widget().setMaximumHeight(max(height, self.viewport().height()))
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """Adapt the plot arrangement to the available viewport width."""
+        super().resizeEvent(event)
+        self._reflow()
 
 
 def scroll_area(widget: QtWidgets.QWidget, *, minimum_width: int = 0) -> QtWidgets.QScrollArea:

@@ -391,7 +391,7 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertAlmostEqual(page.parameters().settling_time_s, 0.5)
                 self.assertEqual(
                     window.pages[page_name].accept_approach_button.text(),
-                    "Accept current Z as contact and continue",
+                "Accept contact and continue",
                 )
             self.assertAlmostEqual(window.pages["Approach"].parameters().feedback_threshold, 2.0)
             self.assertAlmostEqual(window.pages["Approach + CV"].parameters().feedback_threshold_na, 2.0)
@@ -561,7 +561,8 @@ class QtLayoutTests(unittest.TestCase):
         heatmap.set_data({(0, 0): 1.5, (0, 1): 2.5}, 1, 2)
         self.qt_app.processEvents()
         try:
-            self.assertEqual(heatmap.color_bar.getAxis("left").labelText, "Current 1 (nA)")
+            self.assertFalse(heatmap.color_bar.getAxis("left").label.isVisible())
+            self.assertEqual(heatmap.color_bar.axis.labelText, "Current 1 (nA)")
             self.assertEqual(heatmap.color_bar.levels(), (1.5, 2.5))
             self.assertFalse(hasattr(heatmap.view, "ui"))
             self.assertIs(heatmap.summary.parentWidget(), heatmap.footer)
@@ -578,6 +579,45 @@ class QtLayoutTests(unittest.TestCase):
             self.assertEqual(len(heatmap.footprint_item.points()), 2)
         finally:
             heatmap.close()
+
+    def test_laptop_plot_panels_and_expanded_view(self) -> None:
+        from echemtips.qt_common import PlotPanel
+        window = EChemTipsApp()
+        window.resize(1280, 720)
+        window.show()
+        try:
+            for name in ("Approach", "Approach + CV", "Approach + I-t",
+                         "Scan hopping + CV", "Scan hopping + I-t"):
+                window.show_page(name)
+                page = window.pages[name]
+                tabs = page.body.findChild(QtWidgets.QTabWidget)
+                for index in range(tabs.count()):
+                    panel = tabs.widget(index)
+                    if not isinstance(panel, PlotPanel):
+                        continue
+                    tabs.setCurrentIndex(index)
+                    for _ in range(4):
+                        self.qt_app.processEvents()
+                    self.assertEqual(panel.widget().layout().direction(),
+                                     QtWidgets.QBoxLayout.Direction.TopToBottom)
+                    for card in panel._cards:
+                        self.assertGreaterEqual(card.height(), card.minimumHeight())
+                    self.assertGreater(panel.verticalScrollBar().maximum(), 0)
+                page.setup_toggle.click()
+                self.qt_app.processEvents()
+                self.assertFalse(page.body.layout().itemAt(0).widget().isVisible())
+                page.expand_plots.click()
+                self.qt_app.processEvents()
+                self.assertTrue(page._plots_dialog.isVisible())
+                self.assertTrue(page._plots_dialog.isAncestorOf(tabs))
+                self.assertIn("EMERGENCY STOP", [b.text() for b in
+                              page._plots_dialog.findChildren(QtWidgets.QPushButton)])
+                page._plots_dialog.close()
+                self.qt_app.processEvents()
+                self.assertTrue(page.body.isAncestorOf(tabs))
+                page.setup_toggle.click()
+        finally:
+            window.close()
 
     def test_rolling_plot_discards_only_old_display_points(self) -> None:
         plot = Plot("Rolling", "Value", ("#12877f",), max_points=1000, rolling_window_s=120)
