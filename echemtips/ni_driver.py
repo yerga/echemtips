@@ -1301,7 +1301,7 @@ class WECSPMDriver:
         current = self._current_targets()
         contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
         low_z, high_z = sorted((params.start_z_um, params.end_z_um))
-        if not low_z <= contact_z <= high_z:
+        if point + 1 < params.point_count and not low_z <= contact_z <= high_z:
             contact_z = self._scan_last_approach_z.get(point, params.end_z_um)
         settle_plan = timed_hold_plan(params.settling_time_s)
         plan = settle_plan + cyclic_voltammetry_plan(
@@ -1639,7 +1639,7 @@ class WECSPMDriver:
                 current = self._current_targets()
                 contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
                 low_z, high_z = sorted((params.start_z_um, params.end_z_um))
-                if not low_z <= contact_z <= high_z:
+                if point + 1 < params.point_count and not low_z <= contact_z <= high_z:
                     contact_z = self._method_last_approach_z.get(point, params.end_z_um)
                 retract_z = params.scan_retract_z(
                     point, contact_z, self.settings.z_range_um,

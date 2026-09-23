@@ -982,10 +982,10 @@ class NativeDriverTests(unittest.TestCase):
                         d.start_method("scan_hopping_it", p)
                     status = d.scan_hopping_cv_status if method == "cv" else d.method_status
                     regs["Applied Z"].value = position_to_raw(contact, 100, False)
-                    # Supply the fallback sensor coordinate for a later hop
-                    # whose surface lies below the initial approach position.
-                    if method == "cv": d._scan_last_approach_z[0] = contact
-                    else: d._method_last_approach_z[0] = contact
+                    # Final return must use applied Z even when no sensor
+                    # sample arrived, or a stale sample reports another Z.
+                    if method == "cv": d._scan_last_approach_z[0] = end
+                    else: d._method_last_approach_z[0] = end
                     regs["LineNumber"].value = d._program_baseline + d._program_total
                     regs["WaitingForWayPoints"].value = True
                     d.read_samples()
