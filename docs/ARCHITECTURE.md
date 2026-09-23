@@ -1,5 +1,27 @@
 # Architecture and extension guide
 
+## Experiment navigation registry
+
+`echemtips/navigation.py` declares `EXPERIMENTS`: stable page names, categories,
+descriptions, page-factory names and optional execution keys. The control app
+builds its pages and searchable library from that catalog. Adding a page does
+not require editing sidebar construction. Factories currently refer to classes
+in `ui.py`; new executable methods still need acquisition/state-machine
+integration and safety tests, not just a catalog entry.
+
+`FavoriteStore` persists ordered shortcuts separately from instrument settings
+using atomic Qt file replacement. Move piezo and Settings are anchored; other
+pages can be pinned/unpinned/reordered. The library never invokes experiment
+start/stop methods. Global active navigation resolves the running experiment
+from execution keys, not the selected page or favorites.
+
+Existing pages remain eagerly constructed because acquisition and settings
+paths currently use their instances even when not visible. Lazy construction
+should follow separation of those paths from page widgets; do not skip safety
+or state updates merely because a page has not been opened.
+
+## Runtime layers
+
 eChemTips separates scientific method policy, deterministic FPGA protocol,
 acquisition, persistence, and rendering. This boundary lets the same experiment
 state machine run against a simulator or NI backend without putting device I/O

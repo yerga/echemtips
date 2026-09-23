@@ -19,6 +19,7 @@ from .acquisition import AcquisitionDrain, AcquisitionWorker
 from .branding import application_icon, configure_application_identity, logo_label
 from .backends import BackendError, InstrumentBackend, create_backend
 from .data import DataRecorder
+from .navigation import EXPERIMENTS, ANCHORED, FavoriteStore, ExperimentLibrary
 from .diagnostics import (
     pipette_radius_nm,
     resistance_fit,
@@ -1875,11 +1876,14 @@ class SettingsPage(BasePage):
 
 class EChemTipsApp(QtWidgets.QMainWindow):
     """Top-level owner of backend, acquisition, experiments, recorder, and pages."""
-    PAGE_NAMES = ("Watch current", "Watch position", "Preflight", "Characterize pipette", "CV", "Approach", "Approach + CV", "Approach + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Move piezo", "Settings")
+    PAGE_NAMES = tuple(entry.name for entry in EXPERIMENTS)
 
     def __init__(self) -> None:
         super().__init__(); configure_pyqtgraph(); self.setWindowTitle("eChemTips — Instrument Control"); self.setWindowIcon(application_icon()); self.resize(1440, 900); self.setMinimumSize(1080, 680)
         self.store = SettingsStore(); self.settings = self.store.load(); self.driver_module = os.environ.get("ECHEMTIPS_DRIVER_MODULE") or os.environ.get("WECSPM_DRIVER_MODULE")
+        self.favorite_store = FavoriteStore(self.store.path)
+        self.favorites = self.favorite_store.load()
+        self.library = None
         self.backend: InstrumentBackend = create_backend(self.settings, self.driver_module); self._acquisition: AcquisitionWorker | None = None; self.recorder = DataRecorder(); self._sample: Sample | None = None
         self._make_experiments(); self._build_shell(); self._build_pages(); self.show_page("Watch current"); self._set_connection_ui(False)
         self._apply_display_settings()
@@ -1919,13 +1923,30 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         sidebar = QtWidgets.QFrame(); sidebar.setObjectName("sidebar"); sidebar.setFixedWidth(225); side = _vbox(sidebar, (14, 20, 14, 18), 5)
         brand_row = QtWidgets.QWidget(); br = _hbox(brand_row); mark = logo_label()
         brand = label("eChemTips", "brand"); br.addWidget(mark); br.addWidget(brand); br.addStretch(1); side.addWidget(brand_row); side.addWidget(label("SCANNING ELECTROCHEMISTRY", "sidebarMuted")); side.addSpacing(18)
-        self.nav_buttons: dict[str, QtWidgets.QPushButton] = {}; group = QtWidgets.QButtonGroup(self); group.setExclusive(True)
-        glyphs = ("◉", "⌁", "✓", "◇", "⌁", "↓", "↧", "↧", "▦", "▦", "⌖", "⚙")
-        for index, (name, glyph) in enumerate(zip(self.PAGE_NAMES, glyphs), 1):
-            nav = button(f"{glyph}   {name.replace('I-t', 'I–t')}", lambda checked=False, page=name: self.show_page(page)); nav.setProperty("role", "nav"); nav.setCheckable(True); group.addButton(nav); side.addWidget(nav); self.nav_buttons[name] = nav
-            if index <= 9:
-                shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self); shortcut.activated.connect(lambda page=name: self.show_page(page))
-        side.addStretch(1); layout.addWidget(sidebar)
+        self.nav_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self.nav_group = QtWidgets.QButtonGroup(self); self.nav_group.setExclusive(True)
+        for name in self.PAGE_NAMES:
+            nav = button(name.replace('I-t', 'I–t'), lambda checked=False, page=name: self.show_page(page))
+            nav.setParent(sidebar); nav.setProperty("role", "nav"); nav.setCheckable(True)
+            self.nav_group.addButton(nav); self.nav_buttons[name] = nav
+        side.addWidget(self.nav_buttons["Move piezo"])
+        favorite_content = QtWidgets.QWidget()
+        favorite_content.setObjectName("sidebarFavorites")
+        favorite_content.setStyleSheet(f"QWidget#sidebarFavorites {{ background: {COLORS['sidebar']}; }}")
+        self.favorite_layout = _vbox(favorite_content, (0, 0, 0, 0), 4)
+        self.favorite_scroll = scroll_area(favorite_content)
+        self.favorite_scroll.setStyleSheet(f"QScrollArea {{ background: {COLORS['sidebar']}; border: none; }}")
+        side.addWidget(self.favorite_scroll, 1)
+        self.library_button = button("All experiments…", self.open_library)
+        side.addWidget(self.library_button)
+        side.addWidget(self.nav_buttons["Settings"])
+        self._refresh_favorites()
+        shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+K"), self)
+        shortcut.activated.connect(self.open_library)
+        for index in range(1, 10):
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{index}"), self)
+            shortcut.activated.connect(lambda position=index: self._favorite_shortcut(position))
+        layout.addWidget(sidebar)
         main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0)
         topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar")
         tl = QtWidgets.QGridLayout(topbar); tl.setContentsMargins(18, 8, 18, 8); tl.setSpacing(6)
@@ -1950,15 +1971,78 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.instrument_readout = InstrumentReadoutBar(); readout_container = QtWidgets.QWidget(); readout_layout = _vbox(readout_container, (22, 0, 22, 10)); readout_layout.addWidget(self.instrument_readout); ml.addWidget(readout_container)
         layout.addWidget(main, 1)
         self.statusBar().setSizeGripEnabled(False)
+        self.return_button = button("Return to experiment", self._return_to_active)
+        self.statusBar().addPermanentWidget(self.return_button)
+        self.return_button.hide()
 
     def _build_pages(self) -> None:
-        self.pages: dict[str, BasePage] = {"Watch current": WatchPage(self), "Watch position": WatchPositionPage(self), "Preflight": PreflightPage(self), "Characterize pipette": PipetteCharacterizationPage(self), "CV": StandaloneCVPage(self), "Approach": StandaloneApproachPage(self), "Approach + CV": ApproachCVPage(self), "Approach + I-t": ApproachITPage(self), "Scan hopping + CV": ScanHoppingCVPage(self), "Scan hopping + I-t": ScanHoppingITPage(self), "Move piezo": MovePiezoPage(self), "Settings": SettingsPage(self)}
+        self.pages: dict[str, BasePage] = {entry.name: globals()[entry.page_factory](self) for entry in EXPERIMENTS}
         for page in self.pages.values(): self.stack.addWidget(page)
 
     def show_page(self, name: str) -> None:
         """Select a known page and synchronize its navigation button."""
         if not hasattr(self, "pages") or name not in self.pages: return
         self.stack.setCurrentWidget(self.pages[name]); self.nav_buttons[name].setChecked(True)
+        self.library_button.setText("All experiments…" if name in self.favorites or name in ANCHORED else "All experiments… •")
+        self._update_active_navigation()
+
+    def open_library(self) -> None:
+        """Open the searchable catalog without affecting acquisition or execution."""
+        if self.library is None:
+            self.library = ExperimentLibrary(self)
+        self.library.refresh()
+        self.library.show(); self.library.raise_(); self.library.activateWindow()
+        self.library.search.setFocus()
+
+    def set_favorites(self, favorites: list[str]) -> None:
+        """Persist sidebar order independently from validated instrument settings."""
+        values = list(dict.fromkeys(name for name in favorites if name in self.PAGE_NAMES and name not in ANCHORED))
+        try:
+            self.favorite_store.save(values)
+        except OSError as exc:
+            self.show_error(f"Could not save navigation preferences: {exc}")
+            return
+        self.favorites = values
+        self._refresh_favorites()
+
+    def _refresh_favorites(self) -> None:
+        while self.favorite_layout.count():
+            self.favorite_layout.takeAt(0)
+        for name, nav in self.nav_buttons.items():
+            if name not in ANCHORED:
+                nav.hide()
+        for name in self.favorites:
+            self.favorite_layout.addWidget(self.nav_buttons[name])
+            self.nav_buttons[name].show()
+        self.favorite_layout.addStretch(1)
+
+    def _favorite_shortcut(self, index: int) -> None:
+        names = ["Move piezo", *self.favorites]
+        if index <= len(names):
+            self.show_page(names[index - 1])
+
+    def _active_page_name(self) -> str | None:
+        for entry in EXPERIMENTS:
+            experiment = self.experiments.get(entry.experiment_key)
+            if experiment is not None and experiment.active:
+                return entry.name
+            page = self.pages.get(entry.name)
+            if getattr(page, "is_busy", False):
+                return entry.name
+        if self.recorder.active:
+            return {"Watch Current": "Watch current", "Watch Position": "Watch position"}.get(self.recorder.name)
+        return None
+
+    def _return_to_active(self) -> None:
+        name = self._active_page_name()
+        if name:
+            self.show_page(name)
+
+    def _update_active_navigation(self) -> None:
+        name = self._active_page_name()
+        self.return_button.setVisible(name is not None)
+        if name:
+            self.return_button.setText(f"Running: {name.replace('I-t', 'I–t')} · Return")
 
     def require_connection(self) -> None:
         """Raise a user-facing backend error when offline."""
@@ -2311,6 +2395,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                     if experiment.active: experiment.state = ExperimentState.ABORTED
                 self.backend.disconnect(); self._set_connection_ui(False); self.show_error(str(exc))
         # Compatibility for the existing headless ordering tests.
+        if isinstance(self, EChemTipsApp): self._update_active_navigation()
         if not isinstance(self, EChemTipsApp) and hasattr(self, "after"): self.after(80, self._poll)
 
     def toast(self, message: str, level: str = "info") -> None:

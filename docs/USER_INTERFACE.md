@@ -25,6 +25,23 @@ exercises the same renderer in **Experiment traces** and **Approach curves**.
 
 ## Navigation
 
+**Move piezo** is always first; **Settings** is anchored at the bottom. Between
+them are ordered favorites, initially Watch current/position, Approach + CV/I–t,
+and Scan hopping + CV/I–t. Long favorite lists scroll without hiding the anchors.
+
+Open **All experiments…** (or `Ctrl+K`) for the full searchable library, including
+pages already pinned in the sidebar. Filter by category or search names and
+descriptions. Select a result to **Open**, **Pin/Unpin**, or **Move up/down** in the
+sidebar order. **Restore defaults** restores the original shortcuts. Move piezo
+and Settings cannot be unpinned. Favorites are saved automatically in
+`navigation.json` beside user settings, independently of hardware configuration.
+
+Navigation never starts or stops a method. During an experiment, diagnostic, or
+monitor recording, the global **Running: … · Return** button opens its page even
+if it is not pinned. The library is non-modal, so execution and acquisition
+continue while it is open. `Ctrl+1` opens Move piezo; subsequent numbered shortcuts
+follow the current favorites order.
+
 Experiment names and parameter labels are consistent across pages. Both hopping
 methods use **Start scan** and **Stop experiment**. **Experiment traces** separates
 time-domain data from **CV** or **I–t** results; scans show **CV at hop** or **I–t at hop**.
