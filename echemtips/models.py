@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 import math
 import os
@@ -464,9 +464,50 @@ class ApproachITParameters(ApproachParameters):
         return errors
 
 
+class BoundedScanRetraction:
+    """Shared execution-time travel limits and recording diagnostics for scans."""
+
+    __slots__ = ()
+
+    def bounded_retract_z(self, point: int, contact_z: float, maximum_z: float,
+                          *, minimum_travel_um: float = 1e-9) -> float:
+        """Resolve a contact-relative command, recording shortened travel once per hop.
+
+        The contact coordinate must be in the same coordinate system as the
+        commanded target. Hardware callers use the applied output at contact.
+        A command limit is not a guarantee of physical probe clearance.
+        """
+        if not math.isfinite(contact_z) or not 0 <= contact_z <= maximum_z:
+            raise ValueError("Contact Z is outside the configured range.")
+        requested = self.retract_distance_for_point(point)
+        target = max(0.0, min(maximum_z, self.retract_z_for_point(point, contact_z)))
+        actual = abs(target - contact_z)
+        self.retraction_events[:] = [e for e in self.retraction_events if e["scan_pixel"] != point]
+        if actual < requested - 1e-9 or actual <= minimum_travel_um:
+            self.retraction_events.append(dict(
+                scan_pixel=point, contact_z_um=contact_z, target_z_um=target,
+                requested_distance_um=requested, actual_distance_um=actual,
+                no_travel=actual <= minimum_travel_um,
+            ))
+        return target
+
+    def retract_has_no_travel(self, point: int) -> bool:
+        """Block automatic continuation when the contact is at the retract limit."""
+        return any(e["scan_pixel"] == point and e["no_travel"] for e in self.retraction_events)
+
+    def retraction_notice(self) -> str:
+        """Keep shortened-travel information visible after later stage updates."""
+        if not self.retraction_events:
+            return ""
+        e = self.retraction_events[-1]
+        return (f" · Hop {e['scan_pixel'] + 1}: retract limited to {e['actual_distance_um']:g} µm "
+                f"of {e['requested_distance_um']:g} µm requested")
+
+
 @dataclass(slots=True)
-class ScanHoppingCVParameters:
+class ScanHoppingCVParameters(BoundedScanRetraction):
     """Physical grid, hopping motion, contact, and per-pixel CV configuration."""
+    retraction_events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False, compare=False)
     x_start_um: float = 35.0
     x_end_um: float = 65.0
     x_points: int = 3
@@ -593,14 +634,6 @@ class ScanHoppingCVParameters:
             errors.append("Raster extra line retract must be finite and non-negative.")
         if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
-        if math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
-            targets = [
-                self.retract_z_for_point(point, contact_z)
-                for point in range(self.point_count)
-                for contact_z in (self.start_z_um, self.end_z_um)
-            ]
-            if any(not 0 <= target <= settings.z_range_um for target in targets):
-                errors.append("Contact-relative retract would move Z outside the configured range.")
         for name, value in (
             ("Lateral rate", self.lateral_rate_um_s),
             ("Approach rate", self.approach_rate_um_s),
@@ -641,8 +674,9 @@ class ScanHoppingCVParameters:
 
 
 @dataclass(slots=True)
-class ScanHoppingITParameters:
+class ScanHoppingITParameters(BoundedScanRetraction):
     """Physical grid, hopping motion, contact, and per-pixel I–t configuration."""
+    retraction_events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False, compare=False)
     x_start_um: float = 35.0
     x_end_um: float = 65.0
     x_points: int = 3
@@ -776,14 +810,6 @@ class ScanHoppingITParameters:
             errors.append("Raster extra line retract must be finite and non-negative.")
         if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
-        if math.isfinite(self.retract_distance_um) and self.retract_distance_um > 0:
-            targets = [
-                self.retract_z_for_point(point, contact_z)
-                for point in range(self.point_count)
-                for contact_z in (self.start_z_um, self.end_z_um)
-            ]
-            if any(not 0 <= target <= settings.z_range_um for target in targets):
-                errors.append("Contact-relative retract would move Z outside the configured range.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
         total_tags = 1 + self.point_count * (
             3 + int(self.feedback_mode == "baseline_relative")

@@ -967,6 +967,46 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.approach_context(47), "retract")
         self.assertEqual(self.driver.approach_context(48), "")
 
+    def test_scan_bounded_retract_and_no_travel_interlock(self) -> None:
+        for method in ("cv", "it"):
+            for contact in (0.0, 8.0, 50.0):
+                with self.subTest(method=method, contact=contact):
+                    self.setUp()
+                    d, regs = self.driver, self.session.registers
+                    cls = ScanHoppingCVParameters if method == "cv" else ScanHoppingITParameters
+                    p = cls(start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    if method == "cv":
+                        d.start_scan_hopping_cv(p)
+                    else:
+                        d.start_method("scan_hopping_it", p)
+                    status = d.scan_hopping_cv_status if method == "cv" else d.method_status
+                    def finish():
+                        regs["LineNumber"].value = d._program_baseline + d._program_total
+                        regs["WaitingForWayPoints"].value = True
+                        frame = [0] * SAMPLE_WORDS
+                        frame[9] = regs["LineNumber"].value
+                        d.data_fifo.data.extend(frame)
+                        d.read_samples()
+                    regs["Applied Z"].value = position_to_raw(contact, 100, False)
+                    finish()
+                    self.assertEqual(status()["stage"], method)
+                    target = d._program_waypoints[-1].z_position
+                    self.assertEqual(target, position_to_raw(max(0, contact - 10), 100, False))
+                    regs["Applied Z"].value = target
+                    finish()
+                    writes = len(d.positions_fifo.writes)
+                    result = status()
+                    if contact == 0:
+                        self.assertEqual(result["stage"], "aborted")
+                        self.assertIn("no Z retraction", result["detail"])
+                        status()
+                        self.assertEqual(len(d.positions_fifo.writes), writes)
+                        self.assertFalse(regs["External Stop"].value)
+                    else:
+                        self.assertNotEqual(result["stage"], "aborted")
+                        self.assertEqual(len(d.positions_fifo.writes), writes + 1)
+                    self.assertEqual(bool(p.retraction_events), contact < 10)
+
     def test_scan_hopping_submits_cv_only_after_each_confirmed_contact(self) -> None:
         params = ScanHoppingCVParameters(x_points=2, y_points=2, cycles=1)
         self.driver.start_scan_hopping_cv(params)

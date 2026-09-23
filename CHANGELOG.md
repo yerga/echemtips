@@ -7,6 +7,11 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Hopping CV and I–t now permit an initial Z at the travel boundary. Retraction
+  is limited at runtime using the actual contact coordinate, including raster
+  flyback distances. Shortened travel is displayed and saved in JSON parameters
+  as `retraction_events`. If no usable retract travel remains, the scan stops
+  before further XY motion. No bitfile change is required.
 - Repeated hardware contacts now use the existing type-2 stop-on-feedback
   waypoint, avoiding EndCurrentLine's read-only, session-wide one-shot latch
   that caused the second scan point to stall. Added reusable, acknowledged

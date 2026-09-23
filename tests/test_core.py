@@ -702,7 +702,71 @@ class ExperimentTests(unittest.TestCase):
             x_points=2, y_points=2, serpentine=False,
             start_z_um=2, end_z_um=80, raster_line_retract_um=5,
         )
-        self.assertTrue(any("outside" in error for error in invalid.validate(AppSettings())))
+        self.assertEqual(invalid.validate(AppSettings()), [])
+
+    def test_scan_retraction_limits_and_diagnostics(self) -> None:
+        for cls in (ScanHoppingCVParameters, ScanHoppingITParameters):
+            p = cls(start_z_um=0, end_z_um=90, x_points=2, y_points=2,
+                    serpentine=False, raster_line_retract_um=8)
+            self.assertEqual(p.validate(AppSettings()), [])
+            self.assertEqual(p.bounded_retract_z(0, 80, 100), 70)
+            self.assertEqual(p.retraction_events, [])
+            self.assertEqual(p.bounded_retract_z(0, 8, 100), 0)
+            self.assertFalse(p.retract_has_no_travel(0))
+            self.assertIn("8 µm of 10 µm", p.retraction_notice())
+            self.assertEqual(p.bounded_retract_z(1, 12, 100), 0)
+            self.assertEqual(p.retraction_events[-1]["requested_distance_um"], 18)
+            self.assertEqual(p.bounded_retract_z(2, 0, 100), 0)
+            self.assertTrue(p.retract_has_no_travel(2))
+            p.start_z_um, p.end_z_um = 100, 0
+            self.assertEqual(p.validate(AppSettings()), [])
+            self.assertEqual(p.bounded_retract_z(0, 95, 100), 100)
+            with self.assertRaises(ValueError):
+                p.bounded_retract_z(0, -1, 100)
+
+    def test_simulated_scans_reuse_bounded_target_and_stop_without_travel(self) -> None:
+        for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
+                                (ScanHoppingITExperiment, ScanHoppingITParameters)):
+            for contact in (0, 8):
+                with self.subTest(method=cls.__name__, contact=contact):
+                    settings = AppSettings()
+                    backend = SimulationBackend(settings)
+                    backend.connect()
+                    experiment = cls(backend, settings)
+                    p = params_cls(start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    experiment.start(p)
+                    experiment.contact_z[(0, 0)] = contact
+                    if cls is ScanHoppingCVExperiment:
+                        experiment.state = ExperimentState.CV
+                        experiment._segments = [0]
+                        experiment._cv_voltage = 0
+                    else:
+                        experiment.state = ExperimentState.IT
+                        experiment._step_index = len(experiment._steps) - 1
+                        experiment._step_deadline = -1
+                    with patch.object(backend, "move", wraps=backend.move) as move:
+                        experiment.tick_samples([Sample(0, 35, 35, contact, 0, 0, 0, 0)])
+                        self.assertEqual(experiment._retract_target_z, 0)
+                        experiment.tick_samples([Sample(1, 35, 35, 0, 0, 0, 0, 0)])
+                        if contact == 0:
+                            self.assertEqual(experiment.state, ExperimentState.ABORTED)
+                            self.assertEqual(experiment.point_index, 0)
+                            self.assertFalse(any(call.args[0] in ("X", "Y") for call in move.call_args_list))
+                        else:
+                            self.assertEqual(experiment.point_index, 1)
+                            self.assertEqual(experiment._z_position_target, 0)
+
+    def test_limited_retraction_is_checkpointed_in_metadata(self) -> None:
+        with TemporaryDirectory() as folder:
+            settings = AppSettings(save_directory=folder)
+            params = ScanHoppingCVParameters(start_z_um=0)
+            recorder = DataRecorder()
+            recorder.start("Scan Hopping CV", settings, params)
+            params.bounded_retract_z(0, 8, settings.z_range_um)
+            recorder._write_metadata()
+            metadata = json.loads(next(Path(folder).glob("*.json")).read_text())
+            self.assertEqual(metadata["parameters"]["retraction_events"][0]["actual_distance_um"], 8)
+            recorder.finish(settings, params, status="aborted")
 
     def test_scan_end_of_travel_aborts_pixel_without_cv(self) -> None:
         settings = AppSettings()

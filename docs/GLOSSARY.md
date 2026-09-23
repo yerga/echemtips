@@ -32,8 +32,10 @@ explicit physical meaning and unit.
   voltage. Values are in volts.
 
 **Retract distance**
-: Signed Z displacement relative to measured contact Z after a method step.
-  A negative value moves away from the surface under the configured axis sign.
+: Positive distance away from contact, opposite the approach direction.
+  Hopping scans limit the resulting command to the configured Z travel range
+  and report shortened retractions. No available travel stops the scan before
+  another lateral move.
 
 **Settling time**
 : An optional hold after positioning and before the electrochemical program.

@@ -1186,6 +1186,7 @@ class WECSPMDriver:
         )
         self._sequence = None
         self._scan_params = params
+        params.retraction_events.clear()
         self._scan_grid = params.grid()
         self._scan_history.clear()
         self._scan_point = 0
@@ -1309,7 +1310,10 @@ class WECSPMDriver:
             vertex2_v=params.cv_vertex2_v,
             scan_rate_v_s=params.cv_scan_rate_v_s,
             cycles=params.cycles,
-            retract_z_um=params.retract_z_for_point(point, contact_z),
+            retract_z_um=params.bounded_retract_z(
+                point, contact_z, self.settings.z_range_um,
+                minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
+            ),
             retract_rate_um_s=params.retract_rate_um_s,
         )
         compiled = self.compiler.compile(plan, current)
@@ -1401,6 +1405,11 @@ class WECSPMDriver:
                 return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
                         "point_index": self._scan_point, "point_stage": "no-contact"}
         elif self._scan_phase == "cv" and not self._submitted and self._hardware_complete:
+            if self._scan_params.retract_has_no_travel(self._scan_point):
+                self._cancelled = True
+                self._cancel_detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
+                return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
+                        "point_index": self._scan_point, "point_stage": "retract-blocked"}
             if self._scan_point + 1 >= point_total:
                 self._scan_phase = "complete"
                 return {"stage": "complete", "detail": "FPGA Scan Hopping + CV complete", "progress": 1.0,
@@ -1430,6 +1439,8 @@ class WECSPMDriver:
         self._method_name = name
         self._method_phase = ""
         self._method_params = parameters
+        if isinstance(parameters, ScanHoppingITParameters):
+            parameters.retraction_events.clear()
         self._method_history.clear()
         self._method_sequence = None
         self._method_terminal = ""
@@ -1628,7 +1639,10 @@ class WECSPMDriver:
                 low_z, high_z = sorted((params.start_z_um, params.end_z_um))
                 if not low_z <= contact_z <= high_z:
                     contact_z = self._method_last_approach_z.get(point, params.end_z_um)
-                retract_z = params.retract_z_for_point(point, contact_z)
+                retract_z = params.bounded_retract_z(
+                    point, contact_z, self.settings.z_range_um,
+                    minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
+                )
             else:
                 retract_z = params.start_z_um
             plan.append(PhysicalWaypoint(z_um=retract_z, z_rate_um_s=params.retract_rate_um_s))
@@ -1750,7 +1764,10 @@ class WECSPMDriver:
                 )
         elif not self._submitted and self._hardware_complete:
             if self._method_name == "scan_hopping_it" and self._method_phase == "it" and not self._method_no_contact:
-                if self._method_point + 1 < len(self._method_grid):
+                if self._method_params.retract_has_no_travel(self._method_point):
+                    self._method_terminal = "aborted"
+                    self._method_detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
+                elif self._method_point + 1 < len(self._method_grid):
                     self._method_point += 1
                     self._submit_method_scan_approach(initial=False)
                 else:

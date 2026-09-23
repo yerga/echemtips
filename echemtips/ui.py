@@ -960,6 +960,12 @@ class ManagedExperimentPage(BasePage):
 
     def _show_update(self, update: object | None) -> None:
         self.status.update_status(update)
+        params = self.experiment.params
+        if update is not None and isinstance(params, (ScanHoppingCVParameters, ScanHoppingITParameters)):
+            notice = params.retraction_notice()
+            if notice:
+                self.status.detail_label.setText((update.detail + notice).replace("I-t", "I–t"))
+                self.status.detail_label.setVisible(True)
         if self.accept_approach_button is not None:
             state = update.state if update is not None else self.experiment.state
             self.accept_approach_button.setEnabled(state == ExperimentState.APPROACHING)
