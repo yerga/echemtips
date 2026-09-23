@@ -2,10 +2,11 @@
 
 Branch: `experimental/stop-recovery`.
 
-This checkout deliberately leaves the normal GUI and its Stop behavior unchanged.
-Run the **separate terminal diagnostic** below, not `python -m echemtips`, to test
-the new behavior. The diagnostic prints an experimental banner. It never reads
-or writes the normal GUI settings automatically, and never starts a GUI worker.
+This checkout leaves the **normal launcher** and its Stop behaviour unchanged.
+There are now two explicit test entry points: the terminal diagnostic below,
+and the opt-in **experimental GUI** in section 7. The experimental GUI is not
+enabled by `python -m echemtips`. It requires a private settings copy and shows
+**EXPERIMENTAL STOP RETURN** in its window title. Neither entry point is in main.
 
 The objective is to interrupt a program, discard uncertain data, identify a new
 sample boundary, and submit another program **without resetting the FPGA during
@@ -152,7 +153,8 @@ Have the controller's physical disable immediately accessible.
    software stopping, but does not guarantee stopping if communication fails.
 
 Do not proceed to a pipette in contact, electrochemistry, or a hopping scan with
-this diagnostic. Those require a subsequent reviewed implementation/test stage.
+this terminal diagnostic. Section 7 provides a separate GUI test stage, still
+requiring a clear probe and independent electrical checks.
 
 ## 6. Report results / return to stable
 
@@ -170,3 +172,81 @@ Local macOS experimental checkout: `/Users/yerga/My Drive/Development/echemtips-
 This version is not merged into `main`. If rejected later, archive/remove this
 checkout and branch using normal Git worktree management; no production-code
 cleanup is required.
+
+## 7. Experimental GUI: Stop experiment then return toward initial Z
+
+The branch now includes current production contact/scan fixes and the normal
+completion return. **Main contains only normal-completion return; it does not
+contain this experimental Stop workflow.** No new bitfile is required.
+
+### Update and launch separately on Windows
+
+Close all instrument apps. In the separate experimental checkout:
+
+```powershell
+git switch experimental/stop-recovery
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install -e ".[fpga]"
+.\.venv\Scripts\python.exe -m unittest discover -s tests -q
+.\.venv\Scripts\python.exe -m echemtips.experimental_stop_app --settings .echemtips\trial-settings.json
+```
+
+Use the settings COPY prepared in section 1. Set its saving directory to a
+separate trial-data folder. Do not pass the production settings file. First use
+Simulation mode to check buttons, the progress dialog and recording finalization.
+Verify the experimental window title before any hardware test.
+
+### Behaviour under test
+
+1. Stop acquisition ownership and cancel the FPGA program. Do not allow old
+   scan state-machine transitions to submit another pixel.
+2. Preserve trustworthy pre-stop samples and save the scientific CSV/JSON as
+   **aborted**. A recording/acquisition error prevents recovery and return.
+3. Attempt the empirical marker-based frame recovery described above, without
+   resetting/reconnecting the FPGA. Restore the unused secondary comparator
+   threshold before later approaches. Failures latch emergency stop.
+4. Return **Z only** toward the experiment's initial Z at its retract speed.
+   X/Y and E1/E2 stay at their stopped values. If already farther retracted,
+   hold that Z instead of moving toward the surface. Standalone CV has no
+   initial Z parameter, so it is stopped/rearmed without any Z move.
+5. Wait for the return waypoint and its final framed data to finish before
+   allowing another experiment. The stopped recording stays **aborted**, not
+   complete. Recovery/return samples are diagnostic-only and are intentionally
+   excluded from that CSV; its JSON links to `stop-recovery/*_gui.jsonl`.
+
+The progress dialog has an **Emergency stop** button; it requests a worker abort
+and prevents/interrupts the automatic return. Closing the application during the
+operation also requests this abort and defers closing until the worker exits.
+USB calls have finite driver timeouts but cannot be forcibly interrupted by Qt:
+keep a physical disable accessible. Ordinary Emergency Stop and faults never
+initiate recovery or return. A failure requires inspection/reconnection, not
+automatic retries. The normal manual Move piezo Stop is unchanged.
+
+### Hardware sequence (do not start near a surface)
+
+1. Complete the disconnected-output marker tests in sections 3–4 first. Keep
+   the actuator/amplifier command connections disabled during initial connection.
+2. With outputs disconnected, run an approach, stop mid-approach, and verify
+   AO2 returns slowly to the voltage corresponding to initial Z. Verify AO0/AO1
+   and the potential outputs do not jump during recovery or return.
+3. Repeat for Approach + CV, Approach + I–t, Scan + CV and Scan + I–t. Use a
+   controlled electrical signal to produce contact; no physical surface contact
+   is needed. Test Stop during approach, settling, CV/I–t, retraction and XY travel.
+4. Test while operator-paused and after a confirmed feedback event. Test at
+   least two Stop/restart cycles on the same connection. Confirm no queued hop
+   or potential waveform resumes after Stop.
+5. Repeat with a one-point scan completing normally: Z returns to initial Z,
+   and completion is not shown until the return finishes. Then verify a small
+   multi-point scan still uses ordinary contact-relative retracts between hops.
+6. Exercise the progress-dialog Emergency stop during recovery and during
+   return. No further automatic movement should follow. Do not induce USB
+   failure with a probe near the surface.
+7. Only after satisfactory electrical checks, enable the piezo with the probe
+   well clear and use slow rates and a small verified travel range. Verify
+   commanded Z and the physical sensor response separately, especially given
+   the unresolved lower-Z sensor plateau. Do not assume commanded zero means
+   a physically verified clearance.
+
+Send the branch commit, aborted CSV/JSON, GUI JSONL log and independent output
+traces before considering a transfer of this Stop behaviour into main. These
+software tests are not hardware safety validation.

@@ -5,6 +5,15 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Experimental branch only
+
+- Added opt-in `echemtips.experimental_stop_app --settings <private-copy.json>`:
+  Stop saves an aborted recording, attempts reset-free empirical frame recovery,
+  then returns Z toward initial Z at the retract speed. A progress dialog and
+  emergency abort keep the GUI responsive. Recovery/return data use a separate
+  diagnostic log; X/Y and potentials are held. The normal launcher is unchanged.
+  Not hardware-validated; follow `STOP_RECOVERY_TESTING.md` before live use.
+
 ### Fixed
 
 - Normal hopping CV/I–t completion now returns Z directly toward the initial

@@ -39,10 +39,11 @@ def tag_offsets(words: list[int], tag: int, repeats: int = 6) -> set[int]:
 class RecoveryTrial:
     """Own diagnostic I/O exclusively and log every recovery decision."""
 
-    def __init__(self, driver, log, timeout: float = 10.0):
+    def __init__(self, driver, log, timeout: float = 10.0, check_cancelled=None):
         self.driver = driver
         self.log = log
         self.timeout = timeout
+        self.check_cancelled = check_cancelled or (lambda: None)
 
     def event(self, kind: str, **values) -> None:
         """Flush one timestamped event to the private diagnostic log."""
@@ -57,6 +58,7 @@ class RecoveryTrial:
     def require_idle(self, expected: dict[str, int], line: int | None = None) -> None:
         """Reject target faults, queued execution or changed output indicators."""
         d = self.driver
+        self.check_cancelled()
         d._check_target_health(allow_external_stop=True)
         if not d._read_register("WaitingForWayPoints"):
             raise RuntimeError("Target is not waiting: possible surviving command")
@@ -101,6 +103,7 @@ class RecoveryTrial:
         d = self.driver
         original_line = int(d._read_register("LineNumber"))
         try:
+            self.check_cancelled()
             if not 0 <= original_line <= 32767:
                 raise RuntimeError("Trial supports line counters from 0 through 32767 only")
             if not d._stopped or d._framing_valid or not d._read_register("External Stop"):
@@ -152,6 +155,16 @@ class RecoveryTrial:
                     raise RuntimeError("Short boundary-alignment read")
                 self.event("discarded_boundary_tail", words=discarded)
             self.require_idle(expected, original_line)
+            # A Stop may interrupt the reusable contact-finish handshake.
+            # Never carry its forced secondary comparator into another method.
+            if hasattr(d, "DISABLED_SECONDARY_THRESHOLD"):
+                d._write_register("Feedback_Threshold 2", d.DISABLED_SECONDARY_THRESHOLD)
+                if int(d._read_register("Feedback_Threshold 2")) != d.DISABLED_SECONDARY_THRESHOLD:
+                    raise RuntimeError("Secondary feedback threshold did not restore after recovery")
+                d._operator_paused = False
+                d._contact_pause_deadline = None
+                d._contact_finish_reason = None
+                d._contact_finish_deadline = None
             d._retained_samples.clear()
             d._deferred_samples.clear()
             d._framing_valid = True
