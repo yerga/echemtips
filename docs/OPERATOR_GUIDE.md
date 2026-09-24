@@ -274,3 +274,35 @@ consult the JSON for actual marker completion. Live traces still show marker
 activity for operator oversight, but the analysis app excludes it from all
 treatments, plots, maps and movies. A visible footprint is not guaranteed on
 every sample; confirm a suitable imaging contrast in a small test array first.
+
+
+## Approach + CV scan-rate series
+
+Find this experiment under **All experiments → Single-point** (search “scan
+rate”), then optionally pin it as a sidebar favorite.
+
+1. Configure the normal approach, absolute-current contact threshold, optional
+   XY preposition and settling time.
+2. Set shared start potential, vertex 1, vertex 2 and **Cycles per scan rate**.
+3. Enter scan rates in V/s, one row per rate. **Add rate**, **Remove**, **Move up**
+   and **Move down** control the list. Order is preserved and repeated rates are
+   allowed, for example 0.1 → 0.5 → 1 → 0.1 V/s to check changes over time.
+4. Review the displayed total cycles and estimated CV duration, and start.
+
+There is **one approach and one initial settling period**. After confirmed
+contact, all cycles at the first rate run, followed by all cycles at the next
+rate. Each cycle is start → vertex 1 → vertex 2 → start. The probe stays at
+contact between rates; there is no extra approach or settling between them.
+When enabled, retract to Start Z occurs once after the entire series. Stop and
+emergency-stop behavior use the existing Approach + CV controls.
+
+The live CV view clears at each new rate and labels the currently displayed
+rate. Full-rate recording retains the entire series. In analysis, complete CVs
+are labeled by rate-block number, scan rate and cycle within that block; repeated
+rate values remain distinct. A partial final CV is not presented as complete.
+Surface changes and elapsed contact time can influence a scan-rate comparison;
+the software does not assume the surface remains unchanged.
+
+The list supports 1–1000 rates, subject to 10,000 total cycles and existing FPGA
+line-tag/velocity limits. Hardware checks the complete mixed-rate waveform for
+representability before starting motion. No bitfile modification is required.

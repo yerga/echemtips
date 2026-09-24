@@ -169,3 +169,19 @@ Analysis removes `-2` rows before segmentation, smoothing, statistics, plotting,
 mapping and movies, even if the JSON is missing. It reports the excluded count
 in `orientation_marker_samples_excluded` in the analysis metadata; original CSV
 data remain untouched. Third-party tools must also exclude these rows explicitly.
+
+
+### CV scan-rate series
+
+Approach + CV scan-rate series adds `cv_rate_index` to its CSV only: zero-based
+index into JSON `parameters.scan_rates_v_s`, or `-1` outside the CV waveform.
+`parameters.cycles` is the number of cycles **per rate**, not the total.
+`cv_scan_rate_v_s` is the legacy single-rate field; the ordered list is
+authoritative for series. Repeated rate values are separate blocks. Other experiment CSVs
+do not include this extra column. The FPGA context supplies hardware tags;
+simulation uses the corresponding waveform-block state.
+
+Analysis segments rates by the explicit tag, then extracts complete cycles
+within each block. Consequently, missing or incomplete blocks do not shift later
+rate identities. Smoothing does not cross rate boundaries. Separated-CV exports
+retain `cv_rate_index`; cycle numbering is local to each rate block.

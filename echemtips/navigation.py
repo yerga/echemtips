@@ -24,6 +24,7 @@ EXPERIMENTS = (
     ExperimentEntry("CV", "Single-point", "Standalone cyclic voltammetry without an approach.", "StandaloneCVPage", "cv"),
     ExperimentEntry("Approach", "Single-point", "Approach a surface using current feedback.", "StandaloneApproachPage", "approach"),
     ExperimentEntry("Approach + CV", "Single-point", "Detect contact, then record cyclic voltammetry.", "ApproachCVPage", "approach_cv"),
+    ExperimentEntry("Approach + CV scan-rate series", "Single-point", "One contact, then CVs at an ordered list of scan rates.", "ApproachCVSeriesPage", "approach_cv_series"),
     ExperimentEntry("Approach + I-t", "Single-point", "Detect contact, then measure potential steps and current over time.", "ApproachITPage", "approach_it"),
     ExperimentEntry("Scan hopping + CV", "Scanning", "Record cyclic voltammetry at each surface hop.", "ScanHoppingCVPage", "scan_cv"),
     ExperimentEntry("Scan hopping + I-t", "Scanning", "Record potential steps and current over time at each hop.", "ScanHoppingITPage", "scan_it"),

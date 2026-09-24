@@ -21,6 +21,25 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_scan_rate_series_editor_and_registration(self):
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        page = window.pages['Approach + CV scan-rate series']
+        editor = page.rate_editor
+        self.assertEqual(editor.values(), [.1, .25, .5, 1])
+        editor.set_rates([.2, 1, .2])
+        editor.table.setCurrentCell(1, 0)
+        editor.move_rate(-1)
+        self.assertEqual(editor.values(), [1, .2, .2])
+        editor.remove_rate()
+        self.assertEqual(editor.values(), [.2, .2])
+        self.assertEqual(page.parameters().scan_rates_v_s, [.2, .2])
+        self.assertEqual(page.parameters().total_cv_cycles, 4)
+        self.assertIs(page.experiment, window.experiments['approach_cv_series'])
+        self.assertTrue(page.scan_rate.isHidden())
+        self.assertEqual(page.start_button.text(), 'Start scan-rate series')
+        window.close()
+
     def test_scan_marker_controls_and_preview(self):
         from PySide6 import QtSvgWidgets
         window = EChemTipsApp()

@@ -21,6 +21,7 @@ from .acquisition import AcquisitionDrain, AcquisitionWorker
 from .branding import application_icon, configure_application_identity, logo_label
 from .backends import BackendError, InstrumentBackend, create_backend
 from .data import DataRecorder
+from .rate_editor import ScanRateEditor
 from .navigation import EXPERIMENTS, ANCHORED, FavoriteStore, ExperimentLibrary
 from .diagnostics import (
     pipette_radius_nm,
@@ -1247,9 +1248,11 @@ class ApproachCVPage(ManagedExperimentPage):
     experiment_key = "approach_cv"
     recording_name = "Approach + CV"
     manual_approach = True
+    rate_series = False
+    page_title = "Approach + CV"
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Approach + CV", "Detect contact, run a cyclic voltammogram only after confirmation, and retract safely.")
+        super().__init__(app, self.page_title, "Detect contact, run a cyclic voltammogram only after confirmation, and retract safely.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
         controls_host = QtWidgets.QWidget(); controls_layout = _vbox(controls_host)
         approach = Card("1 · Approach", "Z motion stops when the selected signal crosses the threshold.")
@@ -1282,6 +1285,35 @@ class ApproachCVPage(ManagedExperimentPage):
         self.cycles = add_field(cg, Field("Cycles", "2"), 2, 0)
         self.retract = Check("Retract to start Z after CV", True); cg.addWidget(self.retract, 2, 1)
         controls_layout.addWidget(cv)
+        if self.rate_series:
+            cg.removeWidget(self.scan_rate)
+            self.scan_rate.hide()
+            self.cycles.findChildren(QtWidgets.QLabel)[0].setText("Cycles per scan rate")
+            self.retract.setText("Retract after entire series")
+            rates_card = Card("4 · Scan-rate series", "One approach, then each rate in the listed order while remaining in contact.")
+            rate_layout = _vbox(rates_card.body)
+            self.rate_editor = ScanRateEditor()
+            rate_layout.addWidget(self.rate_editor)
+            self.rate_summary = label("", "muted", word_wrap=True)
+            rate_layout.addWidget(self.rate_summary)
+            controls_layout.addWidget(rates_card)
+
+            def refresh_rates(*_args):
+                """Show duration and total cycles without changing acquisition parameters."""
+                try:
+                    rates = self.rate_editor.values()
+                    cycles = self.cycles.integer()
+                    start, v1, v2 = self.cv_start.float(), self.vertex1.float(), self.vertex2.float()
+                    span = abs(v1-start) + abs(v2-v1) + abs(start-v2)
+                    seconds = span * cycles * sum(1 / rate for rate in rates)
+                    self.rate_summary.setText(f"{len(rates)} rates · {cycles * len(rates)} CV cycles · CV time ≈ {_format_duration(seconds)} (plus approach, settling and retract)")
+                except (ValueError, ZeroDivisionError, OverflowError):
+                    self.rate_summary.setText("Enter positive scan rates and a valid waveform.")
+
+            self.rate_editor.changed.connect(refresh_rates)
+            for field in (self.cycles, self.cv_start, self.vertex1, self.vertex2):
+                field.entry.textChanged.connect(refresh_rates)
+            refresh_rates()
         preview, self.program_preview = _program_card(
             "CV profile", "Potential E1 (V)",
             (self.cv_start, self.vertex1, self.vertex2, self.cv_start),
@@ -1290,7 +1322,7 @@ class ApproachCVPage(ManagedExperimentPage):
         controls_layout.addWidget(preview); controls_layout.addStretch(1)
         root.addWidget(_left_scroll(controls_host))
         right = QtWidgets.QWidget(); right_layout = _vbox(right)
-        right_layout.addWidget(self.build_status("Experiment status", "Start approach + CV"))
+        right_layout.addWidget(self.build_status("Experiment status", "Start scan-rate series" if self.rate_series else "Start approach + CV"))
         tabs = QtWidgets.QTabWidget(); traces = QtWidgets.QWidget(); plots = QtWidgets.QVBoxLayout(traces); plots.setSpacing(10); traces.setMinimumHeight(540)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
@@ -1298,7 +1330,12 @@ class ApproachCVPage(ManagedExperimentPage):
         plots.addWidget(_plot_card("Z position", self.z_plot), 1)
         plots.addWidget(_plot_card("Feedback current", self.current_plot), 1)
         tabs.addTab(PlotPanel(traces), "Experiment traces")
-        tabs.addTab(_plot_card("Cyclic voltammogram", self.cv_plot), "CV")
+        cv_card = _plot_card("Cyclic voltammogram", self.cv_plot)
+        self.rate_readout = label("", "muted", word_wrap=True)
+        cv_card.layout().addWidget(self.rate_readout)
+        self.rate_readout.setVisible(self.rate_series)
+        self._display_rate = -1
+        tabs.addTab(cv_card, "CV")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1312,7 +1349,8 @@ class ApproachCVPage(ManagedExperimentPage):
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
             feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=True,
             feedback_mode="magnitude", settling_time_s=self.settling_time.float(), cv_start_v=self.cv_start.float(),
-            cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.scan_rate.float(),
+            cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.rate_editor.values()[0] if self.rate_series else self.scan_rate.float(),
+            scan_rates_v_s=self.rate_editor.values() if self.rate_series else None,
             cycles=self.cycles.integer(), retract_after=self.retract.get(),
             x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
         )
@@ -1322,7 +1360,8 @@ class ApproachCVPage(ManagedExperimentPage):
         try:
             params = self.parameters()
             for plot in (self.z_plot, self.current_plot, self.cv_plot, self.approach_curve, self.approach_history): plot.clear()
-            self._begin(params); self.app.toast("Approach + CV started", "success")
+            self._display_rate = -1
+            self._begin(params); self.app.toast(f"{self.page_title} started", "success")
         except (ValueError, BackendError, RuntimeError, OSError) as exc: self.app.show_error(str(exc))
 
     def poll_status(self, sample: Sample) -> None:
@@ -1347,13 +1386,30 @@ class ApproachCVPage(ManagedExperimentPage):
             if stage == "approach" or (not hardware and state_before == ExperimentState.APPROACHING):
                 self.approach_curve.append(sample.z_um, current, redraw=False)
                 self.approach_history.append_timed(sample.elapsed_s, sample.z_um, current, redraw=False)
-            if stage == "cv" or (not stage and state_before == ExperimentState.CV):
+            if self.rate_series:
+                rate_index = experiment.tag_cv_sample(sample)
+                if rate_index >= 0:
+                    sample.cv_rate_index = rate_index
+                    if rate_index != self._display_rate:
+                        self.cv_plot.clear()
+                        self._display_rate = rate_index
+                        rate = experiment.params.cv_rates[rate_index]
+                        self.rate_readout.setText(f"Rate {rate_index + 1}/{len(experiment.params.cv_rates)} · {rate:g} V/s · latest rate shown; all rates are recorded")
+            if stage.startswith("cv") or (not stage and state_before == ExperimentState.CV):
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
             if not hardware and experiment.active: update = experiment.tick(sample)
         if hardware and experiment.active: update = experiment.tick(samples[-1])
         self.z_plot.request_redraw(); self.current_plot.request_redraw(); self.approach_curve.request_redraw(); self.approach_history.request_redraw()
         if cv_changed: self.cv_plot.request_redraw()
         self._show_update(update)
+
+
+class ApproachCVSeriesPage(ApproachCVPage):
+    """One landing followed by ordered scan-rate blocks, using shared CV services."""
+    experiment_key = "approach_cv_series"
+    recording_name = "Approach + CV scan-rate series"
+    page_title = "Approach + CV scan-rate series"
+    rate_series = True
 
 
 class ApproachITPage(ManagedExperimentPage):
@@ -1984,7 +2040,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     def _make_experiments(self) -> None:
         self.experiment = ApproachCVExperiment(self.backend, self.settings); self.scan_experiment = ScanHoppingCVExperiment(self.backend, self.settings); self.cv_experiment = CVExperiment(self.backend, self.settings)
         self.approach_experiment = ApproachExperiment(self.backend, self.settings); self.approach_it_experiment = ApproachITExperiment(self.backend, self.settings); self.scan_it_experiment = ScanHoppingITExperiment(self.backend, self.settings)
-        self.experiments = {"approach_cv": self.experiment, "scan_cv": self.scan_experiment, "cv": self.cv_experiment, "approach": self.approach_experiment, "approach_it": self.approach_it_experiment, "scan_it": self.scan_it_experiment}
+        self.experiments = {"approach_cv_series": ApproachCVExperiment(self.backend, self.settings), "approach_cv": self.experiment, "scan_cv": self.scan_experiment, "cv": self.cv_experiment, "approach": self.approach_experiment, "approach_it": self.approach_it_experiment, "scan_it": self.scan_it_experiment}
 
     def _build_shell(self) -> None:
         root = QtWidgets.QWidget(); root.setObjectName("window"); self.setCentralWidget(root); layout = QtWidgets.QHBoxLayout(root); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
@@ -2161,7 +2217,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     @property
     def active_parameters(self) -> object | None:
         """Return parameters associated with the recorder's active method."""
-        key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+        key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
         return self.experiments[key].params if key is not None else None
 
     def toggle_connection(self) -> None:
@@ -2221,7 +2277,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             watch.start_recording_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active)
             watch.stop_recording_button.setEnabled(watch_owned)
             watch.live_button.setEnabled(connected and not self.any_experiment_active)
-        for page_name, key in {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it"}.items():
+        for page_name, key in {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it"}.items():
             page = self.pages[page_name]; page.start_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); page.stop_button.setEnabled(self.experiments[key].active)
         diagnostic_busy = any(getattr(self.pages.get(name), "is_busy", False) for name in ("Preflight", "Characterize pipette"))
         for name in ("Preflight", "Characterize pipette"):
@@ -2415,6 +2471,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 page = self.pages.get(name)
                 if page is not None: page.on_samples([])
             if self.experiment.active and self.backend.hardware_approach_cv_required and self._sample is not None: self.pages["Approach + CV"].poll_status(self._sample)
+            series = EChemTipsApp._experiments_for(self).get("approach_cv_series")
+            if series is not None and series.active and self.backend.hardware_approach_cv_required and self._sample is not None:
+                self.pages["Approach + CV scan-rate series"].poll_status(self._sample)
         # Final drains can arrive after the experiment becomes inactive. Keep
         # their marker tags too, so no tail samples leak into analysis plots.
         if self.recorder.active and self.recorder.name in {"Scan Hopping CV", "Scan Hopping IT"}:
@@ -2430,6 +2489,11 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                     point = min(experiment.point_index, len(experiment._grid) - 1)
                 if 0 <= point < len(experiment._grid):
                     experiment._tag(sample, point)
+        if self.recorder.active and self.recorder.name == "Approach + CV scan-rate series" and self.backend.hardware_approach_cv_required:
+            for sample in samples:
+                context = self.backend.hardware_approach_context(sample.line_number)
+                if context.startswith("cv:"):
+                    sample.cv_rate_index = int(context.split(":")[1])
         for sample in samples: self.recorder.append(sample)
         if finalize: self._finalize_experiments(bool(samples))
 
@@ -2439,7 +2503,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not self.recorder.active:
             if callable(sync): sync()
             return
-        key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+        key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
         if key is None:
             if callable(sync): sync()
             return
@@ -2464,7 +2528,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 if worker is None: samples, acquisition_error = self.backend.read_samples(), None
                 else: drained = worker.drain(); samples, acquisition_error = drained.samples, drained.error
                 EChemTipsApp._consume_acquired(self, samples, finalize=False)
-                key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+                key = {"CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
                 terminal = bool(self.recorder.active and key is not None and EChemTipsApp._experiments_for(self)[key].state in (ExperimentState.COMPLETE, ExperimentState.ABORTED))
                 if terminal and worker is not None:
                     final = worker.pause_and_snapshot(); EChemTipsApp._consume_acquired(self, final.samples, finalize=False); samples += final.samples; acquisition_error = acquisition_error or final.error; worker.resume()

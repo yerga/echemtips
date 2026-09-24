@@ -7,6 +7,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Approach + CV scan-rate series: editable ordered rate list, cycles per rate,
+  shared contact-gated simulation/FPGA workflow and rate-aware CV analysis.
+
 - Default-on optional orientation landing for hopping CV and I–t, shared scan
   preview and exported orientation SVG; marker samples are retained separately
   in recordings and excluded from analysis.
