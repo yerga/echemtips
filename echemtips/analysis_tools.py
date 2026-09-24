@@ -19,6 +19,7 @@ class Selection:
     rows: NumericRows
     scope: str
     pixel: int = -1
+    cycle: int = 1
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ def cv_selections(dataset: AnalysisDataset, cycles=None) -> list[Selection]:
         if not isinstance(rows, NumericRows):
             columns = tuple(rows[0])
             rows = NumericRows(columns, [[row[c] for c in columns] for row in rows])
-        result.append(Selection(f"CV {cycle.label}", rows, "Complete CV cycle", cycle.pixel))
+        result.append(Selection(f"CV {cycle.label}", rows, "Complete CV cycle", cycle.pixel, cycle.number))
     return result
 
 
