@@ -38,6 +38,14 @@ A missing leg or potential outside its recorded range produces a blank cell.
 2. Select **Map movie** and Current 1 or Current 2.
 3. Choose the frame axis:
    - **CV potential:** current map as potential progresses along one selected leg.
+     Choose **Whole CV · Start → V1 → V2 → Start** in the segment selector to
+     animate the entire cycle, including both reversals. Repeated potentials
+     use their own chronological sweep's current, never a mixture of branches.
+     Frames are distributed approximately by potential travel, retaining the
+     vertices before frame skipping. Preview/export captions identify the active
+     leg; the movie recipe records each frame's leg. Cycle selection and cycle
+     averaging apply to the entire waveform. At least four frames are required
+     when all three legs have nonzero length.
    - **CV time:** current map against time from the selected CV cycle's start.
    - **I–t time:** current map against time from the surface potential program's start.
 4. For CVs, choose the per-hop cycle or explicit cycle average; potential movies

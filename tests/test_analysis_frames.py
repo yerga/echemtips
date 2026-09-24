@@ -19,6 +19,30 @@ def cv_dataset():
     return AnalysisDataset(Path("scan.csv"),columns,NumericRows(columns,rows),metadata)
 
 class FrameTests(unittest.TestCase):
+    def test_whole_cv_keeps_reversals_cycle_selection_and_sweep_specific_current(self):
+        d=cv_dataset(); groups=cv_selections(d)
+        first=prepare_frames(d,groups,leg=3,cycle=1,count=41)
+        second=prepare_frames(d,groups,leg=3,cycle=2,count=41)
+        self.assertEqual(len(first.axis),41)
+        self.assertAlmostEqual(first.axis[0],-.2); self.assertAlmostEqual(first.axis[-1],-.2)
+        self.assertAlmostEqual(first.axis.max(),.6); self.assertAlmostEqual(first.axis.min(),-.4)
+        self.assertLess(np.argmax(first.axis),np.argmin(first.axis))
+        for leg in range(3):
+            mask=np.asarray(first.recipe["frame_segments"])==leg
+            reference=prepare_frames(d,groups,leg=leg,cycle=1,axis=first.axis[mask])
+            np.testing.assert_allclose(first.values[mask],reference.values,equal_nan=True)
+        np.testing.assert_allclose(second.values-first.values,10,atol=1e-10)
+        skipped=prepare_frames(d,groups,leg=3,count=41,stride=3)
+        np.testing.assert_allclose(skipped.axis,first.axis[::3])
+        average=prepare_frames(d,groups,leg=3,cycle=None,count=41)
+        np.testing.assert_allclose(average.values-first.values,5,atol=1e-10)
+
+    def test_whole_cv_handles_zero_length_return_leg(self):
+        d=cv_dataset(); d.metadata["parameters"]["cv_vertex2_v"]=-.2
+        frames=prepare_frames(d,cv_selections(d),leg=3,count=20)
+        self.assertNotIn(2,frames.recipe["frame_segments"])
+        self.assertAlmostEqual(frames.axis[-1],-.2)
+
     def test_three_legs_and_cycle_numbers_have_distinct_crossings(self):
         d=cv_dataset(); groups=cv_selections(d)
         self.assertEqual(len(groups),6)

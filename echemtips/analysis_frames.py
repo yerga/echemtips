@@ -129,6 +129,53 @@ class MapFrames:
                      value=float(value),samples=1)
                 for pixel,value in zip(self.pixels,self.values[frame]) if np.isfinite(value)]
 
+def whole_cv_frames(dataset, selections, *, channel, cycle, count, stride, excluded, cancelled):
+    """Concatenate branch-resolved maps in waveform order, retaining both reversals.
+
+    Distribute the requested frames by potential travel, with each nonzero leg
+    receiving at least one interval. Repeated potentials remain distinct frames.
+    """
+    s,a,b=cv_targets(dataset)
+    targets=(s,a,b,s); lengths=np.abs(np.diff(targets))
+    active=np.flatnonzero(lengths>0)
+    if not np.isfinite(targets).all() or not len(active):
+        raise AnalysisError("Whole-CV movies require a finite, nonconstant potential program.")
+    if not len(active)+1<=count<=2000 or not 1<=stride<=100:
+        raise AnalysisError(f"Whole CV requires {len(active)+1}–2000 frames and a stride of 1–100.")
+    intervals=np.zeros(3,dtype=int); intervals[active]=1
+    remaining=count-1-len(active)
+    shares=remaining*lengths/lengths.sum(); intervals+=np.floor(shares).astype(int)
+    for leg in np.argsort(-(shares-np.floor(shares)))[:count-1-int(intervals.sum())]: intervals[leg]+=1
+    axis=[]; segments=[]
+    for leg in active:
+        axis.extend(np.linspace(targets[leg],targets[leg+1],intervals[leg],endpoint=False))
+        segments.extend([int(leg)]*intervals[leg])
+    axis.append(s); segments.append(int(active[-1]))
+    axis=np.asarray(axis)[::stride]; segments=np.asarray(segments)[::stride]
+    selections=list(selections); parts=[]
+    for leg in active:
+        mask=segments==leg
+        if not mask.any(): continue
+        try:
+            part=prepare_frames(dataset,selections,channel=channel,cycle=cycle,leg=int(leg),
+                                axis=axis[mask],excluded=excluded,cancelled=cancelled)
+        except AnalysisError:
+            if cancelled(): raise
+            continue  # A missing segment stays blank, never borrows the other sweep.
+        parts.append((mask,part))
+    if not parts: raise AnalysisError("No usable samples for the whole CV.")
+    pixels=sorted({pixel for _,part in parts for pixel in part.pixels})
+    if len(axis)*len(pixels)>20_000_000: raise AnalysisError("Reduce movie frame count: too many hop/frame values.")
+    values=np.full((len(axis),len(pixels)),np.nan); columns={p:i for i,p in enumerate(pixels)}
+    for mask,part in parts:
+        values[np.ix_(np.flatnonzero(mask),[columns[p] for p in part.pixels])]=part.values
+    first=parts[0][1]
+    recipe={**first.recipe,"leg":3,"frame_segments":segments.tolist(),"waveform_v":list(targets)}
+    result=MapFrames(axis,values,pixels,first.coordinates,recipe,len(first.coordinates)-len(pixels))
+    result.auto_limits=result.limits("Auto")
+    return result
+
+
 def prepare_frames(dataset, selections, *, channel="current1_na", kind="CV potential",
                    cycle=1, leg=0, axis=None, count=120, stride=1, excluded=(), cancelled=lambda:False):
     """Prepare frames once off-thread; reject unmatched hops and limit memory.
@@ -136,6 +183,10 @@ def prepare_frames(dataset, selections, *, channel="current1_na", kind="CV poten
     A cycle number is per hop, not the global position in the cycle list. `None`
     averages all complete cycles. Exclusions are zero-based scan_pixel IDs.
     """
+    if kind=="CV potential" and leg==3:
+        if axis is not None: raise AnalysisError("Whole-CV movies build their chronological axis from the saved waveform.")
+        return whole_cv_frames(dataset,selections,channel=channel,cycle=cycle,count=count,
+                               stride=stride,excluded=excluded,cancelled=cancelled)
     grid=(dataset.metadata.get("scan_grid") or {}).get("pixels",[])
     coordinates={int(p["scan_pixel"]):(float(p["x_um"]),float(p["y_um"])) for p in grid}
     if not coordinates or not all(np.isfinite(v).all() for v in coordinates.values()):

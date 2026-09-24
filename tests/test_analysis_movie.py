@@ -22,6 +22,7 @@ class MovieTests(unittest.TestCase):
         d=cv_dataset(); panel=MoviePanel(); panel.resize(960,700); panel.show()
         try:
             panel.set_dataset(d,dict(cv=cv_selections(d),hops=hop_selections(d)))
+            panel.leg.setCurrentIndex(3)
             panel.count.setValue(5); panel.build()
             deadline=time.monotonic()+5
             while panel.frames is None and time.monotonic()<deadline:
@@ -29,6 +30,7 @@ class MovieTests(unittest.TestCase):
             self.assertIsNotNone(panel.frames,panel.notice.text())
             panel.slider.setValue(2); APP.processEvents()
             self.assertIn("Frame 3/5",panel.notice.text())
+            self.assertIn("Whole CV",panel.notice.text())
             panel.colour.setCurrentText("Manual"); panel.low.setValue(-2); panel.high.setValue(2)
             self.assertEqual(panel.map.fixed_limits,(-2,2))
             panel.toggle(); self.assertTrue(panel.timer.isActive())
@@ -43,14 +45,14 @@ class MovieTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("ffmpeg"),"FFmpeg not installed")
     def test_real_mp4_frame_count_and_cancellation_preserves_existing_file(self):
-        d=cv_dataset(); frames=prepare_frames(d,cv_selections(d),count=3)
+        d=cv_dataset(); frames=prepare_frames(d,cv_selections(d),count=7,leg=3)
         with TemporaryDirectory() as folder:
             path=Path(folder)/"movie.mp4"
             export_movie(frames,path,fps=10,hold_ms=200)
             self.assertGreater(path.stat().st_size,1000)
             if shutil.which("ffprobe"):
                 info=json.loads(subprocess.check_output(["ffprobe","-v","error","-count_frames","-show_entries","stream=nb_read_frames,width,height","-of","json",str(path)]))
-                self.assertEqual(info["streams"][0]["nb_read_frames"],"6")
+                self.assertEqual(info["streams"][0]["nb_read_frames"],"14")
             self.assertEqual(json.loads(path.with_suffix(".mp4.json").read_text())["fps"],10)
             original=path.read_bytes()
             with self.assertRaises(AnalysisError): export_movie(frames,path,cancelled=lambda:True)

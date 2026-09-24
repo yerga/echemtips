@@ -37,7 +37,7 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     p.setFont(QtGui.QFont("Arial",11))
     p.drawText(40,64,f'Current {frames.recipe["channel"][7]} (nA) · cycle {cycle if cycle is not None else "average"} · {frames.recipe["polarity"]}')
     if frames.recipe["kind"]=="CV potential":
-        p.drawText(40,86,leg_labels_from_recipe(frames))
+        p.drawText(40,86,leg_labels_from_recipe(frames,index))
     xs=sorted({v[0] for v in frames.coordinates.values()}); ys=sorted({v[1] for v in frames.coordinates.values()})
     dx=min(np.diff(xs)) if len(xs)>1 else 1.; dy=min(np.diff(ys)) if len(ys)>1 else 1.
     xmin,xmax=xs[0]-dx/2,xs[-1]+dx/2; ymin,ymax=ys[0]-dy/2,ys[-1]+dy/2
@@ -65,9 +65,11 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     p.end()
     return np.frombuffer(image.constBits(),dtype=np.uint8).reshape(height,image.bytesPerLine())[:,:width*3].copy().tobytes()
 
-def leg_labels_from_recipe(frames):
+def leg_labels_from_recipe(frames, index=0):
     """Describe the selected chronological CV leg for the exported caption."""
     from .analysis_frames import LEG_NAMES
+    if frames.recipe["leg"]==3:
+        return "Whole CV · "+LEG_NAMES[frames.recipe["frame_segments"][index]]
     return LEG_NAMES[frames.recipe["leg"]]
 
 def export_movie(frames, path, *, fps=20, hold_ms=100, palette="viridis", mode="Auto",
@@ -138,6 +140,7 @@ class MoviePanel(QtWidgets.QWidget):
             w=QtWidgets.QSpinBox(); w.setRange(low,high); w.setValue(value); return w
         self.kind=combo(("CV potential","CV time","I–t time")); self.channel=combo(("current1_na","current2_na"))
         self.cycle=combo(("Cycle 1",)); self.leg=combo(leg_labels(type("D",(),{"metadata":{}})()))
+        self.leg.addItem("Whole CV · Start → V1 → V2 → Start")
         self.count=spin(2,2000,120); self.stride=spin(1,100,1)
         self.fps=spin(1,120,20); self.hold=spin(1,10000,100); self.hold.setSuffix(" ms")
         self.colour=combo(("Auto","Dynamic","Manual")); self.palette=combo(("viridis","plasma","cividis","inferno"))
@@ -207,6 +210,7 @@ class MoviePanel(QtWidgets.QWidget):
             if c in dataset.columns: self.channel.addItem("Current "+c[7],c)
         for number in sorted({s.cycle for s in groups.get("cv",[])}): self.cycle.addItem(f"Cycle {number}",number)
         self.cycle.addItem("Average complete cycles",None); self.leg.addItems(leg_labels(dataset))
+        self.leg.addItem("Whole CV · Start → V1 → V2 → Start")
         for index in range(self.leg.count()): self.leg.setItemData(index,self.leg.itemText(index),QtCore.Qt.ItemDataRole.ToolTipRole)
         for w in (self.channel,self.cycle,self.leg): w.blockSignals(False)
         self.kind.setCurrentText("CV potential" if groups.get("cv") else "I–t time")
@@ -263,6 +267,8 @@ class MoviePanel(QtWidgets.QWidget):
         self.map.set_data({(yi[p["y_um"]],xi[p["x_um"]]):p["value"] for p in points},len(ys),len(xs),x_values=xs,y_values=ys)
         unit="V" if frames.recipe["kind"]=="CV potential" else "s from surface-program start" if frames.recipe["kind"]=="I–t time" else "s from cycle start"
         self.notice.setText(f"Frame {index+1}/{len(frames.axis)} · {frames.axis[index]:.5g} {unit} · {len(points)} valid hops · {frames.omitted} omitted · {interval} ms/frame. Auto limits suppress extreme outliers; values are unchanged.")
+        if frames.recipe["kind"]=="CV potential" and frames.recipe["leg"]==3:
+            self.notice.setText(leg_labels_from_recipe(frames,index)+" · "+self.notice.text())
 
     def toggle(self):
         """Toggle preview playback without modifying prepared samples."""
