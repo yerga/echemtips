@@ -1,5 +1,8 @@
 # Analysis workbench
 
+For cycle-resolved CV maps, E–t/i–t views and MP4 map animations, see
+[CV views and map movies](MAP_MOVIES.md).
+
 The analysis app is independent of the instrument connection. It never sends
 FPGA commands or modifies the original recording. No additional libraries are
 needed for eChemTips CSV/JSON files; install `.[analysis]` for legacy TDMS import.

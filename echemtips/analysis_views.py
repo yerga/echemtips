@@ -229,6 +229,9 @@ class ExplorerPanel(QtWidgets.QWidget):
         export_result(self, self.dataset, zip(x, y), (result["x_column"], result["y_column"] + "_processed"), result, "_analysis")
 
 
+from .analysis_frames import prepare_frames, leg_labels
+
+
 class MapPanel(QtWidgets.QWidget):
     """Physical hop statistics and direction-specific CV potential maps."""
     hop_selected = QtCore.Signal(int)
@@ -244,21 +247,28 @@ class MapPanel(QtWidgets.QWidget):
         self.palette.addItems(("viridis", "plasma", "cividis", "inferno"))
         self.potential = QtWidgets.QDoubleSpinBox(); self.potential.setRange(-100, 100); self.potential.setDecimals(4); self.potential.setSuffix(" V")
         self.potential.setKeyboardTracking(False)
-        self.direction = QtWidgets.QComboBox(); self.direction.addItems(("Increasing E", "Decreasing E"))
+        self.direction = QtWidgets.QComboBox(); self.direction.addItems(("Start → Vertex 1", "Vertex 1 → Vertex 2", "Vertex 2 → Start"))
+        self.cycle = QtWidgets.QComboBox(); self.cycle.addItem("Cycle 1", 1)
+        self.cycle.setToolTip("Cycle number within each hop. Missing or incomplete cycles are left blank.")
         controls.addWidget(self.channel, 0, 0); controls.addWidget(self.statistic, 0, 1); controls.addWidget(self.palette, 0, 2)
         controls.addWidget(self.potential, 1, 0); controls.addWidget(self.direction, 1, 1)
-        controls.addWidget(button("Export map…", self._export), 1, 2)
+        controls.addWidget(self.cycle, 1, 2)
+        controls.addWidget(button("Export map…", self._export), 2, 2)
         layout.addLayout(controls)
         self.notice = label("Open a scan recording with physical grid metadata.", "muted", word_wrap=True)
         layout.addWidget(self.notice)
         self.map = Heatmap("nA", "Whole-hop mean"); layout.addWidget(self.map, 1)
-        for combo in (self.channel, self.statistic, self.palette, self.direction): combo.currentIndexChanged.connect(self.refresh)
+        for combo in (self.channel, self.statistic, self.palette, self.direction, self.cycle): combo.currentIndexChanged.connect(self.refresh)
         self.potential.valueChanged.connect(self.refresh)
         self.map.view.scene().sigMouseClicked.connect(self._clicked)
 
     def set_dataset(self, dataset, cv_groups=(), hop_groups=()):
         """Discover numeric channels and use prepared CV subsets if available."""
         self.dataset, self.cv_groups = dataset, cv_groups
+        self.direction.blockSignals(True); self.direction.clear(); self.direction.addItems(leg_labels(dataset)); self.direction.blockSignals(False)
+        self.cycle.blockSignals(True); self.cycle.clear()
+        for number in sorted({group.cycle for group in cv_groups}): self.cycle.addItem(f"Cycle {number}", number)
+        self.cycle.addItem("Average complete cycles", None); self.cycle.blockSignals(False)
         self.hop_groups = hop_groups
         self.channel.blockSignals(True); self.channel.clear()
         for column in dataset.columns:
@@ -272,14 +282,15 @@ class MapPanel(QtWidgets.QWidget):
         """Render visited physical cells; never fill missing samples with zero."""
         self.points = []
         cv = self.statistic.currentText() == "CV at potential"
-        self.potential.setVisible(cv); self.direction.setVisible(cv)
+        self.potential.setVisible(cv); self.direction.setVisible(cv); self.cycle.setVisible(cv)
         if self.dataset is None: return
         try:
             if "scan_pixel" not in self.dataset.columns: raise AnalysisError("This recording has no scan_pixel channel.")
             channel = self.channel.currentData()
             if cv:
                 if channel not in {"current1_na", "current2_na"}: raise AnalysisError("Choose a current channel for CV potential maps.")
-                self.points = potential_map(self.dataset, self.cv_groups, channel, self.potential.value(), self.direction.currentIndex() == 0)
+                self.points = prepare_frames(self.dataset, self.cv_groups, channel=channel, cycle=self.cycle.currentData(),
+                                             leg=self.direction.currentIndex(), axis=[self.potential.value()]).points(0)
             else:
                 self.points = hop_map(self.dataset, channel, self.statistic.currentText(), self.hop_groups)
             if not self.points: raise AnalysisError("No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
@@ -293,7 +304,7 @@ class MapPanel(QtWidgets.QWidget):
             self.map.colormap_name = self.palette.currentText()
             self.map.set_data(values, len(ys), len(xs), x_values=xs, y_values=ys)
             self.map.setVisible(True)
-            self.notice.setText(("First selected-direction crossing per complete CV, interpolated then averaged across cycles." if cv else
+            self.notice.setText(("Selected chronological segment and cycle; adjacent samples interpolated, never extrapolated. Average mode uses only available complete cycles." if cv else
                 "Whole-hop statistics include approach and retract; these are not isolated surface data or confirmed contact Z.") + " Click a visited cell to inspect its trace.")
         except (AnalysisError, KeyError, TypeError, ValueError) as exc:
             self.map.setVisible(False); self.notice.setText(str(exc))
@@ -312,8 +323,9 @@ class MapPanel(QtWidgets.QWidget):
         columns = ("scan_pixel", "x_um", "y_um", "value", "samples")
         cv = self.statistic.currentText() == "CV at potential"
         export_result(self, self.dataset, ([p[c] for c in columns] for p in self.points), columns,
-            {"scope": "First crossing per complete CV, averaged across cycles" if cv else "Whole hop, all phases",
+            {"scope": "Selected chronological CV segment and cycle" if cv else "Whole hop, all phases",
              "channel": self.channel.currentData(), "statistic": self.statistic.currentText(),
              "potential_v": self.potential.value() if cv else None,
-             "direction": self.direction.currentText() if cv else None,
-             "samples_column": "contributing cycles" if cv else "finite samples", "unit": self.map.base_unit}, "_map")
+             "segment": self.direction.currentText() if cv else None,
+             "cycle": self.cycle.currentData() if cv else None,
+             "samples_column": "map observations" if cv else "finite samples", "unit": self.map.base_unit}, "_map")

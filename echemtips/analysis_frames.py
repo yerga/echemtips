@@ -15,6 +15,7 @@ def cv_targets(dataset):
         raise AnalysisError("CV waveform metadata is required; use Set CV program first.")
 
 def leg_labels(dataset):
+    """Label the chronological segments with the saved endpoint potentials."""
     try:
         s,a,b = cv_targets(dataset)
         return [f"{name} ({low:+g} → {high:+g} V)" for name,low,high in zip(LEG_NAMES,(s,a,b),(a,b,s))]
@@ -65,6 +66,7 @@ def it_surface_rows(dataset, selection):
         holds=[float(p[k]) for k in ("initial_hold_s","step_hold_s","return_hold_s")]
         cycles=int(p.get("cycles",1))
     except (KeyError,TypeError,ValueError): return None
+    if not np.isfinite(levels+holds).all() or not 1<=cycles<=10000: return None
     if min(holds)<0 or holds[0]<=0 or holds[1]<=0 or abs(levels[0]-levels[1])<.005: return None
     rows=selection.rows; m,c=rows.matrix,rows.columns
     t=m[:,c.index("elapsed_s")]; e=m[:,c.index("voltage1_v")]
@@ -100,6 +102,7 @@ class MapFrames:
     omitted: int = 0
 
     def limits(self, mode="Auto", frame=0, manual=None):
+        """Return robust movie-wide, per-frame, or validated manual colour limits."""
         if mode=="Manual":
             if manual is None or not np.isfinite(manual).all() or manual[0]>=manual[1]:
                 raise AnalysisError("Manual colour limits must be finite with minimum < maximum.")
@@ -121,6 +124,7 @@ class MapFrames:
         return float(low),float(high)
 
     def points(self, frame):
+        """Return finite map cells for one frame; missing data remain absent."""
         return [dict(scan_pixel=pixel,x_um=self.coordinates[pixel][0],y_um=self.coordinates[pixel][1],
                      value=float(value),samples=1)
                 for pixel,value in zip(self.pixels,self.values[frame]) if np.isfinite(value)]
@@ -160,6 +164,7 @@ def prepare_frames(dataset, selections, *, channel="current1_na", kind="CV poten
         if len(x)>1: prepared.append((selection.pixel,x,y))
     if not prepared: raise AnalysisError("No validated surface data for this cycle/segment. I–t needs a distinct initial→pulse step and a complete stationary program.")
     if axis is None:
+        if not 2<=count<=2000 or not 1<=stride<=100: raise AnalysisError("Use 2–2000 frames and a stride of 1–100.")
         low=min(float(np.min(x)) for _,x,_ in prepared); high=max(float(np.max(x)) for _,x,_ in prepared)
         if kind=="CV potential":
             s,a,b=cv_targets(dataset); low,high=((s,a),(a,b),(b,s))[leg]

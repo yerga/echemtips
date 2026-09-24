@@ -27,6 +27,7 @@ classifiers = [
 [project.optional-dependencies]
 fpga = ["nifpga>=22.0.0"]
 analysis = ["nptdms>=1.7"]
+movies = ["imageio-ffmpeg>=0.5,<1"]
 docs = [
     "mkdocs>=1.6,<2",
     "mkdocs-material>=9.6,<10",

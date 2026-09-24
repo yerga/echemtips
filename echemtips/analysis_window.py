@@ -151,6 +151,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.map_panel = MapPanel()
         self.map_panel.hop_selected.connect(self._inspect_hop)
         self.tabs.addTab(self.map_panel, "Hop maps")
+        from .analysis_movie import MoviePanel
+        self.movie_panel = MoviePanel()
+        self.tabs.addTab(self.movie_panel, "Map movie")
         self._build_table_tab()
         self._build_metadata_tab()
         self.statusBar().showMessage("Open a recording. Source files are never edited by analysis.")
@@ -171,6 +174,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cv_current.addItems(tuple(CURRENT_COLUMNS))
         self.cv_current.currentTextChanged.connect(self._refresh_cv_view)
         controls.addWidget(self.cv_current)
+        self.cv_view = QtWidgets.QComboBox(); self.cv_view.addItems(("i vs E", "E vs t", "i vs t"))
+        self.cv_view.currentIndexChanged.connect(self._refresh_cv_plot)
+        controls.addWidget(self.cv_view)
         controls.addWidget(button("Set CV program…", self._edit_cv_program))
         controls.addStretch(1)
         self.export_button = button("Export separated CVs…", self.export_cycles, "primary")
@@ -296,7 +302,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.dataset, self.cycles, self.groups = bundle
         self.source_dataset = task.source
         controls = (self.explorer.provider, self.explorer.selection, self.explorer.x_signal,
-                    self.explorer.y_signal, self.map_panel.channel, self.cv_current)
+                    self.explorer.y_signal, self.map_panel.channel, self.cv_current,
+                    self.map_panel.direction, self.map_panel.cycle,
+                    self.movie_panel.kind, self.movie_panel.channel, self.movie_panel.cycle, self.movie_panel.leg)
         previous = [control.currentText() for control in controls] if task.reprocessing else []
         bounds, baseline = self.explorer.bounds, self.explorer.baseline
         if task.reprocessing:
@@ -324,6 +332,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         """Discard stale load results when closing; never terminate worker I/O."""
         self._load_token += 1
         self.loading = False
+        self.movie_panel.shutdown()
         super().closeEvent(event)
 
     def _refresh_all(self) -> None:
@@ -347,6 +356,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.metric_labels["cycles"].setText(f"Complete CVs: {len(self.cycles)}")
         self.explorer.set_dataset(dataset, self.groups)
         self.map_panel.set_dataset(dataset, self.groups.get("cv", []), self.groups.get("hops", []))
+        self.movie_panel.set_dataset(dataset, self.groups)
         self.cv_current.blockSignals(True); self.cv_current.clear()
         self.cv_current.addItems([name for name, column in CURRENT_COLUMNS.items() if column in dataset.columns])
         self.cv_current.blockSignals(False)
@@ -387,7 +397,16 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         total = len(cycles)
         cycles = cycles[:50]
         column = CURRENT_COLUMNS[self.cv_current.currentText()]
-        self.cv_plot.set_data([(cycle.label, cycle.potential_v, cycle.current_na(column), PLOT_COLORS[i % len(PLOT_COLORS)]) for i, cycle in enumerate(cycles)])
+        view = self.cv_view.currentText()
+        self.cv_plot.x_label = "Potential E1 (V)" if view == "i vs E" else "Time from cycle start (s)"
+        self.cv_plot.y_label = "Potential E1 (V)" if view == "E vs t" else "Current (nA)"
+        series=[]
+        for i, cycle in enumerate(cycles):
+            times=[row["elapsed_s"] for row in cycle.rows]
+            x=cycle.potential_v if view == "i vs E" else [t-times[0] for t in times]
+            y=cycle.potential_v if view == "E vs t" else cycle.current_na(column)
+            series.append((cycle.label,x,y,PLOT_COLORS[i % len(PLOT_COLORS)]))
+        self.cv_plot.set_data(series)
         if len(cycles) == 1:
             maximum, max_v, minimum, min_v = cycles[0].peak_summary(column)
             kind = "Smoothed" if self.dataset.metadata.get("analysis_processing") else "Raw"
