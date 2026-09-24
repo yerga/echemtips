@@ -54,6 +54,8 @@ def contact_threshold_hit(
     raw = feedback_value(sample, channel)
     if baseline is None:
         baseline = raw
+    if mode == "magnitude":
+        return abs(raw) >= abs(threshold), baseline
     signal = raw if mode == "absolute" else raw - baseline
     comparison_threshold = threshold if mode == "absolute" else (abs(threshold) if greater_than else -abs(threshold))
     return (signal >= comparison_threshold if greater_than else signal <= comparison_threshold), baseline

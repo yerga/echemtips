@@ -610,7 +610,7 @@ class WECSPMDriver:
         """Finish a type-2 approach via its reusable secondary comparator.
 
         The target's EndCurrentLine gate is one-shot for the whole session.
-        A threshold below every signed-I16 value provides a level-held request
+        A threshold beyond the signed-I16 range provides a level-held request
         through type 2's existing comparator OR. Restore it only after waiting
         acknowledges completion. This does not pulse Stop or interrupt frames.
         """
@@ -629,8 +629,9 @@ class WECSPMDriver:
         self._contact_finish_reason = reason
         self._contact_finish_deadline = time.monotonic() + self.settings.hardware_ready_timeout_s
         try:
-            self._write_register("Feedback_Threshold 2", -32769)
-            if int(self._read_register("Feedback_Threshold 2")) != -32769:
+            forced_threshold = -32769 if self._secondary_greater_than else 32768
+            self._write_register("Feedback_Threshold 2", forced_threshold)
+            if int(self._read_register("Feedback_Threshold 2")) != forced_threshold:
                 raise RuntimeError("threshold readback mismatch")
         except Exception as exc:
             self._latch_command_timeout(f"FPGA did not acknowledge approach completion request: {exc}; reconnect required")
@@ -649,8 +650,8 @@ class WECSPMDriver:
         if waiting:
             if self._contact_finish_deadline is not None:
                 try:
-                    self._write_register("Feedback_Threshold 2", self.DISABLED_SECONDARY_THRESHOLD)
-                    if int(self._read_register("Feedback_Threshold 2")) != self.DISABLED_SECONDARY_THRESHOLD:
+                    self._write_register("Feedback_Threshold 2", self._secondary_threshold_raw)
+                    if int(self._read_register("Feedback_Threshold 2")) != self._secondary_threshold_raw:
                         raise RuntimeError("threshold readback mismatch")
                 except Exception as exc:
                     self._latch_command_timeout(f"Could not disarm secondary feedback: {exc}; reconnect required")
@@ -805,6 +806,9 @@ class WECSPMDriver:
         if not 0 <= config.update_interval_us <= 32767:
             raise ValueError("Feedback update interval must be 0..32767 us.")
         primary_raw = self._feedback_value_to_raw(config.primary_channel, config.primary_threshold)
+        secondary_raw = (self.DISABLED_SECONDARY_THRESHOLD if config.secondary_threshold is None
+                         else self._feedback_value_to_raw(config.primary_channel, config.secondary_threshold))
+        secondary_greater = config.secondary_threshold is None
         # The deployed bitfile still exposes legacy advanced-feedback
         # registers. Write fixed neutral values so stale target state cannot
         # activate a mode that eChemTips does not support.
@@ -812,9 +816,9 @@ class WECSPMDriver:
             ("FeedBackType", FEEDBACK_SIGNAL_CODES[config.primary_channel]),
             ("Feedback_Threshold", primary_raw),
             ("GreaterThan", bool(config.primary_greater_than)),
-            ("FeedBackType 2", FEEDBACK_SIGNAL_CODES["Current 2"]),
-            ("Feedback_Threshold 2", self.DISABLED_SECONDARY_THRESHOLD),
-            ("GreaterThan 2", True),
+            ("FeedBackType 2", FEEDBACK_SIGNAL_CODES["Current 2" if secondary_greater else config.primary_channel]),
+            ("Feedback_Threshold 2", secondary_raw),
+            ("GreaterThan 2", secondary_greater),
             ("P", 0.0),
             ("Upper limit Of dZ", 10),
             ("P2AvgWhole", 1),
@@ -836,6 +840,8 @@ class WECSPMDriver:
             except Exception:
                 pass
             raise RuntimeError(self._execution_detail) from exc
+        self._secondary_threshold_raw = secondary_raw
+        self._secondary_greater_than = secondary_greater
         self._feedback_update_interval_us = int(config.update_interval_us)
 
     def _configure_contact_feedback(
@@ -854,6 +860,12 @@ class WECSPMDriver:
         threshold. This intentionally avoids FPGA line type 8, whose deployed
         algorithm and completion behavior differ from eChemTips semantics.
         """
+        if mode == "magnitude":
+            threshold = abs(threshold)
+            self.configure_feedback(FeedbackConfiguration(
+                primary_channel=channel, primary_threshold=threshold,
+                primary_greater_than=True, secondary_threshold=-threshold))
+            return threshold
         effective_threshold = threshold
         if mode == "baseline_relative":
             signed_delta = abs(threshold) if greater_than else -abs(threshold)
@@ -976,7 +988,7 @@ class WECSPMDriver:
         self._approach_phase = phase
         self._scan_sequence = None
         self._approach_threshold_na = (
-            effective_threshold if params.feedback_mode == "absolute"
+            effective_threshold if params.feedback_mode != "baseline_relative"
             else (abs(params.feedback_threshold_na) if params.greater_than else -abs(params.feedback_threshold_na))
         )
         self._approach_feedback_channel = params.feedback_channel
@@ -1658,9 +1670,15 @@ class WECSPMDriver:
             [(point, "retract")], "retract", resume=True,
         )
 
+    def _secondary_contact_confirmed(self, mode: str) -> bool:
+        """Read negative-polarity evidence, excluding host-forced completion."""
+        return (mode == "magnitude" and self._contact_finish_reason is None
+                and bool(self._read_register("Feedback2 Boolean")))
+
     def _method_contact_confirmed(self, point: int) -> bool:
         return (
             point in self._method_contact_observed
+            or self._secondary_contact_confirmed(self._method_feedback_mode)
             or bool(self._read_register("Feedback1 Boolean"))
         )
 
@@ -1963,7 +1981,9 @@ class WECSPMDriver:
             self._method_contact_observed.add(self._method_point)
         self._execution_detail = "Operator accepted the current Z as contact"
 
-    def _feedback_hit(self, current_na: float, threshold_na: float, greater_than: bool) -> bool:
+    def _feedback_hit(self, current_na: float, threshold_na: float, greater_than: bool, mode: str = "absolute") -> bool:
+        if mode == "magnitude":
+            return abs(current_na) >= abs(threshold_na)
         return current_na >= threshold_na if greater_than else current_na <= threshold_na
 
     @staticmethod
@@ -1977,12 +1997,14 @@ class WECSPMDriver:
     def _approach_contact_confirmed(self) -> bool:
         return (
             self._approach_contact_observed
+            or self._secondary_contact_confirmed(self._approach_feedback_mode)
             or bool(self._read_register("Feedback1 Boolean"))
         )
 
     def _scan_contact_confirmed(self, point: int) -> bool:
         return (
             point in self._scan_contact_observed
+            or self._secondary_contact_confirmed(self._scan_feedback_mode)
             or bool(self._read_register("Feedback1 Boolean"))
         )
 
@@ -1998,8 +2020,8 @@ class WECSPMDriver:
                 current = self._sample_current(sample, self._approach_feedback_channel)
                 if self._approach_feedback_baseline is None:
                     self._approach_feedback_baseline = current
-                signal = current if self._approach_feedback_mode == "absolute" else current - self._approach_feedback_baseline
-                if self._feedback_hit(signal, self._approach_threshold_na, self._approach_greater_than):
+                signal = current if self._approach_feedback_mode != "baseline_relative" else current - self._approach_feedback_baseline
+                if self._feedback_hit(signal, self._approach_threshold_na, self._approach_greater_than, self._approach_feedback_mode):
                     self._approach_contact_observed = True
             point, scan_stage = self.scan_context(sample.line_number)
             if point >= 0 and scan_stage == "baseline":
@@ -2010,8 +2032,8 @@ class WECSPMDriver:
                 self._scan_last_approach_z[point] = sample.z_um
                 current = self._sample_current(sample, self._scan_feedback_channel)
                 baseline = self._scan_feedback_baseline.setdefault(point, current)
-                signal = current if self._scan_feedback_mode == "absolute" else current - baseline
-                if self._feedback_hit(signal, self._scan_threshold_na, self._scan_greater_than):
+                signal = current if self._scan_feedback_mode != "baseline_relative" else current - baseline
+                if self._feedback_hit(signal, self._scan_threshold_na, self._scan_greater_than, self._scan_feedback_mode):
                     self._scan_contact_observed.add(point)
             if previous_scan is not None and previous_scan[0] == point and previous_scan[1] == "approach" and scan_stage in {"settling", "cv"}:
                 if not self._scan_contact_confirmed(point):
@@ -2026,8 +2048,8 @@ class WECSPMDriver:
                 self._method_last_approach_z[method_point] = sample.z_um
                 current = self._sample_current(sample, self._method_feedback_channel)
                 baseline = self._method_feedback_baseline.setdefault(method_point, current)
-                signal = current if self._method_feedback_mode == "absolute" else current - baseline
-                if self._feedback_hit(signal, self._method_threshold, self._method_greater_than):
+                signal = current if self._method_feedback_mode != "baseline_relative" else current - baseline
+                if self._feedback_hit(signal, self._method_threshold, self._method_greater_than, self._method_feedback_mode):
                     self._method_contact_observed.add(method_point)
 
     def stop_motion(self) -> None:

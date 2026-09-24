@@ -81,14 +81,15 @@ def _feedback_current(sample: Sample, channel: str) -> float:
 
 def _contact_help() -> QtWidgets.QLabel:
     text = label(
-        "Contact: selected current crosses the threshold.\n"
+        "Contact: current reaches +threshold or −threshold.\n"
         "The approach ends and the next step starts automatically.",
         "muted",
         word_wrap=True,
     )
     text.setObjectName("contactHelp")
     text.setToolTip(
-        "Select Current 1 or Current 2, the threshold in pA, and whether contact occurs above or below it. "
+        "Select Current 1 or Current 2 and a threshold magnitude in pA. "
+        "For example, 2000 pA triggers at +2000 or −2000 pA. Keep the pre-contact baseline inside this range. "
         "After contact, the experiment continues automatically. Settling time may be zero."
     )
     text.setMaximumWidth(330)
@@ -1125,8 +1126,8 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.potential = add_field(form, Field("Approach potential E1", "0.1", "V"), 0, 0)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5)
         feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); form.addWidget(feedback_box, 0, 1)
-        self.threshold = add_field(form, Field("Contact threshold", "2000", "pA"), 1, 0)
-        self.greater = Check("Trigger when current is greater than threshold", True)
+        self.threshold = add_field(form, Field("Contact threshold |i|", "2000", "pA"), 1, 0)
+        self.greater = label("Contact at either current polarity", "muted", word_wrap=True)
         form.addWidget(self.greater, 1, 1)
         self.settling_time = add_field(form, Field("Settling time after contact", "0.5", "s"), 2, 0)
         form.addWidget(_contact_help(), 3, 0, 1, 2)
@@ -1162,7 +1163,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             retract_rate_um_s=self.retract_rate.float(), approach_voltage_v=self.potential.float(),
             feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA,
-            greater_than=self.greater.get(), feedback_mode="absolute",
+            greater_than=True, feedback_mode="magnitude",
             settling_time_s=self.settling_time.float(), retract_after=self.retract.get(),
             x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
         )
@@ -1215,9 +1216,9 @@ class ApproachCVPage(ManagedExperimentPage):
         choice_frame = QtWidgets.QWidget(); choice_layout = _vbox(choice_frame, spacing=5)
         choice_layout.addWidget(label("Feedback current", "muted")); choice_layout.addWidget(self.feedback_channel)
         ag.addWidget(choice_frame, 2, 0)
-        self.threshold = add_field(ag, Field("Contact threshold", "2000", "pA"), 2, 1)
+        self.threshold = add_field(ag, Field("Contact threshold |i|", "2000", "pA"), 2, 1)
         self.settling_time = add_field(ag, Field("Settling time after contact", "0.5", "s"), 3, 0)
-        self.greater_than = Check("Trigger when current is greater than threshold", True)
+        self.greater_than = label("Contact at either current polarity", "muted", word_wrap=True)
         ag.addWidget(self.greater_than, 3, 1)
         ag.addWidget(_contact_help(), 4, 0, 1, 2)
         controls_layout.addWidget(approach)
@@ -1263,8 +1264,8 @@ class ApproachCVPage(ManagedExperimentPage):
         return ApproachCVParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
-            feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=self.greater_than.get(),
-            feedback_mode="absolute", settling_time_s=self.settling_time.float(), cv_start_v=self.cv_start.float(),
+            feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=True,
+            feedback_mode="magnitude", settling_time_s=self.settling_time.float(), cv_start_v=self.cv_start.float(),
             cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.scan_rate.float(),
             cycles=self.cycles.integer(), retract_after=self.retract.get(),
             x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
@@ -1329,8 +1330,8 @@ class ApproachITPage(ManagedExperimentPage):
         g = _grid(contact.body)
         self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 0, 0)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 0, 1)
-        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 1, 0)
-        self.greater = Check("Trigger when current is greater than threshold", True); g.addWidget(self.greater, 1, 1)
+        self.threshold = add_field(g, Field("Contact threshold |i|", "2000", "pA"), 1, 0)
+        self.greater = label("Contact at either current polarity", "muted", word_wrap=True); g.addWidget(self.greater, 1, 1)
         self.settling_time = add_field(g, Field("Settling time after contact", "0.5", "s"), 2, 0)
         g.addWidget(_contact_help(), 3, 0, 1, 2)
         hl.addWidget(contact)
@@ -1368,8 +1369,8 @@ class ApproachITPage(ManagedExperimentPage):
         """Parse positioning, contact, settling, I–t, and retract controls."""
         return ApproachITParameters(
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
-            feedback_mode="absolute", settling_time_s=self.settling_time.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=True,
+            feedback_mode="magnitude", settling_time_s=self.settling_time.float(),
             retract_after=self.retract.get(), x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(), initial_potential_v=self.initial_v.float(),
             initial_hold_s=self.initial_t.float(), step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(),
             return_hold_s=self.return_t.float(), cycles=self.cycles.integer(),
@@ -1432,10 +1433,10 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.lateral_rate = add_field(g, Field("XY speed", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach speed", "15", "µm/s"), 1, 1)
         self.retract_rate = add_field(g, Field("Retract speed", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
         self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
-        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
+        self.threshold = add_field(g, Field("Contact threshold |i|", "2000", "pA"), 3, 1)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
         self.settling_time = add_field(g, Field("Settling time after contact", "0.5", "s"), 5, 0)
-        self.greater = Check("Trigger when current is greater than threshold", True); g.addWidget(self.greater, 5, 1)
+        self.greater = label("Contact at either current polarity", "muted", word_wrap=True); g.addWidget(self.greater, 5, 1)
         g.addWidget(_contact_help(), 6, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · Cyclic voltammetry", "Select the per-hop potential E1 waveform and current-map sampling potential.")
@@ -1476,7 +1477,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA,
-            greater_than=self.greater.get(), feedback_mode="absolute", settling_time_s=self.settling_time.float(),
+            greater_than=True, feedback_mode="magnitude", settling_time_s=self.settling_time.float(),
             cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
             cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
         )
@@ -1567,10 +1568,10 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.xy_rate = add_field(g, Field("XY speed", "50", "µm/s"), 1, 0); self.approach_rate = add_field(g, Field("Approach speed", "15", "µm/s"), 1, 1)
         self.retract_rate = add_field(g, Field("Retract speed", "50", "µm/s"), 2, 0); self.approach_v = add_field(g, Field("Approach potential E1", "0.1", "V"), 2, 1)
         self.retract_distance = add_field(g, Field("Retract distance from contact", "10", "µm"), 3, 0)
-        self.threshold = add_field(g, Field("Contact threshold", "2000", "pA"), 3, 1)
+        self.threshold = add_field(g, Field("Contact threshold |i|", "2000", "pA"), 3, 1)
         feedback_box = QtWidgets.QWidget(); feedback_layout = _vbox(feedback_box, spacing=5); feedback_layout.addWidget(label("Feedback current", "muted")); self.feedback_channel = Choice(FEEDBACK_CHANNELS, "Current 1"); feedback_layout.addWidget(self.feedback_channel); g.addWidget(feedback_box, 4, 0, 1, 2)
         self.settling_time = add_field(g, Field("Settling time after contact", "0.5", "s"), 5, 0)
-        self.greater = Check("Trigger when current is greater than threshold", True); g.addWidget(self.greater, 5, 1)
+        self.greater = label("Contact at either current polarity", "muted", word_wrap=True); g.addWidget(self.greater, 5, 1)
         g.addWidget(_contact_help(), 6, 0, 1, 2)
         hl.addWidget(movement)
         electrochemistry = Card("3 · I–t potential program", "Potential E1 follows initial → pulse → return at every hop.")
@@ -1607,8 +1608,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
         return ScanHoppingITParameters(
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
-            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=self.greater.get(),
-            feedback_mode="absolute", settling_time_s=self.settling_time.float(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
+            approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=True,
+            feedback_mode="magnitude", settling_time_s=self.settling_time.float(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
             step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
         )
 

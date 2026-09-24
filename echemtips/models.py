@@ -47,7 +47,7 @@ def _finite_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
-CONTACT_MODES = {"absolute", "baseline_relative"}
+CONTACT_MODES = {"absolute", "baseline_relative", "magnitude"}
 
 
 def hold_frame_count(duration_s: float) -> int:
@@ -188,6 +188,7 @@ class FeedbackConfiguration:
     primary_threshold: float = 2.0
     primary_greater_than: bool = True
     update_interval_us: int = 2
+    secondary_threshold: float | None = None
 
     @classmethod
     def from_settings(

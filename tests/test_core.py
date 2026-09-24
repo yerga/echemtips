@@ -445,6 +445,23 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.state, ExperimentState.COMPLETE)
         self.assertEqual(experiment.contact_z, 68)
 
+    def test_simulated_approach_accepts_both_polarities_on_either_channel(self):
+        for channel in ("Current 1", "Current 2"):
+            for current in (-3.0, 3.0):
+                with self.subTest(channel=channel, current=current):
+                    settings = AppSettings()
+                    backend = SimulationBackend(settings)
+                    backend.connect()
+                    experiment = ApproachExperiment(backend, settings)
+                    params = ApproachParameters(feedback_channel=channel, feedback_mode="magnitude", retract_after=False)
+                    experiment.start(params)
+                    experiment.tick_samples([Sample(0, 50, 50, params.start_z_um, .1, 0, 0, 0)])
+                    experiment.tick_samples([Sample(1, 50, 50, 68, .1, 0,
+                        current if channel == "Current 1" else 0,
+                        current if channel == "Current 2" else 0)])
+                    self.assertEqual(experiment.state, ExperimentState.COMPLETE)
+                    self.assertEqual(experiment.contact_z, 68)
+
     def test_standalone_approach_can_use_current_2_feedback(self) -> None:
         settings = AppSettings()
         backend = SimulationBackend(settings)

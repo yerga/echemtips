@@ -448,7 +448,7 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertAlmostEqual(float(threshold.variable.get()), 2000.0)
                 page = window.pages[page_name]
                 self.assertFalse(hasattr(page, "feedback_mode"))
-                self.assertEqual(page.parameters().feedback_mode, "absolute")
+                self.assertEqual(page.parameters().feedback_mode, "magnitude")
                 contact_help = page.findChild(QtWidgets.QLabel, "contactHelp")
                 self.assertIsNotNone(contact_help)
                 self.assertIn("next step starts automatically", contact_help.text())

@@ -30,7 +30,9 @@ Feedback2** directly into Z motion completion. This mode has no one-shot contact
 gate. Unforced completion of the terminal approach waypoint proves a hardware
 feedback event even if a brief transient was missed by host polling.
 
-The unused secondary comparator normally selects a signed-I16 current source,
+The UI now uses [either-polarity detection](BIPOLAR_CONTACT.md): both comparators
+select the same current, with positive and negative magnitude thresholds.
+For legacy signed-current API modes, the unused secondary comparator selects a signed-I16 current source,
 an I32 threshold of 32768, and the greater-than direction. No signed-I16 input
 can trigger it. The primary comparator remains the selected Current 1/2
 threshold, including a translated baseline-relative threshold.
@@ -38,13 +40,15 @@ threshold, including a translated baseline-relative threshold.
 Type 2 ignores LinearMove's natural completion flag and holds at its bounded
 endpoint without contact. The acquisition service detects the exact commanded
 endpoint in Applied Z and requests completion through the secondary comparator
-with threshold -32769 (always true for signed I16). That exit is explicitly
+with threshold -32769 for greater-than, or +32768 for less-than (always true
+for signed I16). That exit is explicitly
 classified as **no contact** and cannot authorize CV/I–t. Explicit manual
 acceptance uses the same reusable request but authorizes the continuation.
 At an endpoint/contact race the host may conservatively classify no contact.
 
 After target waiting acknowledges a requested exit, the secondary threshold is
-restored to 32768 and its register readback is verified before completion is
+restored to its configured value (negative contact threshold in magnitude mode,
+32768 in legacy signed mode) and its register readback is verified before completion is
 exposed. Feedback2 Boolean may stay latched while idle: the comparator loop
 stops when all axes finish. The ordinary positioning/baseline waypoint before
 each new approach refreshes it without feedback affecting motion. A missing

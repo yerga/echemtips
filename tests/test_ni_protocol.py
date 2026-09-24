@@ -463,23 +463,65 @@ class NativeDriverTests(unittest.TestCase):
         self.assertFalse(self.session.registers["External Pause"].value)
         self.assertTrue(self.session.registers["Internal Pause"].value)
 
-    def _start_contact_case(self, name):
+    def _start_contact_case(self, name, mode="absolute"):
         """Start any contact-gated hardware method at its approach waypoint."""
         self.setUp()
         if name == "approach_cv":
-            self.driver.start_approach_cv(ApproachCVParameters())
+            self.driver.start_approach_cv(ApproachCVParameters(feedback_mode=mode))
             status = self.driver.approach_cv_status
         elif name == "scan_cv":
-            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1))
+            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, feedback_mode=mode))
             status = self.driver.scan_hopping_cv_status
         else:
             params = {"approach": ApproachParameters(), "approach_it": ApproachITParameters(),
                       "scan_hopping_it": ScanHoppingITParameters(x_points=1, y_points=1)}[name]
-            self.driver.start_method(name, params)
+            self.driver.start_method(name, replace(params, feedback_mode=mode))
             status = self.driver.method_status
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.session.registers["WaitingForWayPoints"].value = False
         return status
+
+    def test_bipolar_comparators_match_simulation_on_both_current_channels(self):
+        from echemtips.experiments import contact_threshold_hit
+        for channel in ("Current 1", "Current 2"):
+            self.driver._configure_contact_feedback(channel, 2.0, True, "magnitude")
+            regs = self.session.registers
+            self.assertEqual(regs["FeedBackType"].value, FEEDBACK_SIGNAL_CODES[channel])
+            self.assertEqual(regs["FeedBackType 2"].value, FEEDBACK_SIGNAL_CODES[channel])
+            self.assertTrue(regs["GreaterThan"].value)
+            self.assertFalse(regs["GreaterThan 2"].value)
+            for current, expected in ((-3, True), (-1, False), (0, False), (1, False), (3, True)):
+                raw = self.driver._feedback_value_to_raw(channel, current)
+                hardware = raw >= regs["Feedback_Threshold"].value or raw <= regs["Feedback_Threshold 2"].value
+                sample = Sample(0, 0, 0, 0, 0, 0, current if channel == "Current 1" else 0,
+                                current if channel == "Current 2" else 0)
+                self.assertEqual(hardware, expected)
+                self.assertEqual(contact_threshold_hit(sample, channel, 2, True, "magnitude", None)[0], expected)
+                self.assertEqual(self.driver._feedback_hit(current, 2, True, "magnitude"), expected)
+
+    def test_bipolar_manual_and_limit_completion_restore_negative_threshold(self):
+        for name in ("approach", "approach_it", "approach_cv", "scan_cv", "scan_hopping_it"):
+            for manual in (False, True):
+                with self.subTest(method=name, manual=manual):
+                    status = self._start_contact_case(name, "magnitude")
+                    d, regs = self.driver, self.session.registers
+                    original = regs["Feedback_Threshold 2"].value
+                    if manual:
+                        d.accept_approach()
+                    else:
+                        regs["Applied Z"].value = d._program_waypoints[-1].z_position
+                        d.service()
+                    self.assertEqual(regs["Feedback_Threshold 2"].value, 32768)
+                    regs["Feedback2 Boolean"].value = True
+                    self.assertFalse(d._secondary_contact_confirmed("magnitude"))
+                    regs["WaitingForWayPoints"].value = True
+                    d.read_samples()
+                    self.assertEqual(regs["Feedback_Threshold 2"].value, original)
+                    result = status()
+                    if manual:
+                        self.assertNotEqual(result["stage"], "aborted")
+                    else:
+                        self.assertIn(result["stage"], ("aborted", "retracting"))
 
     def test_unused_comparator_cannot_pause_any_approach(self) -> None:
         # Target line type 1 wires Feedback1 OR Feedback2 to Internal Pause.
@@ -500,7 +542,7 @@ class NativeDriverTests(unittest.TestCase):
     def test_native_contact_scans_repeat_in_one_session_with_consumed_stop_latch(self) -> None:
         """Two 3x3 scans per mode; a consumed one-shot must never be needed."""
         for method in ("cv", "it"):
-            for mode in ("absolute", "baseline_relative"):
+            for mode in ("absolute", "baseline_relative", "magnitude"):
                 with self.subTest(method=method, mode=mode):
                     self.setUp()
                     d, regs = self.driver, self.session.registers
@@ -547,7 +589,8 @@ class NativeDriverTests(unittest.TestCase):
                             d.data_fifo.data.append(frame[-1])
                             self.assertEqual(len(d.read_samples()), 1)
                             self.assertEqual(status()["stage"], "cv" if method == "cv" else "it")
-                            self.assertEqual(regs["Feedback_Threshold 2"].value, 32768)
+                            expected = d._feedback_value_to_raw("Current 1", -2.0) if mode == "magnitude" else 32768
+                            self.assertEqual(regs["Feedback_Threshold 2"].value, expected)
                             self.assertFalse(regs["External Stop"].value)
                             self.assertTrue(regs["OnlyStopLineONCE Z"].value)
                             complete_program()
