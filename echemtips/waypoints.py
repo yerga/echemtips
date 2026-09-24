@@ -85,6 +85,26 @@ def cyclic_voltammetry_plan(
     return plan
 
 
+def approach_cv_followup_plan(params) -> tuple[list[PhysicalWaypoint], list[str]]:
+    """Compile the shared settling/rate-series/retract plan and sample contexts."""
+    plan = timed_hold_plan(params.settling_time_s)
+    contexts = ["settling"] * len(plan)
+    for index, rate in enumerate(params.cv_rates):
+        block = cyclic_voltammetry_plan(
+            start_v=params.cv_start_v, vertex1_v=params.cv_vertex1_v,
+            vertex2_v=params.cv_vertex2_v, scan_rate_v_s=rate, cycles=params.cycles,
+        )
+        if index:
+            block = block[1:]
+        plan.extend(block)
+        context = f"cv:{index}" if params.scan_rates_v_s is not None else "cv"
+        contexts.extend([context] * len(block))
+    if params.retract_after:
+        plan.append(PhysicalWaypoint(z_um=params.start_z_um, z_rate_um_s=max(10.0, params.approach_rate_um_s)))
+        contexts.append("retract")
+    return plan, contexts
+
+
 def potential_step_plan(
     steps: list[tuple[float, float, str]],
 ) -> tuple[list[PhysicalWaypoint], list[str]]:

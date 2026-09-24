@@ -271,6 +271,7 @@ class Sample:
     commanded_x_um: float = math.nan
     commanded_y_um: float = math.nan
     commanded_z_um: float = math.nan
+    cv_rate_index: int = -1
 
     def as_row(self) -> dict[str, float | int]:
         """Return every runtime field as a flat mapping."""
@@ -297,6 +298,25 @@ class ApproachCVParameters:
     retract_after: bool = True
     x_um: float | None = None
     y_um: float | None = None
+
+    scan_rates_v_s: list[float] | None = None
+
+    @property
+    def cv_rates(self) -> tuple[float, ...]:
+        """Return scan rates in acquisition order, preserving repeats."""
+        return tuple(self.scan_rates_v_s) if self.scan_rates_v_s is not None else (self.cv_scan_rate_v_s,)
+
+    @property
+    def total_cv_cycles(self) -> int:
+        """Return all cycles across the ordered scan-rate series."""
+        return self.cycles * len(self.cv_rates)
+
+    def cycle_description(self, cycle: int) -> str:
+        """Describe a zero-based global cycle using its rate and local cycle."""
+        index = min(len(self.cv_rates) - 1, max(0, cycle // self.cycles))
+        if self.scan_rates_v_s is None:
+            return f"CV cycle {min(cycle + 1, self.cycles)} of {self.cycles}"
+        return f"Rate {index + 1}/{len(self.cv_rates)} · {self.cv_rates[index]:g} V/s · cycle {cycle % self.cycles + 1}/{self.cycles}"
 
     @property
     def feedback_unit(self) -> str:
@@ -340,6 +360,12 @@ class ApproachCVParameters:
                 errors.append(f"{name} must be between -10 V and +10 V.")
             elif settings.mode == "NI FPGA" and abs(value * settings.command_voltage_ratio) > 10:
                 errors.append(f"{name} exceeds the AO3 range at the configured command ratio.")
+        if not self.cv_rates or len(self.cv_rates) > 1000:
+            errors.append("Enter between 1 and 1000 scan rates.")
+        elif any(not math.isfinite(rate) or rate <= 0 for rate in self.cv_rates):
+            errors.append("Every scan rate must be finite and greater than zero.")
+        if self.total_cv_cycles > 10000:
+            errors.append("The complete series must not exceed 10,000 CV cycles.")
         return errors
 
 

@@ -774,6 +774,14 @@ class NIFPGABackend(InstrumentBackend):
                 "Approach + CV requires a site driver with FPGA waypoint sequence support "
                 "(start_approach_cv, approach_cv_status, and stop_motion)."
             )
+        if params.scan_rates_v_s is not None and not (
+            getattr(self._driver, "supports_cv_rate_series", False) is True
+            and callable(getattr(self._driver, "approach_context", None))
+        ):
+            raise BackendError(
+                "The selected FPGA driver does not support CV scan-rate series. "
+                "Use the native driver or a site driver with explicit series support."
+            )
         self._require_idle_driver()
         self._register("External Stop").write(False)
         try:

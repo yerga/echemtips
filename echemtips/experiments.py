@@ -149,11 +149,11 @@ class ApproachCVExperiment:
         self.backend.set_voltage(1, p.cv_start_v)
         self._cv_voltage = p.cv_start_v
         self._segments = []
-        for _ in range(p.cycles):
+        for _ in range(p.total_cv_cycles):
             self._segments.extend((p.cv_vertex1_v, p.cv_vertex2_v, p.cv_start_v))
         self._segment_index = 0
         self.state = ExperimentState.CV
-        self.detail = f"CV cycle 1 of {p.cycles}"
+        self.detail = p.cycle_description(0)
 
     def _begin_settling(self) -> None:
         self.backend.stop_motion()
@@ -164,8 +164,22 @@ class ApproachCVExperiment:
         self.state = ExperimentState.SETTLING
         self.detail = f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
+    def tag_cv_sample(self, sample: Sample) -> int:
+        """Assign a rate-block ID only to samples acquired during series CV."""
+        index = -1
+        if self.params.scan_rates_v_s is not None:
+            if self._hardware_sequence:
+                context = self.backend.hardware_approach_context(sample.line_number)
+                if context.startswith("cv:"):
+                    index = int(context.split(":")[1])
+            elif self.state == ExperimentState.CV and self._segment_index < len(self._segments):
+                index = self._segment_index // (3 * self.params.cycles)
+            sample.cv_rate_index = index
+        return index
+
     def tick(self, sample: Sample) -> ExperimentUpdate:
         """Advance simulated stages or normalize current hardware status."""
+        self.tag_cv_sample(sample)
         if self._hardware_sequence and self.active:
             update = self.backend.hardware_approach_cv_status()
             state_by_stage = {
@@ -228,7 +242,8 @@ class ApproachCVExperiment:
         if self.state == ExperimentState.CV and self._segments:
             target = self._segments[self._segment_index]
             delta = target - self._cv_voltage
-            step = p.cv_scan_rate_v_s * dt
+            rate_index = self._segment_index // (3 * p.cycles)
+            step = p.cv_rates[rate_index] * dt
             if abs(delta) <= step:
                 self._cv_voltage = target
                 self._segment_index += 1
@@ -242,8 +257,7 @@ class ApproachCVExperiment:
                         self.detail = "Approach and CV complete"
                     self.progress = 0.96 if p.retract_after else 1.0
                 else:
-                    cycle = min(p.cycles, self._segment_index // 3 + 1)
-                    self.detail = f"CV cycle {cycle} of {p.cycles}"
+                    self.detail = p.cycle_description(self._segment_index // 3)
             else:
                 self._cv_voltage += step if delta > 0 else -step
             self.backend.set_voltage(1, self._cv_voltage)

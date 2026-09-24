@@ -12,7 +12,7 @@ import re
 import time
 from typing import Any, TextIO
 
-from .models import AppSettings, Sample, ScanHoppingCVParameters, ScanHoppingITParameters
+from .models import ApproachCVParameters, AppSettings, Sample, ScanHoppingCVParameters, ScanHoppingITParameters
 
 
 class DataRecorder:
@@ -353,6 +353,8 @@ class DataRecorder:
     @classmethod
     def _fields_for_parameters(cls, parameters: Any) -> tuple[str, ...]:
         omitted = set(cls._PER_SAMPLE_OMISSIONS)
+        if not isinstance(parameters, ApproachCVParameters) or parameters.scan_rates_v_s is None:
+            omitted.add("cv_rate_index")
         if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
             omitted.add("scan_pixel")
         return tuple(field.name for field in fields(Sample) if field.name not in omitted)

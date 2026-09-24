@@ -37,7 +37,7 @@ from .ni_protocol import (
 )
 from .waypoints import (
     CompiledWaypoints, PhysicalWaypoint, WaypointCompiler,
-    cyclic_voltammetry_plan, potential_step_plan, timed_hold_plan,
+    approach_cv_followup_plan, cyclic_voltammetry_plan, potential_step_plan, timed_hold_plan,
 )
 
 
@@ -58,6 +58,8 @@ class _ScanSequence:
 
 class WECSPMDriver:
     """Native host driver for the FIFO protocol in WEC-SPM FPGA Target.vi."""
+
+    supports_cv_rate_series = True
 
     BASELINE_HOLD_US = 25_000
     BASELINE_SAMPLE_COUNT = 16
@@ -900,7 +902,7 @@ class WECSPMDriver:
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("; ".join(errors))
-        if 1 + 3 * params.cycles + int(params.retract_after) > 65535:
+        if 1 + 3 * params.total_cv_cycles + int(params.retract_after) > 65535:
             raise ValueError("Reduce CV cycles: the streamed CV exceeds the verified line-tag span.")
         feedback_index = int(params.feedback_channel[-1])
         if abs(params.feedback_threshold_na * getattr(self.settings, f"current{feedback_index}_v_per_na")) > 10:
@@ -910,11 +912,15 @@ class WECSPMDriver:
             for voltage in (params.approach_voltage_v, params.cv_start_v, params.cv_vertex1_v, params.cv_vertex2_v)
         ):
             raise ValueError("A requested potential exceeds AO3 after applying the command-voltage ratio.")
+        if params.scan_rates_v_s is not None:
+            # Reject unrepresentable mixed-rate velocities before any approach.
+            plan, _contexts = approach_cv_followup_plan(params)
+            self.compiler.compile(plan, self._current_targets())
         self._prepare_command()
         baseline_line = int(self._read_register("LineNumber"))
         total_tags = (
             2 + int(params.feedback_mode == "baseline_relative")
-            + hold_frame_count(params.settling_time_s) + 1 + 3 * params.cycles + int(params.retract_after)
+            + hold_frame_count(params.settling_time_s) + 1 + 3 * params.total_cv_cycles + int(params.retract_after)
         )
         if baseline_line < 0 or baseline_line + total_tags > 32767:
             raise ValueError(
@@ -1025,25 +1031,12 @@ class WECSPMDriver:
         if params is None:
             raise RuntimeError("Approach parameters were not retained for the CV follow-up")
         current = self._current_targets()
-        z_speed = max(10.0, params.approach_rate_um_s)
-        settle_plan = timed_hold_plan(params.settling_time_s)
-        plan = settle_plan + cyclic_voltammetry_plan(
-            start_v=params.cv_start_v,
-            vertex1_v=params.cv_vertex1_v,
-            vertex2_v=params.cv_vertex2_v,
-            scan_rate_v_s=params.cv_scan_rate_v_s,
-            cycles=params.cycles,
-            retract_z_um=params.start_z_um if params.retract_after else None,
-            retract_rate_um_s=z_speed if params.retract_after else None,
-        )
+        plan, contexts = approach_cv_followup_plan(params)
         compiled = self.compiler.compile(plan, current)
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
         retract_index = len(compiled.waypoints) - 1 if params.retract_after else None
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
-        settle_count = len(settle_plan)
-        contexts = ["settling"] * settle_count + ["cv"] * (len(compiled.waypoints) - settle_count)
-        if retract_index is not None:
-            contexts[retract_index] = "retract"
+        settle_count = hold_frame_count(params.settling_time_s)
         self._approach_history.append((self._program_baseline, contexts))
         self._sequence = _Sequence(self._program_baseline, len(compiled.waypoints), settle_count,
                                    retract_index - 1 if retract_index is not None else len(compiled.waypoints) - 1,
@@ -1159,7 +1152,8 @@ class WECSPMDriver:
         if index < sequence.cv_first:
             return {"stage": "settling", "detail": f"Holding contact for {self._approach_params.settling_time_s:g} s", "progress": progress}
         cycle = min((index - sequence.cv_first) // 3 + 1, max(1, (sequence.cv_last - sequence.cv_first) // 3 + 1))
-        return {"stage": "cv", "detail": f"FPGA is running CV cycle {cycle}", "progress": progress}
+        cycle_index = max(0, index - sequence.cv_first - 1) // 3
+        return {"stage": "cv", "detail": self._approach_params.cycle_description(cycle_index), "progress": progress}
 
     def approach_context(self, line_number: int) -> str:
         """Map a FIFO sample line number back to its programmed segment."""

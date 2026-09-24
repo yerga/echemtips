@@ -152,10 +152,14 @@ class CVCycle:
     number: int
     rows: list[dict[str, float]]
     pixel: int = -1
+    scan_rate_v_s: float | None = None
+    rate_index: int = -1
 
     @property
     def label(self) -> str:
         """Return a concise cycle label for selectors and exports."""
+        if self.scan_rate_v_s is not None:
+            return f"Rate {self.rate_index + 1} · {self.scan_rate_v_s:g} V/s · C{self.number}"
         return f"P{self.pixel + 1} · C{self.number}" if self.pixel >= 0 else str(self.number)
 
     @property
@@ -253,6 +257,23 @@ def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     """Extract completed CV cycles using the voltage program saved in metadata."""
     if "voltage1_v" not in dataset.columns:
         return []
+    parameters = dataset.metadata.get("parameters")
+    rates = parameters.get("scan_rates_v_s") if isinstance(parameters, dict) else None
+    if isinstance(rates, list) and "cv_rate_index" in dataset.columns:
+        cycles = []
+        tags = dataset.column("cv_rate_index")
+        for index, rate in enumerate(rates):
+            selected = np.flatnonzero(tags == index)
+            if not len(selected):
+                continue
+            rows = (dataset.rows[int(selected[0]):int(selected[-1]) + 1]
+                    if selected[-1] - selected[0] + 1 == len(selected)
+                    else NumericRows(dataset.columns, dataset.rows.matrix[selected]))
+            subset = AnalysisDataset(dataset.path, dataset.columns, rows, dataset.metadata)
+            for cycle in _extract_single_cv_cycles(subset):
+                cycle.rate_index, cycle.scan_rate_v_s = index, float(rate)
+                cycles.append(cycle)
+        return cycles
     if "scan_pixel" in dataset.columns:
         grouped = pixel_groups(dataset)
         if grouped:

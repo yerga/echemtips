@@ -31,7 +31,7 @@ def smooth_currents(dataset: AnalysisDataset, window: int, cycles=(), *,
     count = len(matrix)
     breaks = np.zeros(count + 1, dtype=bool)
     breaks[0] = breaks[-1] = True
-    for name in ("scan_pixel", "line_number"):
+    for name in ("scan_pixel", "line_number", "cv_rate_index"):
         if name in dataset.columns:
             values = dataset.column(name)
             breaks[1:count] |= values[1:] != values[:-1]
