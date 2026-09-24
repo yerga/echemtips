@@ -146,8 +146,8 @@ class WaypointCompiler:
             "X": raw_to_position(current_raw["X"], s.x_range_um, s.x_bipolar),
             "Y": raw_to_position(current_raw["Y"], s.y_range_um, s.y_bipolar),
             "Z": raw_to_position(current_raw["Z"], s.z_range_um, s.z_bipolar),
-            "V": raw_to_voltage1(current_raw["V"], s.command_voltage_ratio),
-            "V2": current_raw["V2"] * 10.0 / 32768.0,
+            "V": s.polarity_factor * raw_to_voltage1(current_raw["V"], s.command_voltage_ratio),
+            "V2": s.polarity_factor * current_raw["V2"] * 10.0 / 32768.0,
         }
         total_duration = 0.0
         indefinite_hold = False
@@ -232,8 +232,8 @@ class WaypointCompiler:
                 x_position=position_to_raw(targets["X"], s.x_range_um, s.x_bipolar),
                 y_position=position_to_raw(targets["Y"], s.y_range_um, s.y_bipolar),
                 z_position=position_to_raw(targets["Z"], s.z_range_um, s.z_bipolar),
-                v_position=voltage1_to_raw(targets["V"], s.command_voltage_ratio),
-                v2_position=voltage1_to_raw(targets["V2"], 1.0),
+                v_position=voltage1_to_raw(s.polarity_factor * targets["V"], s.command_voltage_ratio),
+                v2_position=voltage1_to_raw(s.polarity_factor * targets["V2"], 1.0),
                 update_wait_us=item.update_interval_us,
                 hold_timer=item.hold_us,
                 move_x=move["X"], move_y=move["Y"], move_z=move["Z"],

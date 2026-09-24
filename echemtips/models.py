@@ -80,6 +80,7 @@ class AppSettings:
     x_bipolar: bool = False
     y_bipolar: bool = False
     z_bipolar: bool = False
+    polarity_convention: str = "IUPAC"
     command_voltage_ratio: float = 1.0
     current1_v_per_na: float = 1.0
     current2_v_per_na: float = 1.0
@@ -130,6 +131,8 @@ class AppSettings:
         n = self.samples_per_point
         if not isinstance(n, int) or isinstance(n, bool) or n <= 0 or n & (n - 1):
             errors.append("Samples per data point must be a power of two.")
+        if self.polarity_convention not in {"IUPAC", "Instrument-native"}:
+            errors.append("Choose IUPAC or Instrument-native polarity.")
         if not _finite_number(self.command_voltage_ratio) or not 0 < self.command_voltage_ratio <= 100:
             errors.append("Command voltage ratio must be between 0 and 100.")
         for name, value in (
@@ -172,6 +175,11 @@ class AppSettings:
         if self.mode == "NI FPGA" and (not isinstance(self.bitfile, str) or not self.bitfile.strip()):
             errors.append("NI FPGA bitfile must not be empty.")
         return errors
+
+    @property
+    def polarity_factor(self) -> int:
+        """Map native WEC-SPM electrical signs to the selected convention."""
+        return -1 if self.polarity_convention == "IUPAC" else 1
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "AppSettings":

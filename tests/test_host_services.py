@@ -43,7 +43,7 @@ class HostServiceTests(unittest.TestCase):
         self.assertEqual(buffer.series[1][-1], -10.0)
 
     def test_common_compiler_handles_simultaneous_ramps_holds_relative_z_and_flags(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         compiler = WaypointCompiler(settings)
         current = {"X": 0, "Y": 0, "Z": position_to_raw(10, 100, False), "V": 0, "V2": 0}
         compiled = compiler.compile([
@@ -68,14 +68,14 @@ class HostServiceTests(unittest.TestCase):
         self.assertEqual(set(compiled.scaler_exponents), {"X", "Y", "Z", "V", "V2"})
 
     def test_indefinite_hold_disables_duration_watchdog(self) -> None:
-        compiled = WaypointCompiler(AppSettings()).compile(
+        compiled = WaypointCompiler(AppSettings(polarity_convention="Instrument-native", )).compile(
             [PhysicalWaypoint(hold=True, hold_us=0)],
             {"X": 0, "Y": 0, "Z": 0, "V": 0, "V2": 0},
         )
         self.assertIsNone(compiled.expected_duration_s)
 
     def test_all_documented_feedback_actions_compile(self) -> None:
-        compiler = WaypointCompiler(AppSettings())
+        compiler = WaypointCompiler(AppSettings(polarity_convention="Instrument-native", ))
         current = {"X": 0, "Y": 0, "Z": 0, "V": 0, "V2": 0}
         for name, code in FEEDBACK_ACTION_CODES.items():
             with self.subTest(name=name):

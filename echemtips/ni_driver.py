@@ -305,7 +305,7 @@ class WECSPMDriver:
             raise ValueError("Potential output must be channel 1 or 2 and within +/-10 V.")
         if channel == 1 and abs(voltage * self.settings.command_voltage_ratio) > 10.0:
             raise ValueError("Potential 1 exceeds AO3 after applying its command ratio.")
-        raw = voltage1_to_raw(voltage, self.settings.command_voltage_ratio if channel == 1 else 1.0)
+        raw = voltage1_to_raw(self.settings.polarity_factor * voltage, self.settings.command_voltage_ratio if channel == 1 else 1.0)
         return (
             "Applied Voltage" if channel == 1 else "Applied Voltage 2",
             "V on Fly" if channel == 1 else "V2 on Fly",
@@ -796,7 +796,7 @@ class WECSPMDriver:
             sensitivity = getattr(self.settings, f"current{index}_v_per_na")
             if abs(value * sensitivity) > 10:
                 raise ValueError(f"{channel} feedback threshold exceeds its +/-10 V ADC range.")
-            return current_to_raw(value, sensitivity)
+            return current_to_raw(self.settings.polarity_factor * value, sensitivity)
         raise ValueError(f"Unsupported feedback channel: {channel}")
 
     def configure_feedback(self, config: FeedbackConfiguration) -> None:
@@ -808,15 +808,17 @@ class WECSPMDriver:
         primary_raw = self._feedback_value_to_raw(config.primary_channel, config.primary_threshold)
         secondary_raw = (self.DISABLED_SECONDARY_THRESHOLD if config.secondary_threshold is None
                          else self._feedback_value_to_raw(config.primary_channel, config.secondary_threshold))
-        secondary_greater = config.secondary_threshold is None
+        has_secondary = config.secondary_threshold is not None
+        secondary_greater = not has_secondary or self.settings.polarity_factor < 0
+        primary_greater = bool(config.primary_greater_than) != (self.settings.polarity_factor < 0)
         # The deployed bitfile still exposes legacy advanced-feedback
         # registers. Write fixed neutral values so stale target state cannot
         # activate a mode that eChemTips does not support.
         writes = (
             ("FeedBackType", FEEDBACK_SIGNAL_CODES[config.primary_channel]),
             ("Feedback_Threshold", primary_raw),
-            ("GreaterThan", bool(config.primary_greater_than)),
-            ("FeedBackType 2", FEEDBACK_SIGNAL_CODES["Current 2" if secondary_greater else config.primary_channel]),
+            ("GreaterThan", primary_greater),
+            ("FeedBackType 2", FEEDBACK_SIGNAL_CODES[config.primary_channel if has_secondary else "Current 2"]),
             ("Feedback_Threshold 2", secondary_raw),
             ("GreaterThan 2", secondary_greater),
             ("P", 0.0),
@@ -884,7 +886,7 @@ class WECSPMDriver:
         index = int(channel[-1])
         register = "MeasuredCurrent" if index == 1 else "MeasuredCurrent 2"
         sensitivity = getattr(self.settings, f"current{index}_v_per_na")
-        return raw_to_current(int(self._read_register(register)), sensitivity)
+        return self.settings.polarity_factor * raw_to_current(int(self._read_register(register)), sensitivity)
 
     def _baseline_hold_waypoint(self, targets: dict[str, int]) -> Waypoint:
         return Waypoint(
@@ -936,7 +938,7 @@ class WECSPMDriver:
         target_y = position_to_raw(params.y_um, s.y_range_um, s.y_bipolar) if params.y_um is not None else current["Y"]
         start_z = position_to_raw(params.start_z_um, s.z_range_um, s.z_bipolar)
         end_z = position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar)
-        approach_v = voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio)
+        approach_v = voltage1_to_raw(s.polarity_factor * params.approach_voltage_v, s.command_voltage_ratio)
 
         common = dict(x_position=target_x, y_position=target_y, v2_position=current["V2"])
         preposition = Waypoint(
@@ -1243,12 +1245,12 @@ class WECSPMDriver:
             )
             stages.append("retract")
         positioning = Waypoint(**common, z_position=start_z,
-                     v_position=voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio),
+                     v_position=voltage1_to_raw(s.polarity_factor * params.approach_voltage_v, s.command_voltage_ratio),
                      x_velocity=scale_velocity(x_raw, ex), y_velocity=scale_velocity(y_raw, ey),
                      move_x=True, move_y=True, move_v=True, jump_v=True)
         approach = Waypoint(**common, line_type=FEEDBACK_ACTION_CODES["advance_on_contact"],
                      z_position=position_to_raw(params.end_z_um, s.z_range_um, s.z_bipolar),
-                     v_position=voltage1_to_raw(params.approach_voltage_v, s.command_voltage_ratio),
+                     v_position=voltage1_to_raw(s.polarity_factor * params.approach_voltage_v, s.command_voltage_ratio),
                      z_velocity=scale_velocity(za_raw, ez),
                      update_wait_us=self._feedback_update_interval_us, move_z=True)
         waypoints.append(positioning)

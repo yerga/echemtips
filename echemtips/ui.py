@@ -1737,13 +1737,19 @@ class SettingsPage(BasePage):
         ratio_row = QtWidgets.QWidget(); ratio_layout = _hbox(ratio_row); self.command_ratio = Field("Command voltage ratio · AO3", str(app.settings.command_voltage_ratio), ":1"); ratio_layout.addWidget(self.command_ratio, 1)
         ratio_help_text = (
             "eChemTips multiplies requested E1 by this ratio before writing AO3. "
-            "At 1:1, the requested E1 range is ±10 V. At 5:1, a requested +1 V sends +5 V on AO3 "
+            "At 1:1, the requested E1 range is ±10 V. At 5:1, a requested 1 V magnitude sends 5 V magnitude on AO3 (sign depends on polarity convention) "
             "and the maximum requested E1 range is ±2 V. Use 5:1 when the external controller's "
             "±2 V potential span is represented by the NI output's ±10 V command span."
         )
         self.command_ratio_help = InfoButton("Command voltage ratio", ratio_help_text, self); ratio_layout.addWidget(self.command_ratio_help, 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         amp.addWidget(ratio_row, 1, 0, 1, 2)
         self.command_ratio_summary = label("", "muted", word_wrap=True); amp.addWidget(self.command_ratio_summary, 2, 0, 1, 2)
+        polarity_row = QtWidgets.QWidget(); polarity_layout = _vbox(polarity_row)
+        polarity_layout.addWidget(label("Electrochemical polarity convention", "muted"))
+        self.polarity = Choice(("IUPAC", "Instrument-native"), app.settings.polarity_convention)
+        self.polarity.setToolTip("IUPAC reverses E1/E2 and i1/i2 relative to native WEC-SPM wiring: positive current is anodic. This changes hardware commands, not just plot labels. Reverse old potential-program signs to reproduce an old experiment. Verify polarity with your electrode wiring. Apply while idle and reconnect.")
+        polarity_layout.addWidget(self.polarity); amp.addWidget(polarity_row, 3, 0, 1, 2)
+        polarity_layout.addWidget(label("IUPAC reverses native current and potential signs, including output commands. Check old potential programs before running.", "muted", word_wrap=True))
         saving = Card("Saving", "Choose a permanent folder for full-rate experiment files."); sv = _vbox(saving.body)
         data_row = QtWidgets.QWidget(); data_layout = _hbox(data_row); self.save_directory = Field("Data folder", app.settings.save_directory); data_layout.addWidget(self.save_directory, 1); data_layout.addWidget(button("Browse…", self.browse_data_folder), 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save)
@@ -1824,7 +1830,7 @@ class SettingsPage(BasePage):
                 raise ValueError
             limit = 10.0 / ratio
             self.command_ratio_summary.setText(
-                f"{ratio:g}:1 → requested E1 is limited to ±{limit:g} V; +1 V E1 commands {ratio:g} V on AO3."
+                f"{ratio:g}:1 → requested E1 is limited to ±{limit:g} V; 1 V E1 magnitude commands {ratio:g} V magnitude on AO3; sign follows the polarity setting."
             )
         except ValueError:
             self.command_ratio_summary.setText("Enter a positive ratio to calculate the E1 range.")
@@ -1856,7 +1862,7 @@ class SettingsPage(BasePage):
         return AppSettings(
             mode=self.mode.get(), resource=self.resource.variable.get().strip(), bitfile=self.bitfile.text().strip(), hardware_transport=self.transport.get(),
             x_range_um=self.x_range.float(), y_range_um=self.y_range.float(), z_range_um=self.z_range.float(), x_bipolar=self.x_bipolar.get(), y_bipolar=self.y_bipolar.get(), z_bipolar=self.z_bipolar.get(),
-            command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
+            polarity_convention=self.polarity.get(), command_voltage_ratio=self.command_ratio.float(), current1_v_per_na=self.sensitivity1.float(), current2_v_per_na=self.sensitivity2.float(), sample_time_us=self.sample_time.integer(), samples_per_point=self.samples_per_point.integer(),
             hardware_ready_timeout_s=self.ready_timeout.float(), hardware_watchdog_margin_s=self.watchdog_margin.float(), save_directory=str(data_folder), auto_save=self.auto_save.get(),
             display_max_points=self.display_max_points.integer(),
             map_view_mode="circular" if self.map_view.get() == "Circular footprints" else "square",

@@ -95,7 +95,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(words[13], (1 << 0) | (1 << 2) | (1 << 4) | (1 << 8))
 
     def test_fifo_sample_decode(self) -> None:
-        settings = AppSettings(command_voltage_ratio=2.0, current1_v_per_na=0.5)
+        settings = AppSettings(polarity_convention="Instrument-native", command_voltage_ratio=2.0, current1_v_per_na=0.5)
         decoder = SampleDecoder(settings)
         # Each frame carries a biased U32 interval, not an absolute timestamp.
         words = [0] * SAMPLE_WORDS
@@ -110,7 +110,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(second.elapsed_s, 1e-6, places=9)
 
     def test_fifo_intervals_accumulate_for_constant_and_variable_sample_rates(self) -> None:
-        decoder = SampleDecoder(AppSettings())
+        decoder = SampleDecoder(AppSettings(polarity_convention="Instrument-native", ))
         expected_ticks = 0
         # Include signed-word boundaries and decreasing intervals: neither is
         # an absolute-counter wrap. The initial startup interval is excluded.
@@ -123,14 +123,14 @@ class ProtocolTests(unittest.TestCase):
             self.assertAlmostEqual(decoder.decode(words).elapsed_s, expected_ticks / 40000000, places=12)
 
     def test_fifo_elapsed_time_exceeds_u32_clock_period(self) -> None:
-        decoder = SampleDecoder(AppSettings())
+        decoder = SampleDecoder(AppSettings(polarity_convention="Instrument-native", ))
         words = [0] * SAMPLE_WORDS
         ticks = 40000000
         words[12] = (ticks >> 16) - 32768
         words[13] = (ticks & 0xFFFF) - 32768
         for second in range(121):
             self.assertEqual(decoder.decode(words).elapsed_s, second)
-        self.assertEqual(SampleDecoder(AppSettings()).decode(words).elapsed_s, 0)
+        self.assertEqual(SampleDecoder(AppSettings(polarity_convention="Instrument-native", )).decode(words).elapsed_s, 0)
 
 
 class _Register:
@@ -180,7 +180,7 @@ class NativeDriverTests(unittest.TestCase):
         fifo = self.session.fifos["FPGA_To_Host_FIFO"]
         with TemporaryDirectory() as folder:
             recorder = DataRecorder()
-            recorder.start("Watch Current", AppSettings(save_directory=folder))
+            recorder.start("Watch Current", AppSettings(polarity_convention="Instrument-native", save_directory=folder))
             received = []
             for size in (3, 0, 2):
                 fifo.data.extend(frame * size)
@@ -213,7 +213,7 @@ class NativeDriverTests(unittest.TestCase):
         )
         self.session.run = lambda: None
         self.session.reset = lambda: None
-        self.settings = AppSettings()
+        self.settings = AppSettings(polarity_convention="Instrument-native", )
         self.driver = WECSPMDriver(self.session, self.settings)
 
     def test_configures_timing_and_manual_move_frame(self) -> None:

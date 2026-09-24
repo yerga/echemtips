@@ -331,6 +331,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         dataset = self.dataset
         self.title_label.setText("Recording analysis")
         self.subtitle_label.setText(f"{dataset.path.name} · {dataset.experiment} · {dataset.metadata.get('status', 'status unknown')}")
+        convention = (dataset.metadata.get("settings") or {}).get("polarity_convention", "Not specified (legacy eChemTips: instrument-native)")
+        self.subtitle_label.setText(self.subtitle_label.text() + f" · Polarity: {convention}")
         processing = dataset.metadata.get("analysis_processing")
         if processing:
             method = "Savitzky–Golay" if processing['method'] == 'savitzky_golay' else "Moving average"

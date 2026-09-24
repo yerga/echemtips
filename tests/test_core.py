@@ -24,11 +24,11 @@ from echemtips.models import (
 class SettingsTests(unittest.TestCase):
     def test_colormap_preferences_round_trip_and_validate(self) -> None:
         for field in ("map_z_colormap", "map_current_colormap"):
-            self.assertTrue(AppSettings(**{field: "not-a-palette"}).validate())
+            self.assertTrue(AppSettings(polarity_convention="Instrument-native", **{field: "not-a-palette"}).validate())
         self.assertEqual(AppSettings.from_dict({}).map_z_colormap, "viridis")
         with TemporaryDirectory() as folder:
             store = SettingsStore(Path(folder) / "settings.json")
-            settings = AppSettings(map_z_colormap="cividis", map_current_colormap="CET-D1")
+            settings = AppSettings(polarity_convention="Instrument-native", map_z_colormap="cividis", map_current_colormap="CET-D1")
             store.save(settings)
             self.assertEqual(store.load(), settings)
 
@@ -40,10 +40,10 @@ class SettingsTests(unittest.TestCase):
             {"font_size_pt": 50}, {"trace_width_px": 0},
             {"current_display_unit": "uA"}, {"map_z_auto_limits": "yes"},
         ):
-            self.assertTrue(AppSettings(**kwargs).validate(), kwargs)
+            self.assertTrue(AppSettings(polarity_convention="Instrument-native", **kwargs).validate(), kwargs)
         with TemporaryDirectory() as folder:
             store = SettingsStore(Path(folder) / "settings.json")
-            expected = AppSettings(map_current_auto_limits=False, map_current_min_na=-0.1,
+            expected = AppSettings(polarity_convention="Instrument-native", map_current_auto_limits=False, map_current_min_na=-0.1,
                 map_current_max_na=0.2, monitor_window_s=15, experiment_window_s=90,
                 current_display_unit="pA", font_size_pt=12, trace_width_px=3)
             store.save(expected)
@@ -51,12 +51,12 @@ class SettingsTests(unittest.TestCase):
 
     def test_map_display_preferences_are_validated(self) -> None:
         for diameter in (0, -1, float("nan"), float("inf"), "bad", True):
-            self.assertTrue(AppSettings(map_footprint_diameter_um=diameter).validate())
-        self.assertTrue(AppSettings(map_view_mode="unknown").validate())
+            self.assertTrue(AppSettings(polarity_convention="Instrument-native", map_footprint_diameter_um=diameter).validate())
+        self.assertTrue(AppSettings(polarity_convention="Instrument-native", map_view_mode="unknown").validate())
         self.assertEqual(AppSettings.from_dict({}).map_view_mode, "square")
 
     def test_default_settings_are_valid(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         self.assertEqual(settings.validate(), [])
         self.assertAlmostEqual(settings.effective_period_s, 0.001028)
 
@@ -67,24 +67,24 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(path.parent.name, "eChemTips")
 
     def test_samples_per_point_must_be_power_of_two(self) -> None:
-        settings = AppSettings(samples_per_point=250)
+        settings = AppSettings(polarity_convention="Instrument-native", samples_per_point=250)
         self.assertTrue(any("power of two" in error for error in settings.validate()))
 
     def test_nonfinite_hardware_range_is_rejected(self) -> None:
-        settings = AppSettings(mode="NI FPGA", z_range_um=float("nan"))
+        settings = AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", z_range_um=float("nan"))
         self.assertTrue(any("Z range" in error for error in settings.validate()))
 
     def test_hardware_feedback_threshold_must_fit_adc(self) -> None:
-        settings = AppSettings(mode="NI FPGA", current1_v_per_na=2.0)
+        settings = AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", current1_v_per_na=2.0)
         approach_errors = ApproachCVParameters(feedback_threshold_na=6.0).validate(settings)
         scan_errors = ScanHoppingCVParameters(feedback_threshold_na=6.0).validate(settings)
         self.assertTrue(any("ADC range" in error for error in approach_errors))
         self.assertTrue(any("ADC range" in error for error in scan_errors))
 
     def test_contact_mode_and_settling_time_are_validated(self) -> None:
-        self.assertTrue(any("Contact criterion" in error for error in ApproachParameters(feedback_mode="unknown").validate(AppSettings())))
-        self.assertTrue(any("Settling time" in error for error in ApproachParameters(settling_time_s=-0.1).validate(AppSettings())))
-        self.assertEqual(ApproachParameters(feedback_mode="baseline_relative", settling_time_s=0).validate(AppSettings()), [])
+        self.assertTrue(any("Contact criterion" in error for error in ApproachParameters(feedback_mode="unknown").validate(AppSettings(polarity_convention="Instrument-native", ))))
+        self.assertTrue(any("Settling time" in error for error in ApproachParameters(settling_time_s=-0.1).validate(AppSettings(polarity_convention="Instrument-native", ))))
+        self.assertEqual(ApproachParameters(feedback_mode="baseline_relative", settling_time_s=0).validate(AppSettings(polarity_convention="Instrument-native", )), [])
 
     def test_baseline_relative_contact_uses_delta_current(self) -> None:
         first = Sample(0, 0, 0, 0, 0, 0, 5.0, 0)
@@ -97,7 +97,7 @@ class SettingsTests(unittest.TestCase):
     def test_settings_round_trip(self) -> None:
         with TemporaryDirectory() as folder:
             store = SettingsStore(Path(folder) / "settings.json")
-            expected = AppSettings(
+            expected = AppSettings(polarity_convention="Instrument-native",
                 z_range_um=38.0,
                 mode="NI FPGA",
                 bitfile="my-instrument.lvbitx",
@@ -126,12 +126,12 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(_default_bitfile(), "")
         with patch.dict("os.environ", {"ECHEMTIPS_BITFILE": "/private/any-build.lvbitx"}):
             self.assertEqual(_default_bitfile(), "/private/any-build.lvbitx")
-        self.assertTrue(any("bitfile" in e for e in AppSettings(mode="NI FPGA", bitfile="").validate()))
+        self.assertTrue(any("bitfile" in e for e in AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", bitfile="").validate()))
 
 
 class SimulationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.settings = AppSettings()
+        self.settings = AppSettings(polarity_convention="Instrument-native", )
         self.backend = SimulationBackend(self.settings, seed=1)
         self.backend.connect()
 
@@ -195,7 +195,7 @@ class SimulationTests(unittest.TestCase):
 
 class ConversionTests(unittest.TestCase):
     def test_fpga_raw_scaling(self) -> None:
-        backend = NIFPGABackend(AppSettings(z_range_um=100.0, current2_v_per_na=2.0))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", z_range_um=100.0, current2_v_per_na=2.0))
         self.assertAlmostEqual(backend._raw_to_voltage(32767), 10.0, places=3)
         self.assertAlmostEqual(backend._raw_to_position(16384, "Z"), 50.0, places=2)
         self.assertAlmostEqual(backend._raw_to_current(32767, 1), 10.0, places=3)
@@ -204,12 +204,12 @@ class ConversionTests(unittest.TestCase):
 
 class NIBackendSafetyTests(unittest.TestCase):
     def test_invalid_settings_are_rejected_before_driver_import(self) -> None:
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA", z_range_um=float("nan")))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", z_range_um=float("nan")))
         with self.assertRaisesRegex(BackendError, "Invalid instrument settings"):
             backend.connect()
 
     def test_fpga_connection_requires_explicit_startup_actuation_permission(self) -> None:
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile="target.lvbitx"))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", bitfile="target.lvbitx"))
         self.assertIn("AO0/X", backend.startup_notice)
         self.assertIn("+5 V", backend.startup_notice)
         self.assertIn("X 50.0 µm", backend.startup_notice)
@@ -255,7 +255,7 @@ class NIBackendSafetyTests(unittest.TestCase):
         with TemporaryDirectory() as folder:
             bitfile = Path(folder) / "target.lvbitx"
             bitfile.touch()
-            settings = AppSettings(mode="NI FPGA", bitfile=str(bitfile))
+            settings = AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", bitfile=str(bitfile))
             driver = Driver()
             module = SimpleNamespace(create_driver=lambda _session, _settings: driver)
             sessions: list[Session] = []
@@ -319,7 +319,7 @@ class NIBackendSafetyTests(unittest.TestCase):
                     patch("echemtips.backends.validate_wec_bitfile", return_value=[]),
                     patch("echemtips.ni_driver.create_driver", side_effect=configure),
                 ):
-                    backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile=str(bitfile)))
+                    backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", bitfile=str(bitfile)))
                     backend.connect(allow_startup_actuation=True)
                     backend.disconnect()
                     self.assertEqual(session.fpga_vi_state.name, "Running")
@@ -348,7 +348,7 @@ class NIBackendSafetyTests(unittest.TestCase):
                     patch("echemtips.backends.validate_wec_bitfile", return_value=[]),
                     patch("echemtips.ni_driver.create_driver") as create_driver,
                 ):
-                    backend = NIFPGABackend(AppSettings(mode="NI FPGA", bitfile=str(bitfile)))
+                    backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", bitfile=str(bitfile)))
                     with self.assertRaisesRegex(BackendError, "reset"):
                         backend.connect(allow_startup_actuation=True)
                     create_driver.assert_not_called()
@@ -360,7 +360,7 @@ class NIBackendSafetyTests(unittest.TestCase):
 
     def test_emergency_stop_uses_latching_driver_operation(self) -> None:
         calls: list[str] = []
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA"))
         backend.connected = True
         backend._driver = type("Driver", (), {"emergency_stop": lambda self: calls.append("stop")})()
         backend.emergency_stop()
@@ -376,7 +376,7 @@ class NIBackendSafetyTests(unittest.TestCase):
             def set_live_potential(self, channel: int, voltage: float) -> None:
                 calls.append(("live", channel, voltage))
 
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA"))
         backend.connected = True
         backend._driver = Driver()
         backend.set_voltage(1, 0.2)
@@ -384,7 +384,7 @@ class NIBackendSafetyTests(unittest.TestCase):
         self.assertEqual(calls, [("idle", 1, 0.2), ("live", 2, -0.3)])
 
     def test_approach_cv_accepts_the_driver_settling_stage(self) -> None:
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA"))
         backend.connected = True
         backend._driver = SimpleNamespace(
             start_approach_cv=lambda _params: None,
@@ -406,7 +406,7 @@ class DataTests(unittest.TestCase):
     def test_csv_and_metadata_are_written(self) -> None:
         sample = Sample(0.1, 1, 2, 3, 0.1, 0.0, 1.2, 0.2)
         with TemporaryDirectory() as folder:
-            settings = AppSettings(save_directory=folder)
+            settings = AppSettings(polarity_convention="Instrument-native", save_directory=folder)
             recorder = DataRecorder()
             recorder.start("Watch Current")
             recorder.append(sample)
@@ -421,7 +421,7 @@ class DataTests(unittest.TestCase):
 
 class ExperimentTests(unittest.TestCase):
     def test_standalone_cv_simulation_completes(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = CVExperiment(backend, settings)
@@ -434,7 +434,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.state, ExperimentState.COMPLETE)
 
     def test_standalone_approach_detects_contact_and_can_remain_at_surface(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ApproachExperiment(backend, settings)
@@ -449,7 +449,7 @@ class ExperimentTests(unittest.TestCase):
         for channel in ("Current 1", "Current 2"):
             for current in (-3.0, 3.0):
                 with self.subTest(channel=channel, current=current):
-                    settings = AppSettings()
+                    settings = AppSettings(polarity_convention="Instrument-native", )
                     backend = SimulationBackend(settings)
                     backend.connect()
                     experiment = ApproachExperiment(backend, settings)
@@ -463,7 +463,7 @@ class ExperimentTests(unittest.TestCase):
                     self.assertEqual(experiment.contact_z, 68)
 
     def test_standalone_approach_can_use_current_2_feedback(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ApproachExperiment(backend, settings)
@@ -475,7 +475,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.contact_z, 68)
 
     def test_approach_it_simulation_runs_steps_only_after_contact(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ApproachITExperiment(backend, settings)
@@ -495,7 +495,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(experiment.state, ExperimentState.COMPLETE)
 
     def test_scan_hopping_it_simulation_completes_contact_and_current_maps(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings, seed=4)
         backend.connect()
         experiment = ScanHoppingITExperiment(backend, settings)
@@ -518,7 +518,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertIn((0, 0), experiment.current_at_pulse)
 
     def test_approach_cv_runs_through_all_stages(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ApproachCVExperiment(backend, settings)
@@ -551,7 +551,7 @@ class ExperimentTests(unittest.TestCase):
         backend.disconnect()
 
     def test_approach_cv_waits_for_optional_xy_preposition(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ApproachCVExperiment(backend, settings)
@@ -564,7 +564,7 @@ class ExperimentTests(unittest.TestCase):
         backend.disconnect()
 
     def test_operator_can_accept_current_z_during_simulated_approaches(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         sample = Sample(1, 50, 50, 42, 0.1, 0, 0, 0)
@@ -597,7 +597,7 @@ class ExperimentTests(unittest.TestCase):
         backend.disconnect()
 
     def test_approach_end_of_travel_aborts_without_cv(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ApproachCVExperiment(backend, settings)
@@ -612,7 +612,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertIn("CV was not run", experiment.detail)
 
     def test_approach_refuses_backend_without_motion_driver(self) -> None:
-        backend = NIFPGABackend(AppSettings(mode="NI FPGA"))
+        backend = NIFPGABackend(AppSettings(polarity_convention="Instrument-native", mode="NI FPGA"))
         experiment = ApproachCVExperiment(backend, backend.settings)
         with self.assertRaisesRegex(RuntimeError, "FPGA waypoint sequence"):
             experiment.start(ApproachCVParameters())
@@ -631,7 +631,7 @@ class ExperimentTests(unittest.TestCase):
             def hardware_approach_cv_status(self) -> HardwareSequenceUpdate:
                 return HardwareSequenceUpdate("cv", "FPGA is sweeping", 0.6)
 
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = HardwareBackend(settings)
         backend.connect()
         experiment = ApproachCVExperiment(backend, settings)
@@ -643,7 +643,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(update.progress, 0.6)
 
     def test_scan_cv_acquires_its_first_point_at_the_configured_start(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
@@ -659,7 +659,7 @@ class ExperimentTests(unittest.TestCase):
         backend.disconnect()
 
     def test_scan_hopping_cv_simulation_completes_maps(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings, seed=4)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
@@ -720,13 +720,13 @@ class ExperimentTests(unittest.TestCase):
             x_points=2, y_points=2, serpentine=False,
             start_z_um=2, end_z_um=80, raster_line_retract_um=5,
         )
-        self.assertEqual(invalid.validate(AppSettings()), [])
+        self.assertEqual(invalid.validate(AppSettings(polarity_convention="Instrument-native", )), [])
 
     def test_scan_retraction_limits_and_diagnostics(self) -> None:
         for cls in (ScanHoppingCVParameters, ScanHoppingITParameters):
             p = cls(start_z_um=0, end_z_um=90, x_points=2, y_points=2,
                     serpentine=False, raster_line_retract_um=8)
-            self.assertEqual(p.validate(AppSettings()), [])
+            self.assertEqual(p.validate(AppSettings(polarity_convention="Instrument-native", )), [])
             self.assertEqual(p.bounded_retract_z(0, 80, 100), 70)
             self.assertEqual(p.retraction_events, [])
             self.assertEqual(p.bounded_retract_z(0, 8, 100), 0)
@@ -737,7 +737,7 @@ class ExperimentTests(unittest.TestCase):
             self.assertEqual(p.bounded_retract_z(2, 0, 100), 0)
             self.assertTrue(p.retract_has_no_travel(2))
             p.start_z_um, p.end_z_um = 100, 0
-            self.assertEqual(p.validate(AppSettings()), [])
+            self.assertEqual(p.validate(AppSettings(polarity_convention="Instrument-native", )), [])
             self.assertEqual(p.bounded_retract_z(0, 95, 100), 100)
             with self.assertRaises(ValueError):
                 p.bounded_retract_z(0, -1, 100)
@@ -745,7 +745,7 @@ class ExperimentTests(unittest.TestCase):
     def test_simulated_final_hop_returns_to_initial_before_complete(self) -> None:
         for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
                                 (ScanHoppingITExperiment, ScanHoppingITParameters)):
-            settings = AppSettings()
+            settings = AppSettings(polarity_convention="Instrument-native", )
             backend = SimulationBackend(settings)
             backend.connect()
             experiment = cls(backend, settings)
@@ -771,7 +771,7 @@ class ExperimentTests(unittest.TestCase):
                                 (ScanHoppingITExperiment, ScanHoppingITParameters)):
             for contact in (0, 8):
                 with self.subTest(method=cls.__name__, contact=contact):
-                    settings = AppSettings()
+                    settings = AppSettings(polarity_convention="Instrument-native", )
                     backend = SimulationBackend(settings)
                     backend.connect()
                     experiment = cls(backend, settings)
@@ -800,7 +800,7 @@ class ExperimentTests(unittest.TestCase):
 
     def test_limited_retraction_is_checkpointed_in_metadata(self) -> None:
         with TemporaryDirectory() as folder:
-            settings = AppSettings(save_directory=folder)
+            settings = AppSettings(polarity_convention="Instrument-native", save_directory=folder)
             params = ScanHoppingCVParameters(start_z_um=0)
             recorder = DataRecorder()
             recorder.start("Scan Hopping CV", settings, params)
@@ -811,7 +811,7 @@ class ExperimentTests(unittest.TestCase):
             recorder.finish(settings, params, status="aborted")
 
     def test_scan_end_of_travel_aborts_pixel_without_cv(self) -> None:
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
@@ -849,7 +849,7 @@ class ExperimentTests(unittest.TestCase):
             def hardware_scan_hopping_cv_status(self) -> HardwareSequenceUpdate:
                 return HardwareSequenceUpdate("complete", "complete", 1.0, 0, "complete")
 
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = HardwareScanBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
@@ -884,7 +884,7 @@ class ExperimentTests(unittest.TestCase):
             def hardware_program_status(self) -> HardwareSequenceUpdate:
                 return HardwareSequenceUpdate("aborted", "No contact", 0.0, 0, "aborted")
 
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = HardwareITBackend(settings)
         backend.connect()
         experiment = ScanHoppingITExperiment(backend, settings)
@@ -921,7 +921,7 @@ class ExperimentTests(unittest.TestCase):
             def hardware_scan_hopping_cv_status(self) -> HardwareSequenceUpdate:
                 return self.updates.pop(0)
 
-        settings = AppSettings()
+        settings = AppSettings(polarity_convention="Instrument-native", )
         backend = HardwareScanBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)

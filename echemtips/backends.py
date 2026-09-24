@@ -334,7 +334,7 @@ class SimulationBackend(InstrumentBackend):
         self._tick()
         elapsed = time.monotonic() - self._started
         z = self._positions["Z"]
-        v = self._voltage[1]
+        v = self.settings.polarity_factor * self._voltage[1]
         surface_z = self.surface_z_at(self._positions["X"], self._positions["Y"])
         contact = 1.0 / (1.0 + math.exp(-(z - surface_z) / 0.38))
         faradaic = 1.8 * math.tanh((v - 0.08) * 3.2)
@@ -360,10 +360,10 @@ class SimulationBackend(InstrumentBackend):
             x_um=self._positions["X"],
             y_um=self._positions["Y"],
             z_um=z,
-            voltage1_v=v,
+            voltage1_v=self._voltage[1],
             voltage2_v=self._voltage[2],
-            current1_na=current1,
-            current2_na=current2,
+            current1_na=self.settings.polarity_factor * current1,
+            current2_na=self.settings.polarity_factor * current2,
             line_number=self._line_number,
             commanded_x_um=self._positions["X"],
             commanded_y_um=self._positions["Y"],
@@ -642,7 +642,7 @@ class NIFPGABackend(InstrumentBackend):
     def _raw_to_current(self, raw: int, channel: int) -> float:
         if channel not in (1, 2):
             raise BackendError(f"Unknown current channel: {channel}")
-        return raw_to_current(raw, getattr(self.settings, f"current{channel}_v_per_na"))
+        return self.settings.polarity_factor * raw_to_current(raw, getattr(self.settings, f"current{channel}_v_per_na"))
 
     @_synchronized_io
     def read_sample(self) -> Sample:
@@ -653,8 +653,8 @@ class NIFPGABackend(InstrumentBackend):
             x_um=self._raw_to_position(read("Applied X"), "X"),
             y_um=self._raw_to_position(read("Applied Y"), "Y"),
             z_um=self._raw_to_position(read("Applied Z"), "Z"),
-            voltage1_v=raw_to_voltage1(read("Applied Voltage"), self.settings.command_voltage_ratio),
-            voltage2_v=self._raw_to_voltage(read("Applied Voltage 2")),
+            voltage1_v=self.settings.polarity_factor * raw_to_voltage1(read("Applied Voltage"), self.settings.command_voltage_ratio),
+            voltage2_v=self.settings.polarity_factor * self._raw_to_voltage(read("Applied Voltage 2")),
             current1_na=self._raw_to_current(read("MeasuredCurrent"), 1),
             current2_na=self._raw_to_current(read("MeasuredCurrent 2"), 2),
             line_number=read("LineNumber"),

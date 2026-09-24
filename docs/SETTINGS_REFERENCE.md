@@ -68,9 +68,10 @@ The UI always distinguishes commanded position from measured input readback.
 | --- | --- | --- | --- |
 | **Current 1 · AI3 sensitivity** | 1 V/nA | finite and greater than zero | Converts AI3 voltage to i1. Enter the voltage produced by the active amplifier/headstage range for one nA. |
 | **Current 2 · AI4 sensitivity** | 1 V/nA | finite and greater than zero | Equivalent conversion for i2. It remains configured even if only Current 1 is connected. |
-| **Command voltage ratio · AO3** | 1:1 | greater than 0 and at most 100 | eChemTips writes `requested E1 × ratio` to AO3 and limits requested E1 to `±10 V / ratio`. |
+| **Electrochemical polarity convention** | IUPAC | IUPAC or Instrument-native | IUPAC reverses native E1/E2 and i1/i2 for the WEC-SPM wiring convention. Applies to commands, feedback and readings. Save/apply while idle, then reconnect. See [migration guidance](CALIBRATION.md#switching-convention). |
+| **Command voltage ratio · AO3** | 1:1 | greater than 0 and at most 100 | eChemTips writes `polarity factor × requested E1 × ratio` to AO3 and limits requested E1 to `±10 V / ratio`. Polarity factor is −1 for IUPAC, +1 for Instrument-native. |
 
-Examples for the command ratio:
+Examples for the command ratio in Instrument-native mode (AO3 signs reverse in IUPAC mode):
 
 | Ratio | Requested E1 | AO3 command | Maximum requested E1 |
 | --- | ---: | ---: | ---: |

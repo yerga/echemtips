@@ -21,8 +21,33 @@ provenance database.
 - E1 is the requested electrochemical potential represented through AO3 and the
   command-voltage ratio. E2 is represented through AO4 without that ratio.
 - i1 and i2 are calculated from AI3 and AI4 using positive V/nA sensitivities.
-  Current sign is the sign produced by the connected amplifier; eChemTips does
-  not add a user-selectable sign inversion.
+  The saved **Electrochemical polarity convention** selects IUPAC (default)
+  or Instrument-native. IUPAC multiplies native E1/E2 commands and i1/i2
+  readings by −1, for the WEC-SPM electrode arrangement where native signs
+  oppose the sample's IUPAC convention. Instrument-native preserves the old
+  signs. This is not automatic wiring detection: verify the electrode-level
+  convention on your own instrument before interpreting oxidation/reduction.
+  Positive IUPAC current is anodic; more-positive sample potential is anodic-going.
+  Positive gains and the command ratio remain magnitudes, not polarity controls.
+  Piezo positions and movement directions are unaffected.
+
+### Switching convention
+
+Select the convention in Settings, under Current amplifiers and potential
+command, and save/apply while idle. Reconnect before operating hardware.
+Existing settings files without this field adopt the new IUPAC default.
+To reproduce an old native-polarity measurement in IUPAC mode, negate every
+potential parameter (approach, CV vertices, I–t steps, and current-map potential).
+Do not negate scan rates, durations, or magnitude contact thresholds.
+The app does not silently rewrite your potential programs.
+At a 5:1 ratio, +0.2 V IUPAC E1 sends −1 V to AO3; native mode sends +1 V.
+
+New CSV values already use the selected convention; the JSON `settings`
+contains `polarity_convention`. Analysis displays that convention and never
+automatically flips imported values based on current control settings. Older
+eChemTips files lacking the field retain their original native values. Files
+from other sources with no convention metadata must be verified independently.
+Simulation follows the same conversion; no FPGA bitfile change is needed.
 - Commanded position is the requested AO trajectory. Measured position is the
   AI0/AI1/AI2 feedback stream. They must not be treated as identical.
 
@@ -85,9 +110,9 @@ For each connected current channel:
    verified voltage and precision resistance.
 4. Compare the DMM/scope output voltage, expected current, and eChemTips i1/i2.
    Check slope, sign, offset, linearity, and clipping.
-5. Enter the positive V/nA magnitude. If sign is wrong, correct wiring or the
-   documented amplifier configuration rather than entering a negative
-   sensitivity, which validation rejects.
+5. Enter the positive V/nA magnitude. Check the selected polarity convention,
+   wiring and documented amplifier configuration if the sign is wrong. Never
+   enter a negative sensitivity, which validation rejects.
 6. Repeat Guided preflight at the exact gain/bandwidth used for experiments.
 
 Changing amplifier gain or headstage invalidates the saved sensitivity until

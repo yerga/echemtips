@@ -84,7 +84,10 @@ for raw-data inspection but may contain fewer complete CVs or visited hops.
 5. For current, inspect **signed charge**, calculated by trapezoidal integration
    against recorded time: nA × s = nC. Changing X to potential does not change
    the integration variable. The selected interval is not interpolated at its
-   endpoints. A negative value represents net cathodic charge.
+   endpoints. A negative value represents net cathodic charge only for verified
+   IUPAC-polarity recordings. Check the convention shown beside the dataset name;
+   old native-polarity eChemTips files have the opposite interpretation for the
+   WEC-SPM wiring. Analysis retains file values and never silently flips signs.
 
 Calculations use full-resolution data. Invalid samples break charge integration;
 the app reports excluded samples and integrated duration. Decreasing timestamps
