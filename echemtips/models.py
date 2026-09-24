@@ -277,7 +277,7 @@ class ApproachCVParameters:
     approach_rate_um_s: float = 3.0
     approach_voltage_v: float = 0.1
     feedback_channel: str = "Current 1"
-    feedback_threshold_na: float = 2.0
+    feedback_threshold_na: float = 0.005
     greater_than: bool = True
     feedback_mode: str = "absolute"
     settling_time_s: float = 0.0
@@ -371,7 +371,7 @@ class ApproachParameters:
     retract_rate_um_s: float = 10.0
     approach_voltage_v: float = 0.1
     feedback_channel: str = "Current 1"
-    feedback_threshold: float = 2.0
+    feedback_threshold: float = 0.005
     greater_than: bool = True
     feedback_mode: str = "absolute"
     settling_time_s: float = 0.0
@@ -537,7 +537,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
     retract_rate_um_s: float = 50.0
     approach_voltage_v: float = 0.1
     feedback_channel: str = "Current 1"
-    feedback_threshold_na: float = 2.0
+    feedback_threshold_na: float = 0.005
     greater_than: bool = True
     feedback_mode: str = "absolute"
     settling_time_s: float = 0.0
@@ -707,7 +707,7 @@ class ScanHoppingITParameters(BoundedScanRetraction):
     retract_rate_um_s: float = 50.0
     approach_voltage_v: float = 0.1
     feedback_channel: str = "Current 1"
-    feedback_threshold: float = 2.0
+    feedback_threshold: float = 0.005
     greater_than: bool = True
     feedback_mode: str = "absolute"
     settling_time_s: float = 0.0

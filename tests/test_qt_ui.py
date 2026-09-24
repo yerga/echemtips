@@ -445,7 +445,7 @@ class QtLayoutTests(unittest.TestCase):
                 )
                 threshold = window.pages[page_name].threshold
                 self.assertEqual(threshold.unit_label.text(), "pA")
-                self.assertAlmostEqual(float(threshold.variable.get()), 2000.0)
+                self.assertAlmostEqual(float(threshold.variable.get()), 5.0)
                 page = window.pages[page_name]
                 self.assertFalse(hasattr(page, "feedback_mode"))
                 self.assertEqual(page.parameters().feedback_mode, "magnitude")
@@ -458,8 +458,8 @@ class QtLayoutTests(unittest.TestCase):
                     window.pages[page_name].accept_approach_button.text(),
                 "Accept contact",
                 )
-            self.assertAlmostEqual(window.pages["Approach"].parameters().feedback_threshold, 2.0)
-            self.assertAlmostEqual(window.pages["Approach + CV"].parameters().feedback_threshold_na, 2.0)
+            self.assertAlmostEqual(window.pages["Approach"].parameters().feedback_threshold, 0.005)
+            self.assertAlmostEqual(window.pages["Approach + CV"].parameters().feedback_threshold_na, 0.005)
             approach_cv = window.pages["Approach + CV"]
             approach_cv.x_position.entry.setText("25")
             approach_cv.y_position.entry.setText("35")

@@ -589,7 +589,7 @@ class NativeDriverTests(unittest.TestCase):
                             d.data_fifo.data.append(frame[-1])
                             self.assertEqual(len(d.read_samples()), 1)
                             self.assertEqual(status()["stage"], "cv" if method == "cv" else "it")
-                            expected = d._feedback_value_to_raw("Current 1", -2.0) if mode == "magnitude" else 32768
+                            expected = d._feedback_value_to_raw("Current 1", -0.005) if mode == "magnitude" else 32768
                             self.assertEqual(regs["Feedback_Threshold 2"].value, expected)
                             self.assertFalse(regs["External Stop"].value)
                             self.assertTrue(regs["OnlyStopLineONCE Z"].value)
