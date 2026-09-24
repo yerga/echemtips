@@ -60,6 +60,7 @@ class WECSPMDriver:
     """Native host driver for the FIFO protocol in WEC-SPM FPGA Target.vi."""
 
     supports_cv_rate_series = True
+    supports_lsv = True
 
     BASELINE_HOLD_US = 25_000
     BASELINE_SAMPLE_COUNT = 16
@@ -912,7 +913,12 @@ class WECSPMDriver:
             for voltage in (params.approach_voltage_v, params.cv_start_v, params.cv_vertex1_v, params.cv_vertex2_v)
         ):
             raise ValueError("A requested potential exceeds AO3 after applying the command-voltage ratio.")
-        if params.scan_rates_v_s is not None:
+        followup_count = hold_frame_count(params.settling_time_s) + int(params.retract_after)
+        followup_count += (2 * len(params.cv_rates) + (len(params.cv_rates) - 1) * hold_frame_count(params.reset_settling_s)
+                           if params.waveform == "LSV" else 1 + 3 * params.total_cv_cycles)
+        if followup_count + 2 + int(params.feedback_mode == "baseline_relative") > 32767:
+            raise ValueError("Reduce the rate count or settling time: the program exceeds the verified line-tag span.")
+        if params.scan_rates_v_s is not None or params.waveform == "LSV":
             # Reject unrepresentable mixed-rate velocities before any approach.
             plan, _contexts = approach_cv_followup_plan(params)
             self.compiler.compile(plan, self._current_targets())
@@ -920,7 +926,7 @@ class WECSPMDriver:
         baseline_line = int(self._read_register("LineNumber"))
         total_tags = (
             2 + int(params.feedback_mode == "baseline_relative")
-            + hold_frame_count(params.settling_time_s) + 1 + 3 * params.total_cv_cycles + int(params.retract_after)
+            + followup_count
         )
         if baseline_line < 0 or baseline_line + total_tags > 32767:
             raise ValueError(
@@ -1151,7 +1157,12 @@ class WECSPMDriver:
             return {"stage": "retracting", "detail": "CV complete; retracting Z", "progress": progress}
         if index < sequence.cv_first:
             return {"stage": "settling", "detail": f"Holding contact for {self._approach_params.settling_time_s:g} s", "progress": progress}
-        cycle = min((index - sequence.cv_first) // 3 + 1, max(1, (sequence.cv_last - sequence.cv_first) // 3 + 1))
+        if self._approach_params.waveform == "LSV":
+            context = self._approach_history[-1][1][index]
+            if context == "reset":
+                return {"stage": "settling", "detail": "Resetting to LSV start; settling between rates", "progress": progress}
+            rate_index = int(context.split(":")[1]) if context.startswith("cv:") else 0
+            return {"stage": "cv", "detail": self._approach_params.cycle_description(rate_index), "progress": progress}
         cycle_index = max(0, index - sequence.cv_first - 1) // 3
         return {"stage": "cv", "detail": self._approach_params.cycle_description(cycle_index), "progress": progress}
 
@@ -1320,7 +1331,7 @@ class WECSPMDriver:
             vertex1_v=params.cv_vertex1_v,
             vertex2_v=params.cv_vertex2_v,
             scan_rate_v_s=params.cv_scan_rate_v_s,
-            cycles=params.cycles,
+            cycles=params.cycles, waveform=params.waveform,
             retract_z_um=params.scan_retract_z(
                 point, contact_z, self.settings.z_range_um,
                 minimum_travel_um=self.settings.z_range_um / (65536 if self.settings.z_bipolar else 32768),
@@ -1536,7 +1547,7 @@ class WECSPMDriver:
             plan = cyclic_voltammetry_plan(
                 start_v=parameters.start_v, vertex1_v=parameters.vertex1_v,
                 vertex2_v=parameters.vertex2_v, scan_rate_v_s=parameters.scan_rate_v_s,
-                cycles=parameters.cycles, jump_at_start=parameters.jump_at_start,
+                cycles=parameters.cycles, jump_at_start=parameters.jump_at_start, waveform=parameters.waveform,
             )
             self._submit_method_plan(plan, [(-1, "cv")] * len(plan), "cv")
             return

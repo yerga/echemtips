@@ -301,6 +301,9 @@ class ApproachCVParameters:
 
     scan_rates_v_s: list[float] | None = None
 
+    waveform: str = "CV"
+    reset_settling_s: float = 0.0
+
     @property
     def cv_rates(self) -> tuple[float, ...]:
         """Return scan rates in acquisition order, preserving repeats."""
@@ -314,6 +317,8 @@ class ApproachCVParameters:
     def cycle_description(self, cycle: int) -> str:
         """Describe a zero-based global cycle using its rate and local cycle."""
         index = min(len(self.cv_rates) - 1, max(0, cycle // self.cycles))
+        if self.waveform == "LSV":
+            return f"LSV · rate {index + 1}/{len(self.cv_rates)} · {self.cv_rates[index]:g} V/s"
         if self.scan_rates_v_s is None:
             return f"CV cycle {min(cycle + 1, self.cycles)} of {self.cycles}"
         return f"Rate {index + 1}/{len(self.cv_rates)} · {self.cv_rates[index]:g} V/s · cycle {cycle % self.cycles + 1}/{self.cycles}"
@@ -366,6 +371,14 @@ class ApproachCVParameters:
             errors.append("Every scan rate must be finite and greater than zero.")
         if self.total_cv_cycles > 10000:
             errors.append("The complete series must not exceed 10,000 CV cycles.")
+        if self.waveform not in {"CV", "LSV"}:
+            errors.append("Waveform must be CV or LSV.")
+        if self.waveform == "LSV" and self.cycles != 1:
+            errors.append("LSV uses one sweep per landing or scan rate.")
+        if self.waveform == "LSV" and self.cv_start_v == self.cv_vertex1_v:
+            errors.append("LSV start and end potentials must differ.")
+        if not math.isfinite(self.reset_settling_s) or self.reset_settling_s < 0 or self.reset_settling_s > 3600:
+            errors.append("Between-rate settling must be between 0 and 3600 seconds.")
         return errors
 
 
@@ -378,6 +391,8 @@ class CVParameters:
     scan_rate_v_s: float = 0.25
     cycles: int = 2
     jump_at_start: bool = True
+
+    waveform: str = "CV"
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate CV bounds, rate, count, and AO3 representability."""
@@ -393,6 +408,12 @@ class CVParameters:
                 errors.append(f"CV {name.lower()} exceeds the AO3 range at the configured command ratio.")
         if 1 + 3 * self.cycles > 65535:
             errors.append("CV program exceeds the 65,535-waypoint driver limit.")
+        if self.waveform not in {"CV", "LSV"}:
+            errors.append("Waveform must be CV or LSV.")
+        if self.waveform == "LSV" and self.cycles != 1:
+            errors.append("LSV uses one sweep per landing or scan rate.")
+        if self.waveform == "LSV" and self.start_v == self.vertex1_v:
+            errors.append("LSV start and end potentials must differ.")
         return errors
 
 
@@ -636,6 +657,8 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
     marker_y_um: float | None = None
     marker_result: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
+    waveform: str = "CV"
+
     @property
     def point_count(self) -> int:
         """Return the total number of grid points."""
@@ -695,6 +718,8 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
             + abs(self.cv_vertex2_v - self.cv_vertex1_v)
             + abs(self.cv_start_v - self.cv_vertex2_v)
         ) / self.cv_scan_rate_v_s
+        if self.waveform == "LSV":
+            cv_per_point = abs(self.cv_vertex1_v - self.cv_start_v) / self.cv_scan_rate_v_s
         return lateral + repeated_approaches + retracts + self.execution_point_count * (self.settling_time_s + cv_per_point)
 
     @staticmethod
@@ -763,6 +788,8 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
             self.cv_start_v, self.cv_vertex1_v, self.cv_vertex2_v
         ):
             errors.append("Map potential must lie inside the CV potential range.")
+        if self.waveform == "LSV" and not min(self.cv_start_v, self.cv_vertex1_v) <= self.map_potential_v <= max(self.cv_start_v, self.cv_vertex1_v):
+            errors.append("Map potential must lie inside the LSV sweep range.")
         waypoints = 1 + self.execution_point_count * (
             4 + int(self.feedback_mode == "baseline_relative")
             + 3 * self.cycles + hold_frame_count(self.settling_time_s)
@@ -773,6 +800,12 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
                 "sample line tag is only validated through signed I16 line 32767."
             )
         errors.extend(self.marker_validation(settings))
+        if self.waveform not in {"CV", "LSV"}:
+            errors.append("Waveform must be CV or LSV.")
+        if self.waveform == "LSV" and self.cycles != 1:
+            errors.append("LSV uses one sweep per landing or scan rate.")
+        if self.waveform == "LSV" and self.cv_start_v == self.cv_vertex1_v:
+            errors.append("LSV start and end potentials must differ.")
         return errors
 
 

@@ -60,12 +60,15 @@ def cyclic_voltammetry_plan(
     scan_rate_v_s: float,
     cycles: int,
     jump_at_start: bool = True,
+    waveform: str = "CV",
     retract_z_um: float | None = None,
     retract_rate_um_s: float | None = None,
 ) -> list[PhysicalWaypoint]:
     """Build the shared jump/ramp CV program used by all FPGA methods."""
     if not isinstance(cycles, int) or cycles < 1:
         raise ValueError("CV cycles must be a positive integer.")
+    if waveform not in {"CV", "LSV"} or (waveform == "LSV" and cycles != 1):
+        raise ValueError("LSV requires one sweep; waveform must be CV or LSV.")
     plan = [PhysicalWaypoint(
         voltage1_v=start_v,
         voltage1_rate_v_s=None if jump_at_start else scan_rate_v_s,
@@ -74,7 +77,7 @@ def cyclic_voltammetry_plan(
     for _ in range(cycles):
         plan.extend(
             PhysicalWaypoint(voltage1_v=voltage, voltage1_rate_v_s=scan_rate_v_s)
-            for voltage in (vertex1_v, vertex2_v, start_v)
+            for voltage in ((vertex1_v,) if waveform == "LSV" else (vertex1_v, vertex2_v, start_v))
         )
     if retract_z_um is not None:
         if retract_rate_um_s is None:
@@ -92,9 +95,16 @@ def approach_cv_followup_plan(params) -> tuple[list[PhysicalWaypoint], list[str]
     for index, rate in enumerate(params.cv_rates):
         block = cyclic_voltammetry_plan(
             start_v=params.cv_start_v, vertex1_v=params.cv_vertex1_v,
-            vertex2_v=params.cv_vertex2_v, scan_rate_v_s=rate, cycles=params.cycles,
+            vertex2_v=params.cv_vertex2_v, scan_rate_v_s=rate, cycles=params.cycles, waveform=params.waveform,
         )
-        if index:
+        if index and params.waveform == "LSV":
+            plan.append(block[0])
+            contexts.append("reset")
+            holds = timed_hold_plan(params.reset_settling_s)
+            plan.extend(holds)
+            contexts.extend(["reset"] * len(holds))
+            block = block[1:]
+        elif index:
             block = block[1:]
         plan.extend(block)
         context = f"cv:{index}" if params.scan_rates_v_s is not None else "cv"

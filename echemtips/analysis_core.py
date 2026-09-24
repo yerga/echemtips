@@ -349,6 +349,13 @@ def _extract_single_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     )
     if start_index is None:
         return []
+    if parameters.get("waveform", "CV") == "LSV":
+        direction = 1 if vertex1 > cv_start else -1
+        endpoint = _target_index(voltages, start_index, end_index, vertex1,
+                                 direction, active_tolerance, target_tolerance)
+        if endpoint is None or endpoint <= start_index:
+            return []
+        return [CVCycle(1, dataset.rows[start_index:endpoint + 1])]
     cycles: list[CVCycle] = []
     cursor = cycle_start = start_index
     for cycle_number in range(1, requested_cycles + 1):

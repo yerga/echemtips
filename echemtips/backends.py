@@ -792,6 +792,8 @@ class NIFPGABackend(InstrumentBackend):
                 "The selected FPGA driver does not support CV scan-rate series. "
                 "Use the native driver or a site driver with explicit series support."
             )
+        if getattr(params, "waveform", "CV") == "LSV" and getattr(self._driver, "supports_lsv", False) is not True:
+            raise BackendError("The selected FPGA driver does not explicitly support LSV. Use the native driver.")
         self._require_idle_driver()
         self._register("External Stop").write(False)
         try:
@@ -840,6 +842,8 @@ class NIFPGABackend(InstrumentBackend):
         """Claim the idle NI driver and start hopping CV."""
         if not self.scan_hopping_cv_available:
             raise BackendError("Scan Hopping + CV requires the native eChemTips scan waypoint interface.")
+        if getattr(params, "waveform", "CV") == "LSV" and getattr(self._driver, "supports_lsv", False) is not True:
+            raise BackendError("The selected FPGA driver does not explicitly support LSV. Use the native driver.")
         self._require_idle_driver()
         self._register("External Stop").write(False)
         try:
@@ -882,6 +886,8 @@ class NIFPGABackend(InstrumentBackend):
         """Start CV, Approach, Approach + I–t, or hopping I–t on the driver."""
         if not self.hardware_program_available(name):
             raise BackendError(f"The FPGA driver does not expose the {name!r} shared method.")
+        if getattr(parameters, "waveform", "CV") == "LSV" and getattr(self._driver, "supports_lsv", False) is not True:
+            raise BackendError("The selected FPGA driver does not explicitly support LSV. Use the native driver.")
         self._require_idle_driver()
         self._register("External Stop").write(False)
         try:

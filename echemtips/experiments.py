@@ -105,6 +105,7 @@ class ApproachCVExperiment:
         self.params = params
         self._last_tick = self.backend.experiment_time()
         self._segments = []
+        self._lsv_reset_pending = False
         self._segment_index = 0
         self._hardware_sequence = self.backend.hardware_approach_cv_required
         self._no_contact_after_retract = False
@@ -146,14 +147,14 @@ class ApproachCVExperiment:
     def _begin_cv(self) -> None:
         p = self.params
         self.backend.stop_motion()
-        if p.scan_rates_v_s is not None:
+        if p.scan_rates_v_s is not None or p.waveform == "LSV":
             self.backend.set_cv_voltage(p.cv_start_v, 0)
         else:
             self.backend.set_voltage(1, p.cv_start_v)
         self._cv_voltage = p.cv_start_v
         self._segments = []
         for _ in range(p.total_cv_cycles):
-            self._segments.extend((p.cv_vertex1_v, p.cv_vertex2_v, p.cv_start_v))
+            self._segments.extend(((p.cv_vertex1_v,) if p.waveform == "LSV" else (p.cv_vertex1_v, p.cv_vertex2_v, p.cv_start_v)))
         self._segment_index = 0
         self.state = ExperimentState.CV
         self.detail = p.cycle_description(0)
@@ -170,7 +171,7 @@ class ApproachCVExperiment:
     def tag_cv_sample(self, sample: Sample) -> int:
         """Assign a rate-block ID only to samples acquired during series CV."""
         index = -1
-        if self.params.scan_rates_v_s is not None:
+        if self.params.scan_rates_v_s is not None or self.params.waveform == "LSV":
             if self._hardware_sequence:
                 context = self.backend.hardware_approach_context(sample.line_number)
                 if context.startswith("cv:"):
@@ -240,16 +241,25 @@ class ApproachCVExperiment:
                 self.progress = 0.9
 
         if self.state == ExperimentState.SETTLING and now >= self._settle_deadline:
-            self._begin_cv()
+            if self._lsv_reset_pending:
+                self._lsv_reset_pending = False
+                self.backend.set_cv_voltage(p.cv_start_v, self._segment_index)
+                self.state = ExperimentState.CV
+            else:
+                self._begin_cv()
             return ExperimentUpdate(self.state, self.detail, self.progress)
 
         if self.state == ExperimentState.CV and self._segments:
+            if p.waveform == "LSV" and self._cv_voltage == p.cv_start_v and (
+                abs(sample.voltage1_v - p.cv_start_v) > 1e-9 or sample.cv_rate_index != self._segment_index
+            ):
+                return ExperimentUpdate(self.state, self.detail, self.progress)
             target = self._segments[self._segment_index]
             delta = target - self._cv_voltage
-            rate_index = self._segment_index // (3 * p.cycles)
+            rate_index = self._segment_index // ((1 if p.waveform == "LSV" else 3) * p.cycles)
             step = p.cv_rates[rate_index] * dt
             if abs(delta) <= step:
-                if p.scan_rates_v_s is not None and not (
+                if (p.scan_rates_v_s is not None or p.waveform == "LSV") and not (
                     self._cv_voltage == target
                     and abs(sample.voltage1_v - target) < 1e-9
                     and sample.cv_rate_index == rate_index
@@ -270,11 +280,19 @@ class ApproachCVExperiment:
                         self.detail = "Approach and CV complete"
                     self.progress = 0.96 if p.retract_after else 1.0
                 else:
-                    self.detail = p.cycle_description(self._segment_index // 3)
+                    self.detail = p.cycle_description(self._segment_index // (1 if p.waveform == "LSV" else 3))
+                    if p.waveform == "LSV":
+                        self.backend.set_voltage(1, p.cv_start_v)
+                        self._cv_voltage = p.cv_start_v
+                        self._lsv_reset_pending = True
+                        self._settle_deadline = now + p.reset_settling_s
+                        self.state = ExperimentState.SETTLING
+                        self.detail = "Resetting to LSV start; settling between rates"
+                        return ExperimentUpdate(self.state, self.detail, self.progress)
             else:
                 self._cv_voltage += step if delta > 0 else -step
-            if p.scan_rates_v_s is not None and self.state == ExperimentState.CV:
-                self.backend.set_cv_voltage(self._cv_voltage, self._segment_index // (3 * p.cycles))
+            if (p.scan_rates_v_s is not None or p.waveform == "LSV") and self.state == ExperimentState.CV:
+                self.backend.set_cv_voltage(self._cv_voltage, self._segment_index // ((1 if p.waveform == "LSV" else 3) * p.cycles))
             else:
                 self.backend.set_voltage(1, self._cv_voltage)
             self.progress = 0.42 + 0.52 * self._segment_index / max(1, len(self._segments))
@@ -422,7 +440,7 @@ class ScanHoppingCVExperiment:
         self._cv_voltage = p.cv_start_v
         self._segments = []
         for _ in range(p.cycles):
-            self._segments.extend((p.cv_vertex1_v, p.cv_vertex2_v, p.cv_start_v))
+            self._segments.extend((p.cv_vertex1_v,) if p.waveform == "LSV" else (p.cv_vertex1_v, p.cv_vertex2_v, p.cv_start_v))
         self._segment_index = 0
         self.state = ExperimentState.CV
         self.detail = f"Point {self.point_index + 1}/{p.execution_point_count} · CV"
@@ -502,6 +520,8 @@ class ScanHoppingCVExperiment:
             self._begin_simulated_cv()
             return
         if self.state == ExperimentState.CV:
+            if p.waveform == "LSV" and self._cv_voltage == p.cv_start_v and abs(sample.voltage1_v - p.cv_start_v) > 1e-9:
+                return  # Wait for an acquired start point, not a queued approach sample.
             self._track_current(sample, self.point_index)
             now = self.backend.experiment_time()
             dt = min(now - self._last_tick, 0.25)
@@ -510,6 +530,10 @@ class ScanHoppingCVExperiment:
             step = p.cv_scan_rate_v_s * dt
             delta = target - self._cv_voltage
             if abs(delta) <= step:
+                if p.waveform == "LSV" and (self._cv_voltage != target or abs(sample.voltage1_v - target) > 1e-9):
+                    self._cv_voltage = target
+                    self.backend.set_voltage(1, target)
+                    return
                 self._cv_voltage = target
                 self._segment_index += 1
                 if self._segment_index >= len(self._segments):
@@ -651,7 +675,7 @@ class CVExperiment:
         else:
             self._targets = []
             for _ in range(params.cycles):
-                self._targets.extend((params.vertex1_v, params.vertex2_v, params.start_v))
+                self._targets.extend((params.vertex1_v,) if params.waveform == "LSV" else (params.vertex1_v, params.vertex2_v, params.start_v))
             if params.jump_at_start:
                 self.backend.set_voltage(1, params.start_v)
                 self._voltage = params.start_v
@@ -682,6 +706,8 @@ class CVExperiment:
             return ExperimentUpdate(self.state, self.detail, self.progress)
         if self._voltage is None:
             self._voltage = samples[-1].voltage1_v
+        if self.params.waveform == "LSV" and self._voltage == self.params.start_v and abs(samples[-1].voltage1_v - self.params.start_v) > 1e-9:
+            return ExperimentUpdate(self.state, "Waiting for LSV start sample", self.progress)
         now = self.backend.experiment_time()
         dt = min(now - self._last_tick, 0.25)
         self._last_tick = now
@@ -689,6 +715,10 @@ class CVExperiment:
         delta = target - self._voltage
         step = self.params.scan_rate_v_s * dt
         if abs(delta) <= step:
+            if self.params.waveform == "LSV" and (self._voltage != target or abs(samples[-1].voltage1_v - target) > 1e-9):
+                self._voltage = target
+                self.backend.set_voltage(1, target)
+                return ExperimentUpdate(self.state, "Running LSV", self.progress)
             self._voltage = target
             self._target_index += 1
             if self._target_index >= len(self._targets):

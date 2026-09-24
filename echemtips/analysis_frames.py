@@ -18,6 +18,8 @@ def leg_labels(dataset):
     """Label the chronological segments with the saved endpoint potentials."""
     try:
         s,a,b = cv_targets(dataset)
+        if (dataset.metadata.get("parameters") or {}).get("waveform") == "LSV":
+            return [f"LSV · Start → End ({s:+g} → {a:+g} V)"]
         return [f"{name} ({low:+g} → {high:+g} V)" for name,low,high in zip(LEG_NAMES,(s,a,b),(a,b,s))]
     except AnalysisError:
         return list(LEG_NAMES)
@@ -25,6 +27,9 @@ def leg_labels(dataset):
 def cv_leg(dataset, selection, leg):
     """Slice one of three chronological legs; shared vertex samples are retained."""
     s,a,b = cv_targets(dataset)
+    if (dataset.metadata.get("parameters") or {}).get("waveform") == "LSV":
+        if leg != 0: raise AnalysisError("LSV has one segment: Start to End.")
+        return selection.rows
     rows = selection.rows
     e = rows.matrix[:, rows.columns.index("voltage1_v")]
     if not len(e): raise AnalysisError("Empty CV cycle")
@@ -183,6 +188,8 @@ def prepare_frames(dataset, selections, *, channel="current1_na", kind="CV poten
     A cycle number is per hop, not the global position in the cycle list. `None`
     averages all complete cycles. Exclusions are zero-based scan_pixel IDs.
     """
+    if (dataset.metadata.get("parameters") or {}).get("waveform") == "LSV" and leg == 3:
+        leg = 0  # The complete LSV is its only segment.
     if kind=="CV potential" and leg==3:
         if axis is not None: raise AnalysisError("Whole-CV movies build their chronological axis from the saved waveform.")
         return whole_cv_frames(dataset,selections,channel=channel,cycle=cycle,count=count,
@@ -233,7 +240,7 @@ def prepare_frames(dataset, selections, *, channel="current1_na", kind="CV poten
     values=np.full_like(sums,np.nan); np.divide(sums,counts,out=values,where=counts>0)
     if not np.isfinite(values).any(): raise AnalysisError("No samples cross the requested frame range.")
     result = MapFrames(axis,values,pixels,coordinates,
-        dict(channel=channel,kind=kind,cycle=cycle,leg=leg,excluded_pixels=sorted(excluded),
+        dict(channel=channel,kind=kind,cycle=cycle,leg=leg,waveform=(dataset.metadata.get("parameters") or {}).get("waveform", "CV"),excluded_pixels=sorted(excluded),
              source=str(dataset.path),polarity=(dataset.metadata.get("settings") or {}).get("polarity_convention","unspecified"),
              smoothing=dataset.metadata.get("analysis_processing")), len(coordinates)-len(pixels))
     result.auto_limits=result.limits("Auto")
