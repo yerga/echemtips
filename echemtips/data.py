@@ -138,6 +138,8 @@ class DataRecorder:
                 "settings": self._json_value(settings),
                 "parameters": self._json_value(parameters),
             }
+            if isinstance(parameters, ApproachCVParameters) and parameters.scan_rates_v_s is not None:
+                self._metadata["acquisition_rate_tags"] = True
             scan_grid = self._scan_grid_metadata(parameters)
             if scan_grid is not None:
                 self._metadata["scan_grid"] = scan_grid
@@ -257,6 +259,8 @@ class DataRecorder:
             "settings": self._json_value(settings),
             "parameters": self._json_value(parameters),
         }
+        if isinstance(parameters, ApproachCVParameters) and parameters.scan_rates_v_s is not None:
+            metadata["acquisition_rate_tags"] = True
         scan_grid = self._scan_grid_metadata(parameters)
         if scan_grid is not None:
             from .scan_orientation import orientation_svg

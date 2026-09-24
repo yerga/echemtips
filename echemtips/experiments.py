@@ -146,7 +146,10 @@ class ApproachCVExperiment:
     def _begin_cv(self) -> None:
         p = self.params
         self.backend.stop_motion()
-        self.backend.set_voltage(1, p.cv_start_v)
+        if p.scan_rates_v_s is not None:
+            self.backend.set_cv_voltage(p.cv_start_v, 0)
+        else:
+            self.backend.set_voltage(1, p.cv_start_v)
         self._cv_voltage = p.cv_start_v
         self._segments = []
         for _ in range(p.total_cv_cycles):
@@ -172,8 +175,9 @@ class ApproachCVExperiment:
                 context = self.backend.hardware_approach_context(sample.line_number)
                 if context.startswith("cv:"):
                     index = int(context.split(":")[1])
-            elif self.state == ExperimentState.CV and self._segment_index < len(self._segments):
-                index = self._segment_index // (3 * self.params.cycles)
+            else:
+                # Queued simulation samples already carry their acquisition-time ID.
+                return sample.cv_rate_index
             sample.cv_rate_index = index
         return index
 
@@ -245,6 +249,15 @@ class ApproachCVExperiment:
             rate_index = self._segment_index // (3 * p.cycles)
             step = p.cv_rates[rate_index] * dt
             if abs(delta) <= step:
+                if p.scan_rates_v_s is not None and not (
+                    self._cv_voltage == target
+                    and abs(sample.voltage1_v - target) < 1e-9
+                    and sample.cv_rate_index == rate_index
+                ):
+                    # Acquire the endpoint before advancing or finalizing.
+                    self._cv_voltage = target
+                    self.backend.set_cv_voltage(target, rate_index)
+                    return ExperimentUpdate(self.state, self.detail, self.progress)
                 self._cv_voltage = target
                 self._segment_index += 1
                 if self._segment_index >= len(self._segments):
@@ -260,7 +273,10 @@ class ApproachCVExperiment:
                     self.detail = p.cycle_description(self._segment_index // 3)
             else:
                 self._cv_voltage += step if delta > 0 else -step
-            self.backend.set_voltage(1, self._cv_voltage)
+            if p.scan_rates_v_s is not None and self.state == ExperimentState.CV:
+                self.backend.set_cv_voltage(self._cv_voltage, self._segment_index // (3 * p.cycles))
+            else:
+                self.backend.set_voltage(1, self._cv_voltage)
             self.progress = 0.42 + 0.52 * self._segment_index / max(1, len(self._segments))
 
         if self.state == ExperimentState.RETRACTING and abs(sample.z_um - p.start_z_um) < 0.08:

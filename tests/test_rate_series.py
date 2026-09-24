@@ -90,7 +90,8 @@ class RateSeriesTests(unittest.TestCase):
         with patch.object(backend, 'move', wraps=backend.move) as moves:
             for index in range(4000):
                 e._last_tick -= .01
-                sample = Sample(index*.01, 50, 50, 68, e._cv_voltage, 0, 1, 0)
+                sample = backend.read_sample()
+                sample.z_um = 68
                 e.tick(sample)
                 seen.add(sample.cv_rate_index)
                 if e.state == ExperimentState.RETRACTING:
@@ -118,6 +119,63 @@ class RateSeriesTests(unittest.TestCase):
         self.assertEqual([(c.rate_index, c.number, c.scan_rate_v_s) for c in cycles],
                          [(0, 1, .1), (0, 2, .1), (2, 1, .1), (2, 2, .1)])
         self.assertIn('Rate 3', cycles[-1].label)
+
+    def test_buffered_simulation_keeps_acquisition_tags_and_all_cycles(self):
+        settings = AppSettings()
+        backend = SimulationBackend(settings); backend.connect()
+        experiment = ApproachCVExperiment(backend, settings)
+        for vertex2 in (-.2, -.4):
+            with self.subTest(vertex2=vertex2):
+                params = ApproachCVParameters(scan_rates_v_s=[.1, .25, .5, 1],
+                                              cycles=2, cv_vertex2_v=vertex2,
+                                              retract_after=False)
+                experiment.start(params)
+                experiment._begin_cv()
+                rows = []
+                columns = ('elapsed_s', 'voltage1_v', 'current1_na', 'cv_rate_index')
+                for _ in range(4000):
+                    batch = [backend.read_sample() for _ in range(6)]
+                    original = [s.cv_rate_index for s in batch]
+                    experiment._last_tick -= .08
+                    experiment.tick(batch[-1])
+                    for sample in batch:
+                        experiment.tag_cv_sample(sample)
+                        rows.append([len(rows)*.01, sample.voltage1_v,
+                                     sample.current1_na, sample.cv_rate_index])
+                    self.assertEqual(original, [s.cv_rate_index for s in batch])
+                    if experiment.state == ExperimentState.COMPLETE:
+                        break
+                self.assertEqual(experiment.state, ExperimentState.COMPLETE)
+                dataset = AnalysisDataset(Path('buffered.csv'), columns, NumericRows(columns, rows),
+                    {'parameters': asdict(params), 'settings': {'mode': 'Simulation'},
+                     'acquisition_rate_tags': True})
+                self.assertEqual([(c.rate_index, c.number) for c in extract_cv_cycles(dataset)],
+                                 [(i, c) for i in range(4) for c in (1, 2)])
+        backend.disconnect()
+
+    def test_legacy_simulator_endpoints_in_next_tag_are_recovered(self):
+        params = ApproachCVParameters(scan_rates_v_s=[.1, .25, .5, 1],
+                                      cycles=1, cv_vertex2_v=-.2)
+        columns = ('elapsed_s', 'voltage1_v', 'current1_na', 'cv_rate_index')
+        rows = []
+        for index in range(4):
+            # Old buffered tag switches before the previous return is acquired.
+            if index:
+                rows.extend([[len(rows)*.01, value, 1, index] for value in (-.12, -.2)])
+            values = list(np.linspace(-.2, .6, 31)) + list(np.linspace(.6, -.12, 30))
+            rows.extend([[len(rows)*.01, value, 1, index] for value in values])
+        rows.append([len(rows)*.01, -.2, 1, -1])
+        metadata = {'parameters': asdict(params), 'settings': {'mode': 'Simulation'}}
+        dataset = AnalysisDataset(Path('legacy.csv'), columns, NumericRows(columns, rows), metadata)
+        self.assertEqual([c.rate_index for c in extract_cv_cycles(dataset)], [0, 1, 2, 3])
+        # Do not invent the missing endpoint of a stopped final rate.
+        partial = AnalysisDataset(dataset.path, columns, dataset.rows[:-1], metadata)
+        self.assertEqual([c.rate_index for c in extract_cv_cycles(partial)], [0, 1, 2])
+        metadata['acquisition_rate_tags'] = True
+        self.assertEqual(extract_cv_cycles(dataset), [])
+        metadata.pop('acquisition_rate_tags')
+        metadata['settings']['mode'] = 'NI FPGA'
+        self.assertEqual(extract_cv_cycles(dataset), [])
 
     def test_only_series_recordings_include_rate_identifier(self):
         with TemporaryDirectory() as folder:

@@ -26,6 +26,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Preserve acquisition-time rate IDs in buffered simulations, acquire CV endpoints
+  before advancing, and recover delayed endpoints in older simulated rate-series
+  recordings so faster rates are not omitted from analysis.
+
 - Laptop experiment views now stack maps and paired traces when narrow and
   scroll instead of compressing axes. Hide setup gives plots more width;
   Expand plots opens the live tabs in a larger window with Stop and Emergency

@@ -1397,8 +1397,8 @@ class ApproachCVPage(ManagedExperimentPage):
                         self.rate_readout.setText(f"Rate {rate_index + 1}/{len(experiment.params.cv_rates)} · {rate:g} V/s · latest rate shown; all rates are recorded")
             if stage.startswith("cv") or (not stage and state_before == ExperimentState.CV):
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
-            if not hardware and experiment.active: update = experiment.tick(sample)
-        if hardware and experiment.active: update = experiment.tick(samples[-1])
+        # Advance once after handling the already-acquired batch.
+        if experiment.active: update = experiment.tick(samples[-1])
         self.z_plot.request_redraw(); self.current_plot.request_redraw(); self.approach_curve.request_redraw(); self.approach_history.request_redraw()
         if cv_changed: self.cv_plot.request_redraw()
         self._show_update(update)

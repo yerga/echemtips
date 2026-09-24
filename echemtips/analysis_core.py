@@ -253,6 +253,29 @@ def pixel_groups(dataset: AnalysisDataset) -> list[tuple[int, NumericRows]]:
             for pixel, parts in sorted(groups.items())]
 
 
+def _legacy_series_end(dataset: AnalysisDataset, end: int, index: int,
+                       cv_start: float, tolerance: float) -> int:
+    """Recover a delayed simulator endpoint without inventing or retagging data.
+
+    Old GUI-assigned tags can put the return endpoint in the next rate block.
+    Follow only a contiguous monotonic return; never bridge an absent block.
+    """
+    voltages = dataset.column("voltage1_v")
+    tags = dataset.column("cv_rate_index")
+    direction = np.sign(cv_start - voltages[end - 1])
+    for cursor in range(end, len(voltages)):
+        if tags[cursor] not in (index + 1, -1):
+            break
+        previous, value = voltages[cursor - 1], voltages[cursor]
+        if direction * (value - previous) < -1e-9:
+            break
+        if abs(value - cv_start) <= tolerance:
+            return cursor + 1
+        if direction * (value - cv_start) > 0:
+            break
+    return end
+
+
 def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     """Extract completed CV cycles using the voltage program saved in metadata."""
     if "voltage1_v" not in dataset.columns:
@@ -262,11 +285,22 @@ def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     if isinstance(rates, list) and "cv_rate_index" in dataset.columns:
         cycles = []
         tags = dataset.column("cv_rate_index")
+        settings = dataset.metadata.get("settings")
+        legacy_simulation = (isinstance(settings, dict)
+                             and settings.get("mode") == "Simulation"
+                             and not dataset.metadata.get("acquisition_rate_tags"))
         for index, rate in enumerate(rates):
             selected = np.flatnonzero(tags == index)
             if not len(selected):
                 continue
-            rows = (dataset.rows[int(selected[0]):int(selected[-1]) + 1]
+            end = int(selected[-1]) + 1
+            # Compatibility for older simulator recordings, never hardware tags.
+            if (legacy_simulation
+                    and selected[-1] - selected[0] + 1 == len(selected)):
+                start_v = float(parameters["cv_start_v"])
+                tolerance = max(.005, abs(float(parameters["cv_vertex1_v"]) - float(parameters["cv_vertex2_v"])) * .03)
+                end = _legacy_series_end(dataset, end, index, start_v, tolerance)
+            rows = (dataset.rows[int(selected[0]):end]
                     if selected[-1] - selected[0] + 1 == len(selected)
                     else NumericRows(dataset.columns, dataset.rows.matrix[selected]))
             subset = AnalysisDataset(dataset.path, dataset.columns, rows, dataset.metadata)

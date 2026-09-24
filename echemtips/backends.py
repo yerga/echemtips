@@ -278,6 +278,7 @@ class SimulationBackend(InstrumentBackend):
         self._diagnostic_resistance_mohm = 100.0
         self._last_sample_voltage = 0.0
         self._last_sample_elapsed = 0.0
+        self._cv_rate_index = -1
 
     def surface_z_at(self, x_um: float, y_um: float) -> float:
         """Return deterministic simulated surface height at physical XY."""
@@ -365,6 +366,7 @@ class SimulationBackend(InstrumentBackend):
             current1_na=self.settings.polarity_factor * current1,
             current2_na=self.settings.polarity_factor * current2,
             line_number=self._line_number,
+            cv_rate_index=self._cv_rate_index,
             commanded_x_um=self._positions["X"],
             commanded_y_um=self._positions["Y"],
             commanded_z_um=self._positions["Z"],
@@ -397,6 +399,14 @@ class SimulationBackend(InstrumentBackend):
         if channel not in (1, 2) or not -10 <= voltage <= 10:
             raise SafetyError("Voltage output must be channel 1 or 2 and within +/-10 V.")
         self._voltage[channel] = voltage
+        if channel == 1:
+            self._cv_rate_index = -1
+
+    @_synchronized_io
+    def set_cv_voltage(self, voltage: float, rate_index: int) -> None:
+        """Atomically associate simulated E1 output with its acquisition rate block."""
+        self.set_voltage(1, voltage)
+        self._cv_rate_index = rate_index
 
     @_synchronized_io
     def pause(self) -> None:

@@ -185,3 +185,8 @@ Analysis segments rates by the explicit tag, then extracts complete cycles
 within each block. Consequently, missing or incomplete blocks do not shift later
 rate identities. Smoothing does not cross rate boundaries. Separated-CV exports
 retain `cv_rate_index`; cycle numbering is local to each rate block.
+
+Rate-series metadata includes `acquisition_rate_tags: true` for recordings with
+acquisition-time simulation tags. For older simulated series, analysis may include
+a contiguous return-to-start endpoint from the beginning of the next tagged block.
+This compatibility handling does not modify source data or extend hardware tags.
