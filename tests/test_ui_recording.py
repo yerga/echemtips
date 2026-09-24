@@ -135,6 +135,23 @@ class AcquisitionOrderingTests(unittest.TestCase):
             self.assertFalse(recorder.active)
             self.assertEqual(json.loads(path.with_suffix(".json").read_text())["status"], "error")
 
+    def test_marker_tail_after_completion_keeps_excluded_recording_tag(self):
+        from echemtips.experiments import ScanHoppingCVExperiment
+        from echemtips.backends import SimulationBackend
+        settings = AppSettings()
+        scan = ScanHoppingCVExperiment(SimulationBackend(settings), settings)
+        scan.params = ScanHoppingCVParameters()
+        scan._grid = scan.params.execution_grid()
+        scan.point_index = len(scan._grid)
+        scan.state = ExperimentState.COMPLETE
+        recorder = DataRecorder()
+        recorder.start('Scan Hopping CV')
+        sample = Sample(1, 35, 80, 55, 0, 0, 100, 0)
+        app = SimpleNamespace(pages={}, recorder=recorder,
+                              experiments={'scan_cv': scan}, backend=scan.backend)
+        EChemTipsApp._consume_acquired(app, [sample], finalize=False)
+        self.assertEqual(recorder.samples[-1].scan_pixel, -2)
+
     def test_last_scan_batch_is_tagged_and_saved_before_finish(self):
         with TemporaryDirectory() as folder:
             settings = AppSettings(save_directory=folder)

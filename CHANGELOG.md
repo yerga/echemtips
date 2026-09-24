@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Default-on optional orientation landing for hopping CV and I–t, shared scan
+  preview and exported orientation SVG; marker samples are retained separately
+  in recordings and excluded from analysis.
+
 - Analysis workbench with registered experiment selectors, arbitrary numeric
   channels, full-resolution time-window statistics and signed charge, constant
   baseline subtraction, reference overlays, and protected provenance exports.

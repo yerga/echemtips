@@ -13,7 +13,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets, QtSvgWidgets
+
+from .scan_orientation import orientation_svg
 
 from .acquisition import AcquisitionDrain, AcquisitionWorker
 from .branding import application_icon, configure_application_identity, logo_label
@@ -185,6 +187,50 @@ def _format_duration(seconds: float) -> str:
     minutes, seconds = divmod(remainder, 60)
     parts = ([f"{hours} h"] if hours else []) + ([f"{minutes} min"] if minutes else []) + ([f"{seconds} s"] if seconds or not (hours or minutes) else [])
     return " ".join(parts)
+
+
+def _scan_marker_card(page, controls_host):
+    """Shared marker controls and physical scan-path preview for both scan methods."""
+    card = Card("Orientation marker and scan preview")
+    layout = _vbox(card.body)
+    page.marker_enabled = Check("Add final orientation landing", True)
+    layout.addWidget(page.marker_enabled)
+    fields = QtWidgets.QWidget()
+    grid = _grid(fields)
+    page.marker_x = add_field(grid, Field("Marker X (blank = automatic)", "", "µm"), 0, 0)
+    page.marker_y = add_field(grid, Field("Marker Y (blank = automatic)", "", "µm"), 0, 1)
+    layout.addWidget(fields)
+    explanation = label("Repeats the same experiment outside the array. Automatic: first X, one spacing beyond the last Y row. Excluded from analysis.", "muted", word_wrap=True)
+    layout.addWidget(explanation)
+    preview = QtSvgWidgets.QSvgWidget()
+    preview.setMinimumHeight(270)
+    preview.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
+    layout.addWidget(preview)
+    message = label("", "muted", word_wrap=True)
+    layout.addWidget(message)
+
+    def refresh(*_args):
+        """Preview the planned path and show marker validation without moving hardware."""
+        fields.setEnabled(page.marker_enabled.isChecked())
+        try:
+            p = page.parameters()
+            if not 1 <= p.x_points <= 64 or not 1 <= p.y_points <= 64:
+                raise ValueError('Enter point counts between 1 and 64.')
+            preview.load(QtCore.QByteArray(orientation_svg(p).encode('utf-8')))
+            errors = p.marker_validation(page.app.settings)
+            x, y = p.marker_position()
+            message.setText('; '.join(errors) if errors else (f'Marker: X {x:g} µm · Y {y:g} µm' if p.marker_enabled else 'No marker landing'))
+        except (ValueError, ZeroDivisionError, OverflowError):
+            message.setText('Enter valid coordinates to preview the scan.')
+
+    for entry in controls_host.findChildren(QtWidgets.QLineEdit) + fields.findChildren(QtWidgets.QLineEdit):
+        entry.textChanged.connect(refresh)
+    page.scan_pattern.currentTextChanged.connect(refresh)
+    page.marker_enabled.toggled.connect(refresh)
+    page.marker_enabled.toggled.connect(page._sync_scan_pattern)
+    page._sync_scan_pattern()
+    refresh()
+    return card
 
 
 def _scan_summary_card(parameter_factory, triggers: list[QtCore.QObject]) -> tuple[Card, QtWidgets.QLabel, QtWidgets.QLabel]:
@@ -1425,7 +1471,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.y_start = add_field(g, Field("Y start", "35", "µm"), 1, 0); self.y_end = add_field(g, Field("Y end", "65", "µm"), 1, 1)
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
-        self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
+        self.line_retract = add_field(g, Field("Long-move extra retract", "5", "µm"), 3, 1)
         hl.addWidget(area)
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
@@ -1446,8 +1492,9 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.scan_rate = add_field(g, Field("Scan rate", "2", "V/s"), 2, 0); self.cycles = add_field(g, Field("Cycles", "1"), 2, 1)
         hl.addWidget(electrochemistry)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
+        hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern]
+            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
@@ -1480,6 +1527,9 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             greater_than=True, feedback_mode="magnitude", settling_time_s=self.settling_time.float(),
             cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
             cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
+            marker_enabled=self.marker_enabled.isChecked(),
+            marker_x_um=float(self.marker_x.entry.text()) if self.marker_x.entry.text().strip() else None,
+            marker_y_um=float(self.marker_y.entry.text()) if self.marker_y.entry.text().strip() else None,
         )
 
     def _refresh_maps(self, *_args: object) -> None:
@@ -1487,11 +1537,13 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         xs = params._axis_values(params.x_start_um, params.x_end_um, params.x_points)
         ys = params._axis_values(params.y_start_um, params.y_end_um, params.y_points)
         mode = self.app.settings.map_view_mode
-        self.z_map.set_data(self.experiment.contact_z, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
-        self.current_map.set_data(self.experiment.current_at_potential, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
+        self.z_map.set_data({key: value for key, value in self.experiment.contact_z.items() if key[0] >= 0 and key[1] >= 0}, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
+        self.current_map.set_data({key: value for key, value in self.experiment.current_at_potential.items() if key[0] >= 0 and key[1] >= 0}, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
 
     def _sync_scan_pattern(self, *_args: object) -> None:
-        self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
+        marker = getattr(self, 'marker_enabled', None)
+        self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster" or (marker is not None and marker.isChecked()))
+        self.line_retract.setToolTip("Additional Z clearance for raster flyback and the move to the orientation marker.")
 
     def start(self) -> None:
         """Reset maps/plots, claim recording, and start hopping CV."""
@@ -1535,8 +1587,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
                 self.approach_history.append_timed(elapsed, sample.z_um, current, redraw=False)
             if stage == "cv" and point_index >= 0:
                 if point_index != self._cv_point:
-                    self.cv_plot.clear(); self._cv_point = point_index; row, column = experiment.params.grid()[point_index][:2]
-                    self.cv_pixel_label.setText(f"Hop {point_index + 1} · row {row + 1}, column {column + 1}")
+                    self.cv_plot.clear(); self._cv_point = point_index; row, column = experiment.params.execution_grid()[point_index][:2]
+                    self.cv_pixel_label.setText("Orientation marker (not an array hop)" if experiment.params.is_marker(point_index) else f"Hop {point_index + 1} · row {row + 1}, column {column + 1}")
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
         if samples: self.z_plot.request_redraw(); self.current_plot.request_redraw(); self.approach_curve.request_redraw(); self.approach_history.request_redraw()
         if cv_changed: self.cv_plot.request_redraw()
@@ -1560,7 +1612,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.y_start = add_field(g, Field("Y start", "35", "µm"), 1, 0); self.y_end = add_field(g, Field("Y end", "65", "µm"), 1, 1)
         self.x_points = add_field(g, Field("X points", "3"), 2, 0); self.y_points = add_field(g, Field("Y points", "3"), 2, 1)
         pattern_box = QtWidgets.QWidget(); pattern_layout = _vbox(pattern_box, spacing=5); pattern_layout.addWidget(label("Scan pattern", "muted")); self.scan_pattern = Choice(("Serpentine", "Raster"), "Serpentine"); pattern_layout.addWidget(self.scan_pattern); g.addWidget(pattern_box, 3, 0)
-        self.line_retract = add_field(g, Field("Raster flyback extra retract", "5", "µm"), 3, 1)
+        self.line_retract = add_field(g, Field("Long-move extra retract", "5", "µm"), 3, 1)
         hl.addWidget(area)
         movement = Card("2 · Motion and contact", "Initial Z is used once; later hops retract by the configured distance from measured contact.")
         g = _grid(movement.body)
@@ -1582,8 +1634,9 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
+        hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern]
+            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
@@ -1611,6 +1664,9 @@ class ScanHoppingITPage(ManagedExperimentPage):
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=True,
             feedback_mode="magnitude", settling_time_s=self.settling_time.float(), initial_potential_v=self.initial_v.float(), initial_hold_s=self.initial_t.float(),
             step_potential_v=self.step_v.float(), step_hold_s=self.step_t.float(), return_potential_v=self.return_v.float(), return_hold_s=self.return_t.float(), cycles=self.cycles.integer(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
+            marker_enabled=self.marker_enabled.isChecked(),
+            marker_x_um=float(self.marker_x.entry.text()) if self.marker_x.entry.text().strip() else None,
+            marker_y_um=float(self.marker_y.entry.text()) if self.marker_y.entry.text().strip() else None,
         )
 
     def _refresh_maps(self, *_args: object) -> None:
@@ -1618,11 +1674,13 @@ class ScanHoppingITPage(ManagedExperimentPage):
         xs = ScanHoppingCVParameters._axis_values(params.x_start_um, params.x_end_um, params.x_points)
         ys = ScanHoppingCVParameters._axis_values(params.y_start_um, params.y_end_um, params.y_points)
         mode = self.app.settings.map_view_mode
-        self.z_map.set_data(self.experiment.contact_z, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
-        self.current_map.set_data(self.experiment.current_at_pulse, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
+        self.z_map.set_data({key: value for key, value in self.experiment.contact_z.items() if key[0] >= 0 and key[1] >= 0}, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
+        self.current_map.set_data({key: value for key, value in self.experiment.current_at_pulse.items() if key[0] >= 0 and key[1] >= 0}, params.y_points, params.x_points, x_values=xs, y_values=ys, view_mode=mode, footprint_diameter_um=params.footprint_diameter_um)
 
     def _sync_scan_pattern(self, *_args: object) -> None:
-        self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster")
+        marker = getattr(self, 'marker_enabled', None)
+        self.line_retract.entry.setEnabled(self.scan_pattern.get() == "Raster" or (marker is not None and marker.isChecked()))
+        self.line_retract.setToolTip("Additional Z clearance for raster flyback and the move to the orientation marker.")
 
     def start(self) -> None:
         """Reset maps/plots, claim recording, and start hopping I–t."""
@@ -2357,6 +2415,21 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 page = self.pages.get(name)
                 if page is not None: page.on_samples([])
             if self.experiment.active and self.backend.hardware_approach_cv_required and self._sample is not None: self.pages["Approach + CV"].poll_status(self._sample)
+        # Final drains can arrive after the experiment becomes inactive. Keep
+        # their marker tags too, so no tail samples leak into analysis plots.
+        if self.recorder.active and self.recorder.name in {"Scan Hopping CV", "Scan Hopping IT"}:
+            scan_cv = self.recorder.name == "Scan Hopping CV"
+            experiment = EChemTipsApp._experiments_for(self)["scan_cv" if scan_cv else "scan_it"]
+            for sample in samples:
+                if sample.scan_pixel != -1:
+                    continue
+                if experiment._hardware:
+                    context = self.backend.hardware_scan_context if scan_cv else self.backend.hardware_program_context
+                    point = context(sample.line_number)[0]
+                else:
+                    point = min(experiment.point_index, len(experiment._grid) - 1)
+                if 0 <= point < len(experiment._grid):
+                    experiment._tag(sample, point)
         for sample in samples: self.recorder.append(sample)
         if finalize: self._finalize_experiments(bool(samples))
 

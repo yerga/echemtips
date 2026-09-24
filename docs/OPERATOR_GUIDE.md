@@ -167,7 +167,7 @@ retracts by a positive distance away from the measured contact Z.
 - **Raster flyback extra retract** is added only before the longer line return.
 - **Initial approach Z** applies only to the first hop. Later approaches start
   from contact-relative retract positions.
-- After the final hop, both scan methods return Z directly to **Initial approach
+- After the final landing (the marker when enabled), both scan methods return Z directly to **Initial approach
   Z** at **Retract speed**, leaving X/Y at the final pixel. If Z is already
   farther retracted, it stays there instead of moving toward the surface.
   The scan stays active and records until that return completes. Intermediate
@@ -249,3 +249,28 @@ time-window measurements and charge, CV overlays, physical hop maps, and exports
 5. If software cannot establish a safe state, use the positioner/controller's
    physical inhibit or power controls according to the laboratory procedure.
    Never depend on the GUI as the only safety layer.
+
+
+## Scan orientation marker
+
+Both hopping scans enable **Add final orientation landing** by default. After
+all array points succeed, the probe retracts, moves to the marker, approaches
+using the same contact settings, repeats the same CV or I–t program (including
+cycles and settling), and returns toward Initial approach Z. An aborted scan
+does not start a marker. The marker itself requires confirmed or operator-accepted
+contact; reaching the approach limit does not authorize the electrochemistry.
+
+Automatic placement is the first X coordinate, one Y spacing beyond the final
+row in the scan direction. For a single Y row the offset is the larger of 5 µm
+and three footprint diameters. This extends one corner rather than symmetrically
+extending the whole array. Enter explicit Marker X/Y coordinates to override it,
+or untick the option. Invalid/out-of-travel or overlapping positions block start;
+they are never silently clamped. Verify the preview and sample area before running.
+The trip to the marker uses normal retract distance plus the **Long-move extra retract**, even for serpentine scans. Duration estimates include the marker.
+
+The scan preview and exported `.orientation.svg` show landing order and X/Y
+orientation for later microscopy. Their positions are planned commanded values;
+consult the JSON for actual marker completion. Live traces still show marker
+activity for operator oversight, but the analysis app excludes it from all
+treatments, plots, maps and movies. A visible footprint is not guaranteed on
+every sample; confirm a suitable imaging contrast in a small test array first.

@@ -21,6 +21,25 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_scan_marker_controls_and_preview(self):
+        from PySide6 import QtSvgWidgets
+        window = EChemTipsApp()
+        window.poll_timer.stop()
+        for name in ('Scan hopping + CV', 'Scan hopping + I-t'):
+            page = window.pages[name]
+            self.assertTrue(page.marker_enabled.isChecked())
+            self.assertEqual(page.parameters().marker_position(), (35, 80))
+            previews = page.findChildren(QtSvgWidgets.QSvgWidget)
+            self.assertEqual(len(previews), 1)
+            self.assertTrue(previews[0].renderer().isValid())
+            page.marker_x.entry.setText('30')
+            page.marker_y.entry.setText('85')
+            self.assertEqual(page.parameters().marker_position(), (30, 85))
+            page.marker_enabled.setChecked(False)
+            self.assertFalse(page.marker_x.entry.isEnabled())
+            self.assertEqual(page.parameters().execution_point_count, 9)
+        window.close()
+
     def test_simulator_monitor_uses_full_resolution_rolling_path(self):
         window = EChemTipsApp()
         window.poll_timer.stop()
@@ -487,6 +506,8 @@ class QtLayoutTests(unittest.TestCase):
                     tuple(scan_page.scan_pattern.itemText(index) for index in range(scan_page.scan_pattern.count())),
                     ("Serpentine", "Raster"),
                 )
+                self.assertTrue(scan_page.line_retract.entry.isEnabled())
+                scan_page.marker_enabled.setChecked(False)
                 self.assertFalse(scan_page.line_retract.entry.isEnabled())
                 scan_page.scan_pattern.setCurrentText("Raster")
                 self.assertTrue(scan_page.line_retract.entry.isEnabled())
@@ -554,7 +575,7 @@ class QtLayoutTests(unittest.TestCase):
         self.qt_app.processEvents()
         try:
             labels = [window.tabs.tabText(index) for index in range(window.tabs.count())]
-            self.assertEqual(labels, ["Explore and measure", "CV", "Hop maps", "Raw data table", "Metadata"])
+            self.assertEqual(labels, ["Explore and measure", "CV", "Hop maps", "Map movie", "Raw data table", "Metadata"])
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()
