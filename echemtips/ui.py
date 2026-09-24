@@ -230,7 +230,7 @@ class BasePage(QtWidgets.QWidget):
     def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
         super().__init__()
         self.app = app
-        outer = _vbox(self, spacing=14)
+        outer = _vbox(self, spacing=8)
         title_widget = label(title, "pageTitle")
         heading = QtWidgets.QHBoxLayout()
         heading.addWidget(title_widget, 1)
@@ -496,21 +496,26 @@ class StatusCard(Card):
     """Shared method state, detail, progress, start, and stop controls."""
     def __init__(self, title: str, detail: str, start_text: str, start_slot, stop_slot) -> None:
         super().__init__(title)
-        layout = _vbox(self.body, spacing=8)
+        self.setProperty("compactControls", True)
+        self.layout().setContentsMargins(12, 9, 12, 9)
+        self.layout().setSpacing(5)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
+        layout = _vbox(self.body, spacing=5)
         self.state_label = label("Ready", "statusStrong")
+        self.layout().itemAt(0).layout().addWidget(self.state_label)
         self.detail_label = label(detail, "muted", word_wrap=True)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 1000)
         self.progress.setTextVisible(False)
         actions = QtWidgets.QWidget()
         action_layout = _hbox(actions)
+        self.action_layout = action_layout
         self.start_button = button(start_text, start_slot, "primary")
         self.stop_button = button("Stop experiment", stop_slot, "danger")
         self.stop_button.setEnabled(False)
         action_layout.addWidget(self.start_button)
         action_layout.addWidget(self.stop_button)
         action_layout.addStretch(1)
-        layout.addWidget(self.state_label)
         layout.addWidget(self.detail_label)
         self.detail_label.setVisible(bool(detail))
         layout.addWidget(self.progress)
@@ -546,20 +551,16 @@ class InstrumentReadoutBar(QtWidgets.QFrame):
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("instrumentStrip")
-        self.setFixedHeight(66)
-        row = _hbox(self, (18, 7, 18, 7), 6)
-        heading = QtWidgets.QWidget()
-        heading_layout = _vbox(heading, spacing=0)
-        heading_layout.addWidget(label("LIVE READBACK", "stripHeading"))
-        heading_layout.addWidget(label("Measured channels", "stripCaption"))
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
+        row = _hbox(self, (12, 8, 12, 8), 8)
+        heading = label("LIVE", "stripHeading")
+        heading.setToolTip("Live measured channels (not commanded positions)")
         row.addWidget(heading)
-        row.addSpacing(8)
 
         self.value_labels: dict[str, QtWidgets.QLabel] = {}
         for attribute, caption, unit in self._CHANNELS:
             cell = QtWidgets.QWidget()
-            cell.setMinimumWidth(72)
-            cell_layout = _vbox(cell, spacing=0)
+            cell_layout = _hbox(cell, spacing=4)
             cell_layout.addWidget(label(caption, "stripCaption"))
             value_label = label(f"— {unit}", "stripValue")
             value_label.setAccessibleName(f"{caption} measured value")
@@ -891,10 +892,12 @@ class ManagedExperimentPage(BasePage):
     def __init__(self, app: "EChemTipsApp", title: str, description: str) -> None:
         super().__init__(app, title, description)
         self.setup_toggle = button("Hide setup", self._toggle_setup)
+        self.setup_toggle.setProperty("compact", True)
         self.setup_toggle.setCheckable(True)
         self.setup_toggle.setToolTip("Give the plots the full page width; show setup again to edit parameters.")
         self.layout().itemAt(0).layout().addWidget(self.setup_toggle)
         self.expand_plots = button("Expand plots", self._expand_plots)
+        self.expand_plots.setProperty("compact", True)
         self.layout().itemAt(0).layout().addWidget(self.expand_plots)
         self._plots_dialog = None
 
@@ -949,12 +952,12 @@ class ManagedExperimentPage(BasePage):
         self.stop_button = self.status.stop_button
         self.accept_approach_button: QtWidgets.QPushButton | None = None
         if self.manual_approach:
-            self.accept_approach_button = button("Accept contact and continue", self.accept_approach)
+            self.accept_approach_button = button("Accept contact", self.accept_approach)
             self.accept_approach_button.setToolTip(
                 "Stops the current approach waypoint and deliberately starts the method's next step without waiting for the current threshold."
             )
             self.accept_approach_button.setEnabled(False)
-            self.status.body.layout().addWidget(self.accept_approach_button)
+            self.status.action_layout.insertWidget(2, self.accept_approach_button)
         return self.status
 
     def _begin(self, parameters: object) -> None:
@@ -1949,15 +1952,16 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         layout.addWidget(sidebar)
         main = QtWidgets.QWidget(); ml = _vbox(main, spacing=0)
         topbar = QtWidgets.QFrame(); topbar.setObjectName("topbar")
-        tl = QtWidgets.QGridLayout(topbar); tl.setContentsMargins(18, 8, 18, 8); tl.setSpacing(6)
+        topbar.setProperty("compactControls", True)
+        tl = QtWidgets.QGridLayout(topbar); tl.setContentsMargins(14, 5, 14, 6); tl.setSpacing(4)
         self.connection_dot = label("●")
-        self.connection_label = label(f"Disconnected · {self.backend.label}", "muted", word_wrap=True)
-        self.execution_label = label("Offline", "muted", word_wrap=True)
+        self.connection_label = label(f"Disconnected · {self.backend.label}", "muted")
+        self.execution_label = label("Offline", "muted")
         self.mode_badge = label(self.settings.mode.upper(), "muted")
         status_row = QtWidgets.QWidget(); status_layout = _hbox(status_row)
         for widget in (self.connection_dot, self.connection_label, self.execution_label, self.mode_badge):
             status_layout.addWidget(widget)
-        status_layout.addStretch(1); tl.addWidget(status_row, 0, 0, 1, 4)
+        status_layout.addStretch(1); tl.addWidget(status_row, 0, 0, 1, 5)
         self.pause_button = button("Pause", self.pause_host); self.resume_button = button("Resume", self.resume_host)
         self.next_waypoint_button = button("End waypoint", self.end_current_waypoint)
         self.next_waypoint_button.setToolTip("Low-level FPGA control only; this does not confirm contact. Use the approach page's accept-contact button to continue an approach.")
@@ -1965,15 +1969,18 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         for column, widget in enumerate((self.pause_button, self.resume_button, self.next_waypoint_button, self.connect_button)):
             tl.addWidget(widget, 1, column)
         emergency = button("EMERGENCY STOP", self.emergency_stop, "danger")
-        tl.addWidget(emergency, 0, 4, 2, 1)
+        tl.addWidget(emergency, 1, 4)
         ml.addWidget(topbar)
-        self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (22, 18, 22, 10)); container_layout.addWidget(self.stack); ml.addWidget(container, 1)
-        self.instrument_readout = InstrumentReadoutBar(); readout_container = QtWidgets.QWidget(); readout_layout = _vbox(readout_container, (22, 0, 22, 10)); readout_layout.addWidget(self.instrument_readout); ml.addWidget(readout_container)
+        self.stack = QtWidgets.QStackedWidget(); container = QtWidgets.QWidget(); container_layout = _vbox(container, (16, 10, 16, 6)); container_layout.addWidget(self.stack); ml.addWidget(container, 1)
+        self.instrument_readout = InstrumentReadoutBar(); readout_container = QtWidgets.QWidget(); readout_layout = _vbox(readout_container, (16, 0, 16, 6)); readout_layout.addWidget(self.instrument_readout); ml.addWidget(readout_container)
         layout.addWidget(main, 1)
         self.statusBar().setSizeGripEnabled(False)
         self.return_button = button("Return to experiment", self._return_to_active)
+        self.return_button.setProperty("compact", True)
         self.statusBar().addPermanentWidget(self.return_button)
         self.return_button.hide()
+        self.statusBar().messageChanged.connect(self._sync_status_bar)
+        self._sync_status_bar()
 
     def _build_pages(self) -> None:
         self.pages: dict[str, BasePage] = {entry.name: globals()[entry.page_factory](self) for entry in EXPERIMENTS}
@@ -2040,9 +2047,14 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     def _update_active_navigation(self) -> None:
         name = self._active_page_name()
-        self.return_button.setVisible(name is not None)
+        self.return_button.setVisible(name is not None and self.stack.currentWidget() is not self.pages[name])
         if name:
             self.return_button.setText(f"Running: {name.replace('I-t', 'I–t')} · Return")
+        self._sync_status_bar()
+
+    def _sync_status_bar(self, _message: str = "") -> None:
+        """Reserve footer space only for a notification or navigation back to a run."""
+        self.statusBar().setVisible(bool(self.statusBar().currentMessage()) or not self.return_button.isHidden())
 
     def require_connection(self) -> None:
         """Raise a user-facing backend error when offline."""

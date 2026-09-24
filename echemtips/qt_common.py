@@ -58,12 +58,15 @@ def application_stylesheet(font_size_pt: float = 10.0) -> str:
     QLabel#readout {{ color: {c['accent']}; font-size: 25px; font-weight: 700; }}
     QLabel#stripHeading {{ color: {c['muted']}; font-size: 10px; font-weight: 700; }}
     QLabel#stripCaption {{ color: {c['muted']}; font-size: 10px; }}
-    QLabel#stripValue {{ color: {c['text']}; font-size: 14px; font-weight: 700; }}
+    QLabel#stripValue {{ color: {c['text']}; font-size: 12px; font-weight: 700; }}
     QPushButton {{
         background: {c['panel_2']}; border: 1px solid {c['border']}; border-radius: 7px;
         min-height: 34px; padding: 3px 14px; font-weight: 600;
     }}
     QPushButton:hover {{ background: #e3ebf1; }}
+    QWidget[compactControls='true'] QPushButton, QPushButton[compact='true'] {{ min-height: 26px; padding: 2px 10px; }}
+    QStatusBar {{ padding: 0; }}
+    QStatusBar::item {{ border: none; }}
     QPushButton:disabled {{ color: #9aabb9; background: #f4f6f8; }}
     QPushButton[role='primary'] {{ color: white; background: {c['accent']}; border-color: {c['accent']}; }}
     QPushButton[role='primary']:hover {{ background: {c['accent_hover']}; }}
