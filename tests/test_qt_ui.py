@@ -21,6 +21,24 @@ from echemtips.ui import EChemTipsApp, create_application
 
 
 class QtLayoutTests(unittest.TestCase):
+    def test_lsv_controls_all_cv_pages(self):
+        window = EChemTipsApp(); window.poll_timer.stop()
+        try:
+            for name in ('CV', 'Approach + CV', 'Approach + CV scan-rate series', 'Scan hopping + CV'):
+                page = window.pages[name]
+                page.waveform.setCurrentText('LSV')
+                params = page.parameters()
+                self.assertEqual(params.waveform, 'LSV')
+                self.assertEqual(params.cycles, 1)
+                self.assertTrue(page.vertex2.isHidden())
+                self.assertTrue(page.cycles.isHidden())
+                self.assertEqual(page.vertex1.findChildren(QtWidgets.QLabel)[0].text(), 'End potential')
+                page.waveform.setCurrentText('CV')
+                self.assertFalse(page.vertex2.isHidden())
+                self.assertFalse(page.cycles.isHidden())
+        finally:
+            window.close()
+
     def test_scan_rate_series_editor_and_registration(self):
         window = EChemTipsApp()
         window.poll_timer.stop()
@@ -402,7 +420,7 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertEqual(window.pages[key].status.start_button.text(), "Start scan")
                 self.assertEqual(window.pages[key].status.stop_button.text(), "Stop experiment")
             self.assertIn("I–t", window.nav_buttons["Approach + I-t"].text())
-            self.assertEqual(window.pages["CV"].status.start_button.text(), "Start CV")
+            self.assertEqual(window.pages["CV"].status.start_button.text(), "Start sweep")
         finally:
             window.close()
 
@@ -547,13 +565,13 @@ class QtLayoutTests(unittest.TestCase):
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),
-                ("Experiment traces", "CV", "Approach curves"),
+                ("Experiment traces", "CV / LSV", "Approach curves"),
             )
             expected_sections = {
                 "Approach": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition"),
-                "Approach + CV": ("1 · Approach", "2 · Optional XY preposition", "3 · Cyclic voltammetry"),
+                "Approach + CV": ("1 · Approach", "2 · Optional XY preposition", "3 · Voltammetry"),
                 "Approach + I-t": ("1 · Z movement", "2 · Contact detection", "3 · Optional XY preposition", "4 · I–t potential program"),
-                "Scan hopping + CV": ("1 · Scan area and path", "2 · Motion and contact", "3 · Cyclic voltammetry"),
+                "Scan hopping + CV": ("1 · Scan area and path", "2 · Motion and contact", "3 · Voltammetry"),
                 "Scan hopping + I-t": ("1 · Scan area and path", "2 · Motion and contact", "3 · I–t potential program"),
             }
             for page_name, sections in expected_sections.items():
@@ -594,7 +612,7 @@ class QtLayoutTests(unittest.TestCase):
         self.qt_app.processEvents()
         try:
             labels = [window.tabs.tabText(index) for index in range(window.tabs.count())]
-            self.assertEqual(labels, ["Explore and measure", "CV", "Hop maps", "Map movie", "Raw data table", "Metadata"])
+            self.assertEqual(labels, ["Explore and measure", "CV / LSV", "Hop maps", "Map movie", "Raw data table", "Metadata"])
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()

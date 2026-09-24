@@ -306,3 +306,36 @@ the software does not assume the surface remains unchanged.
 The list supports 1–1000 rates, subject to 10,000 total cycles and existing FPGA
 line-tag/velocity limits. Hardware checks the complete mixed-rate waveform for
 representability before starting motion. No bitfile modification is required.
+
+
+## Linear sweep voltammetry (LSV)
+
+All CV pages also support one-way LSV: standalone CV, Approach + CV,
+Approach + CV scan-rate series, and scan hopping + CV. Find them by searching
+`LSV` in All experiments. Select **Waveform → LSV** in the potential controls.
+The second vertex and cycle count disappear. Set **Start potential**, **End
+potential**, and **Scan rate**; the preview shows Start → End. A decreasing end
+potential produces a negative-going sweep. Each landing/rate runs exactly one
+sweep, without a reverse ramp.
+
+The end potential remains applied during retraction and at normal completion.
+For hopping scans, the next hop restores the approach potential after the
+previous retract. Changing potential or beginning another experiment changes
+this held value. Stop/emergency-stop behavior is unchanged.
+
+For an LSV scan-rate series, every rate runs Start → End. Between rates, E1
+**jumps** back to Start while the probe remains in contact. Choose **Settling
+at start between LSV rates** (zero is allowed). This potential jump may cause
+a charging transient and does not renew the droplet. Reset and settling data
+remain in raw traces but are excluded from the per-rate sweeps. The final
+rate holds End during the optional single final retract.
+
+Analysis uses the saved waveform type to recognize single sweeps in the existing
+CV/voltammetry tab. Potential/time and current/time views remain available.
+LSV maps and movies have only one segment, **LSV · Start → End**; there is no
+reverse branch or second cycle to select. Incomplete sweeps are not presented
+as complete measurements. Orientation-marker landings remain excluded.
+
+The native FPGA driver uses existing jump, hold and ramp waypoints; no bitfile
+change is required. Test the selected start/end potentials on your setup before
+surface experiments. A custom site driver must explicitly declare LSV support.

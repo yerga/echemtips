@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Explicit CV/LSV waveform selection for standalone, approach, hopping and
+  scan-rate-series voltammetry; one-way previews, between-rate reset settling,
+  and single-sweep analysis, maps and movies using the existing FPGA protocol.
+
 - Approach + CV scan-rate series: editable ordered rate list, cycles per rate,
   shared contact-gated simulation/FPGA workflow and rate-aware CV analysis.
 

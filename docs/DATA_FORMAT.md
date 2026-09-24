@@ -190,3 +190,11 @@ Rate-series metadata includes `acquisition_rate_tags: true` for recordings with
 acquisition-time simulation tags. For older simulated series, analysis may include
 a contiguous return-to-start endpoint from the beginning of the next tagged block.
 This compatibility handling does not modify source data or extend hardware tags.
+
+
+Voltammetry parameters contain `waveform` (`CV` or `LSV`; absent means legacy
+CV). For LSV, `vertex1_v` / `cv_vertex1_v` stores the end potential and `cycles`
+is one; the second-vertex value is unused. Rate-series `reset_settling_s` is
+the hold after each between-rate jump back to Start. Reset samples have
+`cv_rate_index = -1`. Analysis extracts only Start → End for LSV and does not
+require a return leg. No additional CSV columns are introduced for LSV.

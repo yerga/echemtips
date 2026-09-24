@@ -201,7 +201,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         splitter.addWidget(self.cv_plot)
         splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
-        self.tabs.addTab(tab, "CV")
+        self.tabs.addTab(tab, "CV / LSV")
 
     def _build_table_tab(self) -> None:
         tab = QtWidgets.QWidget()

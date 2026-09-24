@@ -67,6 +67,7 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
 
 def leg_labels_from_recipe(frames, index=0):
     """Describe the selected chronological CV leg for the exported caption."""
+    if frames.recipe.get("waveform") == "LSV": return "LSV · Start → End"
     from .analysis_frames import LEG_NAMES
     if frames.recipe["leg"]==3:
         return "Whole CV · "+LEG_NAMES[frames.recipe["frame_segments"][index]]
@@ -210,7 +211,8 @@ class MoviePanel(QtWidgets.QWidget):
             if c in dataset.columns: self.channel.addItem("Current "+c[7],c)
         for number in sorted({s.cycle for s in groups.get("cv",[])}): self.cycle.addItem(f"Cycle {number}",number)
         self.cycle.addItem("Average complete cycles",None); self.leg.addItems(leg_labels(dataset))
-        self.leg.addItem("Whole CV · Start → V1 → V2 → Start")
+        if (dataset.metadata.get("parameters") or {}).get("waveform") != "LSV":
+            self.leg.addItem("Whole CV · Start → V1 → V2 → Start")
         for index in range(self.leg.count()): self.leg.setItemData(index,self.leg.itemText(index),QtCore.Qt.ItemDataRole.ToolTipRole)
         for w in (self.channel,self.cycle,self.leg): w.blockSignals(False)
         self.kind.setCurrentText("CV potential" if groups.get("cv") else "I–t time")

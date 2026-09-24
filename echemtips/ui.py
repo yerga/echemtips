@@ -155,6 +155,34 @@ def _approach_curves_view(latest: Plot, history: TimedXYPlot) -> QtWidgets.QWidg
     return page
 
 
+def _waveform_controls(page) -> QtWidgets.QWidget:
+    """Shared CV/LSV selection without exposing meaningless reverse-leg fields."""
+    host = QtWidgets.QWidget()
+    layout = _vbox(host)
+    layout.addWidget(label("Waveform", "muted"))
+    page.waveform = Choice(("CV", "LSV"), "CV")
+    layout.addWidget(page.waveform)
+    page.reset_settling = Field("Settling at start between LSV rates", "0", "s")
+    layout.addWidget(page.reset_settling)
+    note = label("", "muted", word_wrap=True)
+    layout.addWidget(note)
+    def refresh(*_args):
+        """Show only parameters used by the selected potential waveform."""
+        lsv = page.waveform.get() == "LSV"
+        page.vertex1.findChildren(QtWidgets.QLabel)[0].setText("End potential" if lsv else "Vertex 1")
+        page.vertex2.setVisible(not lsv)
+        page.cycles.setVisible(not lsv)
+        series = getattr(page, "rate_series", False)
+        page.reset_settling.setVisible(lsv and series)
+        note.setText(("One sweep per rate. Jump back to Start between rates; reset/settling are excluded from sweeps. " if series else "One sweep per landing. ") + "End potential is held during any final retract. No reverse sweep." if lsv else "")
+        note.setVisible(lsv)
+        if hasattr(page, "rate_editor"):
+            page.rate_editor.changed.emit()
+    page.waveform.currentTextChanged.connect(refresh)
+    refresh()
+    return host
+
+
 def _program_card(
     title: str,
     y_label: str,
@@ -162,6 +190,7 @@ def _program_card(
     names: tuple[str, ...],
     *,
     stepped: bool = False,
+    waveform: Choice | None = None,
 ) -> tuple[Card, ProgramDiagram]:
     card = Card(title)
     diagram = ProgramDiagram(y_label)
@@ -174,8 +203,13 @@ def _program_card(
         except ValueError:
             diagram.set_profile([], [])
             return
-        diagram.set_profile(values, list(names), stepped=stepped)
+        if waveform is not None and waveform.get() == "LSV":
+            diagram.set_profile(values[:2], ["Start", "End"])
+        else:
+            diagram.set_profile(values, list(names), stepped=stepped)
 
+    if waveform is not None:
+        waveform.currentTextChanged.connect(refresh)
     for field in fields:
         field.entry.textChanged.connect(refresh)
     refresh()
@@ -1061,6 +1095,9 @@ class ManagedExperimentPage(BasePage):
     def _show_update(self, update: object | None) -> None:
         self.status.update_status(update)
         params = self.experiment.params
+        if update is not None and getattr(params, "waveform", "CV") == "LSV":
+            if update.state == ExperimentState.CV: self.status.state_label.setText("Running LSV")
+            self.status.detail_label.setText(update.detail.replace("CV", "LSV"))
         if update is not None and isinstance(params, (ScanHoppingCVParameters, ScanHoppingITParameters)):
             notice = params.retraction_notice()
             if notice:
@@ -1081,7 +1118,7 @@ class StandaloneCVPage(ManagedExperimentPage):
         root = QtWidgets.QHBoxLayout(self.body)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(14)
-        controls = Card("Potential program", "Start → vertex 1 → vertex 2 → start.")
+        controls = Card("Potential program", "")
         form = _grid(controls.body)
         self.start_v = add_field(form, Field("Start potential", "-0.2", "V"), 0, 0)
         self.vertex1 = add_field(form, Field("Vertex 1", "0.6", "V"), 0, 1)
@@ -1090,13 +1127,15 @@ class StandaloneCVPage(ManagedExperimentPage):
         self.cycles = add_field(form, Field("Cycles", "2"), 2, 0)
         self.jump = Check("Jump to start potential", True)
         form.addWidget(self.jump, 2, 1)
+        form.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         left = QtWidgets.QWidget()
         left_layout = _vbox(left)
         left_layout.addWidget(controls)
         preview, self.program_preview = _program_card(
-            "CV profile", "Potential E1 (V)",
+            "Potential profile", "Potential E1 (V)",
             (self.start_v, self.vertex1, self.vertex2, self.start_v),
             ("Start", "Vertex 1", "Vertex 2", "Return"),
+            waveform=self.waveform,
         )
         left_layout.addWidget(preview)
         left_layout.addStretch(1)
@@ -1104,10 +1143,10 @@ class StandaloneCVPage(ManagedExperimentPage):
 
         right = QtWidgets.QWidget()
         right_layout = _vbox(right)
-        right_layout.addWidget(self.build_status("CV status", "Start CV"))
+        right_layout.addWidget(self.build_status("Voltammetry status", "Start sweep"))
         tabs = QtWidgets.QTabWidget()
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
-        tabs.addTab(_plot_card("Cyclic voltammogram", self.cv_plot), "CV")
+        tabs.addTab(_plot_card("Voltammogram", self.cv_plot), "CV / LSV")
         raw = QtWidgets.QWidget()
         raw_layout = QtWidgets.QHBoxLayout(raw)
         self.voltage_plot = Plot("Potential vs time", "Potential E1 (V)", (COLORS["accent"],), app.settings.display_max_points)
@@ -1120,7 +1159,7 @@ class StandaloneCVPage(ManagedExperimentPage):
 
     def parameters(self) -> CVParameters:
         """Parse the standalone CV fields into a validated parameter model."""
-        return CVParameters(self.start_v.float(), self.vertex1.float(), self.vertex2.float(), self.rate.float(), self.cycles.integer(), self.jump.get())
+        return CVParameters(self.start_v.float(), self.vertex1.float(), self.vertex2.float(), self.rate.float(), 1 if self.waveform.get() == "LSV" else self.cycles.integer(), self.jump.get(), waveform=self.waveform.get())
 
     def start(self) -> None:
         """Clear CV displays, claim recording, and start standalone CV."""
@@ -1276,7 +1315,7 @@ class ApproachCVPage(ManagedExperimentPage):
         self.x_position = add_field(pg, Field("Target X", "", "µm"), 0, 0)
         self.y_position = add_field(pg, Field("Target Y", "", "µm"), 0, 1)
         controls_layout.addWidget(position)
-        cv = Card("3 · Cyclic voltammetry", "Potential E1 is swept start → vertex 1 → vertex 2 → start.")
+        cv = Card("3 · Voltammetry", "")
         cg = _grid(cv.body)
         self.cv_start = add_field(cg, Field("Start potential", "-0.20", "V"), 0, 0)
         self.vertex1 = add_field(cg, Field("Vertex 1", "0.60", "V"), 0, 1)
@@ -1284,6 +1323,7 @@ class ApproachCVPage(ManagedExperimentPage):
         self.scan_rate = add_field(cg, Field("Scan rate", "0.25", "V/s"), 1, 1)
         self.cycles = add_field(cg, Field("Cycles", "2"), 2, 0)
         self.retract = Check("Retract to start Z after CV", True); cg.addWidget(self.retract, 2, 1)
+        cg.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         controls_layout.addWidget(cv)
         if self.rate_series:
             cg.removeWidget(self.scan_rate)
@@ -1302,27 +1342,30 @@ class ApproachCVPage(ManagedExperimentPage):
                 """Show duration and total cycles without changing acquisition parameters."""
                 try:
                     rates = self.rate_editor.values()
-                    cycles = self.cycles.integer()
+                    cycles = 1 if self.waveform.get() == "LSV" else self.cycles.integer()
                     start, v1, v2 = self.cv_start.float(), self.vertex1.float(), self.vertex2.float()
                     span = abs(v1-start) + abs(v2-v1) + abs(start-v2)
+                    if self.waveform.get() == "LSV": span = abs(v1-start)
                     seconds = span * cycles * sum(1 / rate for rate in rates)
-                    self.rate_summary.setText(f"{len(rates)} rates · {cycles * len(rates)} CV cycles · CV time ≈ {_format_duration(seconds)} (plus approach, settling and retract)")
+                    if self.waveform.get() == "LSV": seconds += (len(rates)-1)*self.reset_settling.float()
+                    self.rate_summary.setText(f"{len(rates)} rates · {cycles * len(rates)} sweeps/cycles · program time ≈ {_format_duration(seconds)} (plus approach, settling and retract)")
                 except (ValueError, ZeroDivisionError, OverflowError):
                     self.rate_summary.setText("Enter positive scan rates and a valid waveform.")
 
             self.rate_editor.changed.connect(refresh_rates)
-            for field in (self.cycles, self.cv_start, self.vertex1, self.vertex2):
+            for field in (self.cycles, self.cv_start, self.vertex1, self.vertex2, self.reset_settling):
                 field.entry.textChanged.connect(refresh_rates)
             refresh_rates()
         preview, self.program_preview = _program_card(
-            "CV profile", "Potential E1 (V)",
+            "Potential profile", "Potential E1 (V)",
             (self.cv_start, self.vertex1, self.vertex2, self.cv_start),
             ("CV start", "Vertex 1", "Vertex 2", "Return"),
+            waveform=self.waveform,
         )
         controls_layout.addWidget(preview); controls_layout.addStretch(1)
         root.addWidget(_left_scroll(controls_host))
         right = QtWidgets.QWidget(); right_layout = _vbox(right)
-        right_layout.addWidget(self.build_status("Experiment status", "Start scan-rate series" if self.rate_series else "Start approach + CV"))
+        right_layout.addWidget(self.build_status("Experiment status", "Start scan-rate series" if self.rate_series else "Start approach + sweep"))
         tabs = QtWidgets.QTabWidget(); traces = QtWidgets.QWidget(); plots = QtWidgets.QVBoxLayout(traces); plots.setSpacing(10); traces.setMinimumHeight(540)
         self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points)
         self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points)
@@ -1330,12 +1373,12 @@ class ApproachCVPage(ManagedExperimentPage):
         plots.addWidget(_plot_card("Z position", self.z_plot), 1)
         plots.addWidget(_plot_card("Feedback current", self.current_plot), 1)
         tabs.addTab(PlotPanel(traces), "Experiment traces")
-        cv_card = _plot_card("Cyclic voltammogram", self.cv_plot)
+        cv_card = _plot_card("Voltammogram", self.cv_plot)
         self.rate_readout = label("", "muted", word_wrap=True)
         cv_card.layout().addWidget(self.rate_readout)
         self.rate_readout.setVisible(self.rate_series)
         self._display_rate = -1
-        tabs.addTab(cv_card, "CV")
+        tabs.addTab(cv_card, "CV / LSV")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1351,7 +1394,8 @@ class ApproachCVPage(ManagedExperimentPage):
             feedback_mode="magnitude", settling_time_s=self.settling_time.float(), cv_start_v=self.cv_start.float(),
             cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(), cv_scan_rate_v_s=self.rate_editor.values()[0] if self.rate_series else self.scan_rate.float(),
             scan_rates_v_s=self.rate_editor.values() if self.rate_series else None,
-            cycles=self.cycles.integer(), retract_after=self.retract.get(),
+            cycles=1 if self.waveform.get() == "LSV" else self.cycles.integer(), retract_after=self.retract.get(),
+            waveform=self.waveform.get(), reset_settling_s=self.reset_settling.float() if self.rate_series and self.waveform.get() == "LSV" else 0.0,
             x_um=self.x_position.optional_float(), y_um=self.y_position.optional_float(),
         )
 
@@ -1395,7 +1439,9 @@ class ApproachCVPage(ManagedExperimentPage):
                         self._display_rate = rate_index
                         rate = experiment.params.cv_rates[rate_index]
                         self.rate_readout.setText(f"Rate {rate_index + 1}/{len(experiment.params.cv_rates)} · {rate:g} V/s · latest rate shown; all rates are recorded")
-            if stage.startswith("cv") or (not stage and state_before == ExperimentState.CV):
+            is_cv_sample = stage.startswith("cv") or (not stage and state_before == ExperimentState.CV)
+            if self.rate_series and not hardware: is_cv_sample = sample.cv_rate_index >= 0
+            if is_cv_sample:
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
         # Advance once after handling the already-acquired batch.
         if experiment.active: update = experiment.tick(samples[-1])
@@ -1541,22 +1587,24 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.greater = label("Contact at either current polarity", "muted", word_wrap=True); g.addWidget(self.greater, 5, 1)
         g.addWidget(_contact_help(), 6, 0, 1, 2)
         hl.addWidget(movement)
-        electrochemistry = Card("3 · Cyclic voltammetry", "Select the per-hop potential E1 waveform and current-map sampling potential.")
+        electrochemistry = Card("3 · Voltammetry", "Select the per-hop potential E1 waveform and current-map sampling potential.")
         g = _grid(electrochemistry.body)
         self.map_v = add_field(g, Field("Current-map potential E1", "0.2", "V"), 0, 0); self.cv_start = add_field(g, Field("Start potential", "-0.2", "V"), 0, 1)
         self.vertex1 = add_field(g, Field("Vertex 1", "0.6", "V"), 1, 0); self.vertex2 = add_field(g, Field("Vertex 2", "-0.4", "V"), 1, 1)
         self.scan_rate = add_field(g, Field("Scan rate", "2", "V/s"), 2, 0); self.cycles = add_field(g, Field("Cycles", "1"), 2, 1)
+        g.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         hl.addWidget(electrochemistry)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled]
+            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled, self.waveform]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
-            "CV at each hop", "Potential E1 (V)",
+            "Potential profile at each hop", "Potential E1 (V)",
             (self.cv_start, self.vertex1, self.vertex2, self.cv_start),
             ("CV start", "Vertex 1", "Vertex 2", "Return"),
+            waveform=self.waveform,
         )
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
@@ -1566,7 +1614,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         tl.addWidget(_plot_card("Z position", self.z_plot), 1); tl.addWidget(_plot_card("Feedback current", self.current_plot), 1); self.visual_tabs.addTab(PlotPanel(traces), "Experiment traces")
         cv_page = QtWidgets.QWidget(); cvl = _vbox(cv_page); self.cv_pixel_label = label("Waiting for a CV", "muted")
         self.cv_plot = Plot("Potential E1 vs Current 1", "Current 1 (nA)", (COLORS["danger"],), app.settings.display_max_points, "Potential E1 (V)")
-        cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Cyclic voltammogram", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV at hop")
+        cvl.addWidget(self.cv_pixel_label); cvl.addWidget(_plot_card("Voltammogram", self.cv_plot), 1); self.visual_tabs.addTab(cv_page, "CV / LSV at hop")
         self.approach_curve = Plot("Current vs Z", "Feedback current (nA)", (COLORS["warning"],), app.settings.display_max_points, "Z position (µm)")
         self.approach_history = TimedXYPlot("Rolling current vs Z", "Feedback current (nA)", COLORS["blue"], app.settings.display_max_points, "Z position (µm)")
         self.visual_tabs.addTab(_approach_curves_view(self.approach_curve, self.approach_history), "Approach curves")
@@ -1582,7 +1630,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA,
             greater_than=True, feedback_mode="magnitude", settling_time_s=self.settling_time.float(),
             cv_start_v=self.cv_start.float(), cv_vertex1_v=self.vertex1.float(), cv_vertex2_v=self.vertex2.float(),
-            cv_scan_rate_v_s=self.scan_rate.float(), cycles=self.cycles.integer(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
+            cv_scan_rate_v_s=self.scan_rate.float(), cycles=1 if self.waveform.get() == "LSV" else self.cycles.integer(), waveform=self.waveform.get(), map_potential_v=self.map_v.float(), serpentine=self.scan_pattern.get() == "Serpentine", raster_line_retract_um=self.line_retract.float(), retract_distance_um=self.retract_distance.float(), footprint_diameter_um=self.app.settings.map_footprint_diameter_um,
             marker_enabled=self.marker_enabled.isChecked(),
             marker_x_um=float(self.marker_x.entry.text()) if self.marker_x.entry.text().strip() else None,
             marker_y_um=float(self.marker_y.entry.text()) if self.marker_y.entry.text().strip() else None,
