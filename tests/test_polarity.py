@@ -99,7 +99,7 @@ class PolarityTests(unittest.TestCase):
                 regs["WaitingForWayPoints"].value=True
                 d.read_samples()
                 return status()
-            for point in range(3):
+            for point in range(4):
                 # Native type-2 completion proves contact even when the pulse is missed by polling.
                 self.assertEqual(d._program_waypoints[-1].line_type, 2)
                 self.assertEqual(complete()["stage"], method)

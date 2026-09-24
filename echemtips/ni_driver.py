@@ -1189,7 +1189,7 @@ class WECSPMDriver:
         # tags to assign samples to pixels after the signed transport range.
         baseline = int(self._read_register("LineNumber"))
         baseline_frames = int(params.feedback_mode == "baseline_relative")
-        total = 1 + params.point_count * (
+        total = 1 + params.execution_point_count * (
             4 + baseline_frames + 3 * params.cycles + hold_frame_count(params.settling_time_s)
         )
         if baseline < 0 or baseline + total > 32767:
@@ -1200,8 +1200,9 @@ class WECSPMDriver:
         )
         self._sequence = None
         self._scan_params = params
+        params.marker_result.clear()
         params.retraction_events.clear()
-        self._scan_grid = params.grid()
+        self._scan_grid = params.execution_grid()
         self._scan_history.clear()
         self._scan_point = 0
         self._scan_threshold_na = effective_threshold
@@ -1285,6 +1286,7 @@ class WECSPMDriver:
         self._scan_history.append(self._scan_sequence)
         self._scan_phase = "baseline" if params.feedback_mode == "baseline_relative" else "approach"
         self._scan_point = point
+        params.update_marker(point, 'running')
         if resume:
             self._write_register("External Pause", False)
 
@@ -1312,10 +1314,11 @@ class WECSPMDriver:
         params = self._scan_params
         if params is None:
             raise RuntimeError("Scan CV phase has no parameters")
+        params.update_marker(point, "contact")
         current = self._current_targets()
         contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
         low_z, high_z = sorted((params.start_z_um, params.end_z_um))
-        if point + 1 < params.point_count and not low_z <= contact_z <= high_z:
+        if point + 1 < params.execution_point_count and not low_z <= contact_z <= high_z:
             contact_z = self._scan_last_approach_z.get(point, params.end_z_um)
         settle_plan = timed_hold_plan(params.settling_time_s)
         plan = settle_plan + cyclic_voltammetry_plan(
@@ -1425,6 +1428,7 @@ class WECSPMDriver:
                 return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
                         "point_index": self._scan_point, "point_stage": "retract-blocked"}
             if self._scan_point + 1 >= point_total:
+                self._scan_params.update_marker(self._scan_point, 'complete')
                 self._scan_phase = "complete"
                 return {"stage": "complete", "detail": "FPGA Scan Hopping + CV complete", "progress": 1.0,
                         "point_index": self._scan_point, "point_stage": "complete"}
@@ -1506,7 +1510,7 @@ class WECSPMDriver:
             )
             if isinstance(parameters, ScanHoppingITParameters):
                 baseline_frames = int(parameters.feedback_mode == "baseline_relative")
-                total_tags = 1 + parameters.point_count * (
+                total_tags = 1 + parameters.execution_point_count * (
                     3 + baseline_frames + hold_frames + hold_frame_count(parameters.settling_time_s)
                 )
             else:
@@ -1546,7 +1550,8 @@ class WECSPMDriver:
         if name == "scan_hopping_it":
             if not isinstance(parameters, ScanHoppingITParameters):
                 raise TypeError("scan_hopping_it requires ScanHoppingITParameters")
-            self._method_grid = parameters.grid()
+            parameters.marker_result.clear()
+            self._method_grid = parameters.execution_grid()
             self._method_point = 0
             self._method_threshold = self._configure_contact_feedback(
                 parameters.feedback_channel, parameters.feedback_threshold,
@@ -1596,6 +1601,7 @@ class WECSPMDriver:
         params = self._method_params
         if not isinstance(params, ScanHoppingITParameters):
             raise RuntimeError("No hopping IT parameters are active.")
+        params.update_marker(self._method_point, 'running')
         _row, _column, x_um, y_um = self._method_grid[self._method_point]
         plan: list[PhysicalWaypoint] = []
         descriptors: list[tuple[int, str]] = []
@@ -1643,6 +1649,8 @@ class WECSPMDriver:
         return baseline
 
     def _submit_method_it(self, params: ApproachITParameters | ScanHoppingITParameters, point: int) -> None:
+        if isinstance(params, ScanHoppingITParameters):
+            params.update_marker(point, "contact")
         settle_plan = timed_hold_plan(params.settling_time_s)
         method_plan, labels = potential_step_plan(params.it_steps())
         plan = settle_plan + method_plan
@@ -1653,7 +1661,7 @@ class WECSPMDriver:
                 current = self._current_targets()
                 contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
                 low_z, high_z = sorted((params.start_z_um, params.end_z_um))
-                if point + 1 < params.point_count and not low_z <= contact_z <= high_z:
+                if point + 1 < params.execution_point_count and not low_z <= contact_z <= high_z:
                     contact_z = self._method_last_approach_z.get(point, params.end_z_um)
                 retract_z = params.scan_retract_z(
                     point, contact_z, self.settings.z_range_um,
@@ -1794,6 +1802,7 @@ class WECSPMDriver:
                     self._submit_method_scan_approach(initial=False)
                 else:
                     self._method_terminal = "complete"
+                    self._method_params.update_marker(self._method_point, 'complete')
                     self._method_detail = f"Hopping I-t scan complete · {len(self._method_grid)} points"
             elif self._method_phase == "retract" and self._method_no_contact:
                 self._method_terminal = "aborted"

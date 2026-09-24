@@ -64,6 +64,15 @@ class AnalysisDataset:
             self.rows = NumericRows(self.columns, [[row.get(c, float("nan")) for c in self.columns]
                                                    for row in self.rows])
 
+        # -2 is reserved for orientation-marker landings, even without a sidecar.
+        # Filter before segmentation, smoothing, summary statistics or plots.
+        if 'scan_pixel' in self.columns:
+            marker = self.rows.matrix[:, self.columns.index('scan_pixel')] == -2
+            if marker.any():
+                self.metadata = dict(self.metadata)
+                self.metadata['orientation_marker_samples_excluded'] = int(marker.sum())
+                self.rows = NumericRows(self.columns, self.rows.matrix[~marker])
+
     def column(self, name: str) -> np.ndarray:
         """Return a read-only full-resolution column; no display downsampling."""
         return self.rows.matrix[:, self.columns.index(name)]

@@ -141,6 +141,10 @@ class DataRecorder:
             scan_grid = self._scan_grid_metadata(parameters)
             if scan_grid is not None:
                 self._metadata["scan_grid"] = scan_grid
+                from .scan_orientation import orientation_svg
+                diagram = csv_path.with_suffix('.orientation.svg')
+                diagram.write_text(orientation_svg(parameters), encoding='utf-8')
+                self._metadata['orientation_diagram'] = diagram.name
             self._write_metadata()
         except Exception as exc:
             self._close_csv()
@@ -255,7 +259,11 @@ class DataRecorder:
         }
         scan_grid = self._scan_grid_metadata(parameters)
         if scan_grid is not None:
-            metadata["scan_grid"] = scan_grid
+            from .scan_orientation import orientation_svg
+            metadata["scan_grid"] = self._scan_grid_metadata(parameters, status)
+            diagram = csv_path.with_suffix('.orientation.svg')
+            diagram.write_text(orientation_svg(parameters), encoding='utf-8')
+            metadata['orientation_diagram'] = diagram.name
         csv_path.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         return csv_path
 
@@ -304,6 +312,9 @@ class DataRecorder:
         # checkpoint, not just the final sidecar after a successful run.
         if self._parameters is not None:
             self._metadata["parameters"] = self._json_value(self._parameters)
+        if isinstance(self._parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)) and "scan_grid" in self._metadata:
+            self._metadata['scan_grid']['orientation_marker'] = self._scan_marker_metadata(
+                self._parameters, self._metadata.get('status', 'running'))
         path = self._metadata_path
         if path is None:
             return
@@ -362,7 +373,7 @@ class DataRecorder:
         return row
 
     @staticmethod
-    def _scan_grid_metadata(parameters: Any) -> dict[str, Any] | None:
+    def _scan_grid_metadata(parameters: Any, recording_status: str = "running") -> dict[str, Any] | None:
         if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
             return None
         pixels = [
@@ -378,8 +389,27 @@ class DataRecorder:
         return {
             "coordinate_unit": "um",
             "path": "serpentine" if parameters.serpentine else "raster",
+            "orientation_marker": DataRecorder._scan_marker_metadata(parameters, recording_status),
             "pixel_count": len(pixels),
             "pixels": pixels,
+        }
+
+    @staticmethod
+    def _scan_marker_metadata(parameters: Any, recording_status: str) -> dict[str, Any]:
+        """Checkpoint marker lifecycle without rebuilding the full array grid."""
+        marker_status = parameters.marker_result.get('status', 'not_started')
+        if recording_status != 'running' and marker_status != 'complete':
+            marker_status = 'skipped' if marker_status == 'not_started' else 'incomplete'
+        x, y = parameters.marker_position() if parameters.marker_enabled else (None, None)
+        return {
+            "enabled": parameters.marker_enabled,
+            "scan_pixel": -2,
+            "excluded_from_analysis": True,
+            "x_um": x,
+            "y_um": y,
+            "program": "same as array hops",
+            "contact_detected": parameters.marker_result.get("contact_detected", False),
+            "status": marker_status if parameters.marker_enabled else "disabled",
         }
 
     @classmethod

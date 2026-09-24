@@ -378,7 +378,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertIn("without contact", status["detail"])
 
     def test_hopping_it_starts_with_safe_retract_position_and_approach(self) -> None:
-        params = ScanHoppingITParameters(
+        params = ScanHoppingITParameters(marker_enabled=False,
             x_points=1, y_points=1, initial_hold_s=.001,
             step_hold_s=.001, return_hold_s=.001,
         )
@@ -392,7 +392,7 @@ class NativeDriverTests(unittest.TestCase):
 
     def test_it_methods_reject_signed_tag_wrap_before_fifo_write(self) -> None:
         self.session.registers["LineNumber"].value = 32765
-        params = ScanHoppingITParameters(
+        params = ScanHoppingITParameters(marker_enabled=False,
             x_points=1, y_points=1, initial_hold_s=.001,
             step_hold_s=.001, return_hold_s=.001,
         )
@@ -403,7 +403,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.positions_fifo.writes, [])
 
     def test_hopping_it_runs_contact_gated_surface_steps_at_every_point(self) -> None:
-        params = ScanHoppingITParameters(
+        params = ScanHoppingITParameters(marker_enabled=False,
             x_points=2, y_points=1, initial_hold_s=.001,
             step_hold_s=.001, return_hold_s=.001,
         )
@@ -470,11 +470,11 @@ class NativeDriverTests(unittest.TestCase):
             self.driver.start_approach_cv(ApproachCVParameters(feedback_mode=mode))
             status = self.driver.approach_cv_status
         elif name == "scan_cv":
-            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, feedback_mode=mode))
+            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1, feedback_mode=mode))
             status = self.driver.scan_hopping_cv_status
         else:
             params = {"approach": ApproachParameters(), "approach_it": ApproachITParameters(),
-                      "scan_hopping_it": ScanHoppingITParameters(x_points=1, y_points=1)}[name]
+                      "scan_hopping_it": ScanHoppingITParameters(marker_enabled=False, x_points=1, y_points=1)}[name]
             self.driver.start_method(name, replace(params, feedback_mode=mode))
             status = self.driver.method_status
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
@@ -540,7 +540,7 @@ class NativeDriverTests(unittest.TestCase):
                     self.assertEqual(len(self.driver.positions_fifo.writes), 1)
 
     def test_native_contact_scans_repeat_in_one_session_with_consumed_stop_latch(self) -> None:
-        """Two 3x3 scans per mode; a consumed one-shot must never be needed."""
+        """Two 3x3-plus-marker scans per mode without a one-shot end command."""
         for method in ("cv", "it"):
             for mode in ("absolute", "baseline_relative", "magnitude"):
                 with self.subTest(method=method, mode=mode):
@@ -566,7 +566,7 @@ class NativeDriverTests(unittest.TestCase):
                         else:
                             d.start_method("scan_hopping_it", ScanHoppingITParameters(
                                 x_points=3, y_points=3, feedback_mode=mode))
-                        for point in range(9):
+                        for point in range(10):
                             if mode == "baseline_relative":
                                 complete_program()
                                 self.assertEqual(status()["stage"], "approaching")
@@ -596,6 +596,12 @@ class NativeDriverTests(unittest.TestCase):
                             complete_program()
                             update = status()
                         self.assertEqual(update["stage"], "complete")
+                        p = d._scan_params if method == "cv" else d._method_params
+                        self.assertEqual(p.marker_result['status'], 'complete')
+                        self.assertEqual(len(p.grid()), 9)
+                        self.assertEqual(len(p.execution_grid()), 10)
+                        self.assertEqual(d._program_waypoints[-1].z_position,
+                                         position_to_raw(p.start_z_um, d.settings.z_range_um, d.settings.z_bipolar))
                         d.ensure_idle()
 
     def test_no_contact_exit_and_manual_acceptance_restore_threshold_with_idle_indicator_latched(self) -> None:
@@ -859,7 +865,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.method_context(3), (-1, "approach"))
 
     def test_hopping_cv_remeasures_baseline_before_each_contact_approach(self) -> None:
-        params = ScanHoppingCVParameters(
+        params = ScanHoppingCVParameters(marker_enabled=False,
             x_points=1, y_points=1, feedback_mode="baseline_relative", feedback_threshold_na=0.25,
         )
         self.driver.start_scan_hopping_cv(params)
@@ -913,7 +919,7 @@ class NativeDriverTests(unittest.TestCase):
             self.driver.accept_approach()
 
     def test_operator_cannot_accept_contact_during_scan_positioning(self) -> None:
-        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
+        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1, cycles=1))
         self.session.registers["LineNumber"].value = self.driver._program_baseline + 1
 
         with self.assertRaisesRegex(RuntimeError, "still positioning"):
@@ -928,7 +934,7 @@ class NativeDriverTests(unittest.TestCase):
             self.driver.accept_approach()
 
     def test_operator_can_accept_hardware_scan_approaches(self) -> None:
-        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
+        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1, cycles=1))
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.driver.accept_approach()
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
@@ -940,7 +946,7 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["WaitingForWayPoints"].value = True
         self.driver.read_samples()
         self.driver.scan_hopping_cv_status()
-        self.driver.start_method("scan_hopping_it", ScanHoppingITParameters(x_points=1, y_points=1))
+        self.driver.start_method("scan_hopping_it", ScanHoppingITParameters(marker_enabled=False, x_points=1, y_points=1))
         self.session.registers["LineNumber"].value = self.driver._program_baseline + self.driver._program_total
         self.session.registers["WaitingForWayPoints"].value = False
         self.driver.accept_approach()
@@ -950,7 +956,7 @@ class NativeDriverTests(unittest.TestCase):
         self.assertEqual(self.driver.method_status()["stage"], "it")
 
     def test_raster_cv_retracts_farther_before_line_flyback(self) -> None:
-        params = ScanHoppingCVParameters(
+        params = ScanHoppingCVParameters(marker_enabled=False,
             x_points=2, y_points=2, serpentine=False,
             start_z_um=55, end_z_um=80, raster_line_retract_um=7, cycles=1,
         )
@@ -1018,7 +1024,7 @@ class NativeDriverTests(unittest.TestCase):
                     self.setUp()
                     d, regs = self.driver, self.session.registers
                     cls = ScanHoppingCVParameters if method == "cv" else ScanHoppingITParameters
-                    p = cls(start_z_um=start, end_z_um=end, x_points=1, y_points=1)
+                    p = cls(marker_enabled=False, start_z_um=start, end_z_um=end, x_points=1, y_points=1)
                     if method == "cv":
                         d.start_scan_hopping_cv(p)
                     else:
@@ -1089,7 +1095,7 @@ class NativeDriverTests(unittest.TestCase):
                     self.assertEqual(bool(p.retraction_events), contact < 10)
 
     def test_scan_hopping_submits_cv_only_after_each_confirmed_contact(self) -> None:
-        params = ScanHoppingCVParameters(x_points=2, y_points=2, cycles=1)
+        params = ScanHoppingCVParameters(marker_enabled=False, x_points=2, y_points=2, cycles=1)
         self.driver.start_scan_hopping_cv(params)
         words = self.session.fifos["Host_To_FPGA_Positions"].writes[-1]
         # Initial safe retract, position, and approach only.
@@ -1162,7 +1168,7 @@ class NativeDriverTests(unittest.TestCase):
     def test_scan_context_survives_completion(self) -> None:
         baseline = 20
         self.session.registers["LineNumber"].value = baseline
-        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1, cycles=1))
+        self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1, cycles=1))
         self.session.registers["External Pause"].value = False
         self.session.registers["Feedback1 Boolean"].value = True
         self.assertEqual(self.driver.scan_context(23), (0, "approach"))
@@ -1183,7 +1189,7 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["LineNumber"].value = 32765
         before = {name: register.value for name, register in self.session.registers.items()}
         with self.assertRaisesRegex(ValueError, "I16"):
-            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=1, y_points=1))
+            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1))
         self.assertEqual(before, {name: register.value for name, register in self.session.registers.items()})
         self.assertEqual(self.driver.positions_fifo.writes, [])
 
@@ -1202,7 +1208,7 @@ class NativeDriverTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.driver.move(axis, target, speed)
         with self.assertRaises(ValueError):
-            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(x_points=64, y_points=64, cycles=100))
+            self.driver.start_scan_hopping_cv(ScanHoppingCVParameters(marker_enabled=False, x_points=64, y_points=64, cycles=100))
         self.assertEqual(before, {name: register.value for name, register in self.session.registers.items()})
 
     def test_partial_fifo_write_failure_latches_session(self) -> None:

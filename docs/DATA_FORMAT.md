@@ -73,7 +73,7 @@ Every value is numeric. Column order is stable for schema version 2.
 | `current1_na` | nA | Current i1 after Current 1 amplifier-sensitivity conversion. |
 | `current2_na` | nA | Current i2 after Current 2 amplifier-sensitivity conversion. |
 | `line_number` | count | FPGA-provided waypoint/sample tag used by runtime protocol logic. See the warning below. |
-| `scan_pixel` | zero-based index | Present only for hopping scans. Links a row to one entry in `scan_grid.pixels`; negative values are setup or otherwise outside a mapped pixel. |
+| `scan_pixel` | zero-based index | Present only for hopping scans. Links a row to one entry in `scan_grid.pixels`; `-1` denotes unassigned/setup data; `-2` is reserved for the orientation-marker landing and excluded from analysis. |
 
 The recorder intentionally omits runtime-only `feedback_type`, repeated
 `scan_row`/`scan_column`, and commanded X/Y/Z snapshots. In particular, the
@@ -148,3 +148,24 @@ than guessing. A missing or unreadable sidecar can still permit raw CSV viewing,
 but experiment-aware extraction may be incomplete. Legacy LabVIEW TSV and TDMS
 imports are normalized by the analysis loader and are not schema-version-2
 recordings unless explicitly converted.
+
+
+### Orientation marker and diagram
+
+New scans can append one extra landing outside the array. Its rows remain in
+the original CSV with `scan_pixel = -2`, including marker motion and retraction.
+Array dimensions, `pixel_count`, and `scan_grid.pixels` exclude this landing.
+`scan_grid.orientation_marker` stores the commanded XY, enabled flag, contact
+confirmation, analysis-exclusion flag, and status (`not_started`, `running`,
+`contact`, `complete`, `skipped`, `incomplete`, or `disabled`). A completed marker
+means its experiment and final Z return completed, not proof of a visible footprint.
+
+The sibling `.orientation.svg` is a **planned** orientation diagram: numbered
+array acquisition order, marker M, commanded coordinates and positive X/Y axes.
+The JSON `orientation_diagram` field identifies it. Consult marker status in the
+JSON to distinguish a completed landing from a plan saved before cancellation.
+
+Analysis removes `-2` rows before segmentation, smoothing, statistics, plotting,
+mapping and movies, even if the JSON is missing. It reports the excluded count
+in `orientation_marker_samples_excluded` in the analysis metadata; original CSV
+data remain untouched. Third-party tools must also exclude these rows explicitly.

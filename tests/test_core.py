@@ -77,7 +77,7 @@ class SettingsTests(unittest.TestCase):
     def test_hardware_feedback_threshold_must_fit_adc(self) -> None:
         settings = AppSettings(polarity_convention="Instrument-native", mode="NI FPGA", current1_v_per_na=2.0)
         approach_errors = ApproachCVParameters(feedback_threshold_na=6.0).validate(settings)
-        scan_errors = ScanHoppingCVParameters(feedback_threshold_na=6.0).validate(settings)
+        scan_errors = ScanHoppingCVParameters(marker_enabled=False, feedback_threshold_na=6.0).validate(settings)
         self.assertTrue(any("ADC range" in error for error in approach_errors))
         self.assertTrue(any("ADC range" in error for error in scan_errors))
 
@@ -499,7 +499,7 @@ class ExperimentTests(unittest.TestCase):
         backend = SimulationBackend(settings, seed=4)
         backend.connect()
         experiment = ScanHoppingITExperiment(backend, settings)
-        params = ScanHoppingITParameters(
+        params = ScanHoppingITParameters(marker_enabled=False,
             x_start_um=50, x_end_um=50, x_points=1, y_start_um=50, y_end_um=50, y_points=1,
             start_z_um=55, end_z_um=80, lateral_rate_um_s=100,
             approach_rate_um_s=20, retract_rate_um_s=100,
@@ -582,14 +582,14 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(approach_it.state, ExperimentState.IT)
 
         scan_cv = ScanHoppingCVExperiment(backend, settings)
-        scan_cv.start(ScanHoppingCVParameters(x_points=1, y_points=1))
+        scan_cv.start(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1))
         scan_cv.state = ExperimentState.APPROACHING
         scan_cv.accept_approach(sample)
         self.assertEqual(scan_cv.state, ExperimentState.CV)
         self.assertEqual(scan_cv.contact_z[(0, 0)], 42)
 
         scan_it = ScanHoppingITExperiment(backend, settings)
-        scan_it.start(ScanHoppingITParameters(x_points=1, y_points=1))
+        scan_it.start(ScanHoppingITParameters(marker_enabled=False, x_points=1, y_points=1))
         scan_it.state = ExperimentState.APPROACHING
         scan_it.accept_approach(sample)
         self.assertEqual(scan_it.state, ExperimentState.IT)
@@ -647,7 +647,7 @@ class ExperimentTests(unittest.TestCase):
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
-        params = ScanHoppingCVParameters(x_points=1, y_points=1, cv_start_v=-0.2)
+        params = ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1, cv_start_v=-0.2)
         experiment.start(params)
         experiment.state = ExperimentState.APPROACHING
         contact = Sample(0, 35, 35, 68, params.approach_voltage_v, 0, 3, 0)
@@ -663,7 +663,7 @@ class ExperimentTests(unittest.TestCase):
         backend = SimulationBackend(settings, seed=4)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
-        params = ScanHoppingCVParameters(
+        params = ScanHoppingCVParameters(marker_enabled=False,
             x_start_um=40, x_end_um=60, x_points=2,
             y_start_um=40, y_end_um=60, y_points=2,
             start_z_um=55, end_z_um=80,
@@ -687,7 +687,7 @@ class ExperimentTests(unittest.TestCase):
         backend.disconnect()
 
     def test_scan_spacing_and_duration_are_derived_from_the_full_path(self) -> None:
-        cv = ScanHoppingCVParameters(
+        cv = ScanHoppingCVParameters(marker_enabled=False,
             x_start_um=0, x_end_um=20, x_points=3,
             y_start_um=0, y_end_um=10, y_points=2,
             start_z_um=10, end_z_um=20,
@@ -696,7 +696,7 @@ class ExperimentTests(unittest.TestCase):
         )
         self.assertEqual(cv.spacing_um, (10.0, 10.0))
         self.assertAlmostEqual(cv.estimated_known_duration_s(), 33.0)
-        it = ScanHoppingITParameters(
+        it = ScanHoppingITParameters(marker_enabled=False,
             x_start_um=0, x_end_um=10, x_points=2, y_start_um=0, y_end_um=0, y_points=1,
             start_z_um=10, end_z_um=20, lateral_rate_um_s=10,
             approach_rate_um_s=5, retract_rate_um_s=10,
@@ -706,7 +706,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertAlmostEqual(it.estimated_known_duration_s(), 13.0)
 
     def test_raster_scan_uses_extra_safe_z_at_line_flyback(self) -> None:
-        params = ScanHoppingCVParameters(
+        params = ScanHoppingCVParameters(marker_enabled=False,
             x_points=3, y_points=2, serpentine=False,
             start_z_um=55, end_z_um=80, raster_line_retract_um=8,
         )
@@ -716,7 +716,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertEqual(params.retract_z_for_point(5, 68), 58)
         self.assertEqual(params.retract_distance_for_point(2), 18)
         self.assertEqual(params.retract_distance_for_point(5), 10)
-        invalid = ScanHoppingITParameters(
+        invalid = ScanHoppingITParameters(marker_enabled=False,
             x_points=2, y_points=2, serpentine=False,
             start_z_um=2, end_z_um=80, raster_line_retract_um=5,
         )
@@ -749,7 +749,7 @@ class ExperimentTests(unittest.TestCase):
             backend = SimulationBackend(settings)
             backend.connect()
             experiment = cls(backend, settings)
-            p = params_cls(start_z_um=0, end_z_um=90, x_points=1, y_points=1)
+            p = params_cls(marker_enabled=False, start_z_um=0, end_z_um=90, x_points=1, y_points=1)
             experiment.start(p)
             experiment.contact_z[(0, 0)] = 68
             if cls is ScanHoppingCVExperiment:
@@ -775,7 +775,7 @@ class ExperimentTests(unittest.TestCase):
                     backend = SimulationBackend(settings)
                     backend.connect()
                     experiment = cls(backend, settings)
-                    p = params_cls(start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    p = params_cls(marker_enabled=False, start_z_um=0, end_z_um=90, x_points=2, y_points=1)
                     experiment.start(p)
                     experiment.contact_z[(0, 0)] = contact
                     if cls is ScanHoppingCVExperiment:
@@ -801,7 +801,7 @@ class ExperimentTests(unittest.TestCase):
     def test_limited_retraction_is_checkpointed_in_metadata(self) -> None:
         with TemporaryDirectory() as folder:
             settings = AppSettings(polarity_convention="Instrument-native", save_directory=folder)
-            params = ScanHoppingCVParameters(start_z_um=0)
+            params = ScanHoppingCVParameters(marker_enabled=False, start_z_um=0)
             recorder = DataRecorder()
             recorder.start("Scan Hopping CV", settings, params)
             params.bounded_retract_z(0, 8, settings.z_range_um)
@@ -815,7 +815,7 @@ class ExperimentTests(unittest.TestCase):
         backend = SimulationBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
-        params = ScanHoppingCVParameters(
+        params = ScanHoppingCVParameters(marker_enabled=False,
             x_start_um=20, x_end_um=20, x_points=1,
             y_start_um=20, y_end_um=20, y_points=1,
             start_z_um=10, end_z_um=12, feedback_threshold_na=9,
@@ -853,7 +853,7 @@ class ExperimentTests(unittest.TestCase):
         backend = HardwareScanBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
-        params = ScanHoppingCVParameters(x_points=1, y_points=1, map_potential_v=0.2)
+        params = ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1, map_potential_v=0.2)
         experiment.start(params)
         samples = [
             Sample(0, 35, 35, 67.4, 0.1, 0, 2.1, 0, line_number=1),
@@ -888,7 +888,7 @@ class ExperimentTests(unittest.TestCase):
         backend = HardwareITBackend(settings)
         backend.connect()
         experiment = ScanHoppingITExperiment(backend, settings)
-        experiment.start(ScanHoppingITParameters(x_points=1, y_points=1))
+        experiment.start(ScanHoppingITParameters(marker_enabled=False, x_points=1, y_points=1))
 
         experiment.tick_samples([
             Sample(0, 35, 35, 80, 0.1, 0, 9, 9, line_number=1),
@@ -925,7 +925,7 @@ class ExperimentTests(unittest.TestCase):
         backend = HardwareScanBackend(settings)
         backend.connect()
         experiment = ScanHoppingCVExperiment(backend, settings)
-        experiment.start(ScanHoppingCVParameters(x_points=1, y_points=1))
+        experiment.start(ScanHoppingCVParameters(marker_enabled=False, x_points=1, y_points=1))
 
         contact = experiment.tick_samples([])
         self.assertEqual(contact.state, ExperimentState.CONTACT)

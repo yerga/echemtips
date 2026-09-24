@@ -478,6 +478,52 @@ class BoundedScanRetraction:
 
     __slots__ = ()
 
+    @property
+    def execution_point_count(self) -> int:
+        """Count array landings plus the optional orientation landing."""
+        return self.point_count + int(self.marker_enabled)
+
+    def marker_position(self) -> tuple[float, float]:
+        """Place the default marker at first X, one spacing beyond the last row."""
+        spacing = self.spacing_um[1] or max(5.0, 3 * self.footprint_diameter_um)
+        direction = 1 if self.y_end_um >= self.y_start_um else -1
+        last_y = self.y_end_um if self.y_points > 1 else self.y_start_um
+        return (self.x_start_um if self.marker_x_um is None else self.marker_x_um,
+                last_y + direction * spacing if self.marker_y_um is None else self.marker_y_um)
+
+    def execution_grid(self) -> list[tuple[int, int, float, float]]:
+        """Append a non-array landing without changing array IDs or dimensions."""
+        return self.grid() + ([(-1, -1, *self.marker_position())] if self.marker_enabled else [])
+
+    def is_marker(self, point: int) -> bool:
+        """Identify the orientation landing by its internal execution index."""
+        return self.marker_enabled and point == self.point_count
+
+    def recorded_pixel(self, point: int) -> int:
+        """Reserve -2 for marker data; normal array IDs remain zero based."""
+        return -2 if self.is_marker(point) else point
+
+    def marker_validation(self, settings: AppSettings) -> list[str]:
+        """Reject unsafe or overlapping marker positions before any motion."""
+        if not self.marker_enabled:
+            return []
+        x, y = self.marker_position()
+        if not all(math.isfinite(v) for v in (x, y)) or not (0 <= x <= settings.x_range_um and 0 <= y <= settings.y_range_um):
+            return ['Orientation marker is outside the XY travel range. Adjust its position or disable it.']
+        lo_x, hi_x = sorted((self.x_start_um, self.x_end_um if self.x_points > 1 else self.x_start_um))
+        lo_y, hi_y = sorted((self.y_start_um, self.y_end_um if self.y_points > 1 else self.y_start_um))
+        gap = math.hypot(max(lo_x - x, 0, x - hi_x), max(lo_y - y, 0, y - hi_y))
+        if gap <= self.footprint_diameter_um:
+            return ['Orientation marker must be outside the array with more than one footprint diameter clearance.']
+        return []
+
+    def update_marker(self, point: int, status: str) -> None:
+        """Record the marker lifecycle separately from normal array metrics."""
+        if self.is_marker(point):
+            self.marker_result['status'] = status
+            if status == 'contact':
+                self.marker_result['contact_detected'] = True
+
     def completion_z(self, current_z: float) -> float:
         """Return toward initial Z only in the direction away from the surface."""
         return (min(self.start_z_um, current_z) if self.end_z_um > self.start_z_um
@@ -486,7 +532,7 @@ class BoundedScanRetraction:
     def scan_retract_z(self, point: int, contact_z: float, maximum_z: float,
                        *, minimum_travel_um: float = 1e-9) -> float:
         """Use contact-relative clearance between hops, initial Z after the last."""
-        if point + 1 == self.point_count:
+        if point + 1 == self.execution_point_count:
             if not math.isfinite(contact_z) or not 0 <= contact_z <= maximum_z:
                 raise ValueError("Contact Z is outside the configured range.")
             return self.completion_z(contact_z)
@@ -559,6 +605,10 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
     raster_line_retract_um: float = 5.0
     retract_distance_um: float = 10.0
     footprint_diameter_um: float = 1.0
+    marker_enabled: bool = True
+    marker_x_um: float | None = None
+    marker_y_um: float | None = None
+    marker_result: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @property
     def point_count(self) -> int:
@@ -575,11 +625,12 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
 
     def retract_distance_for_point(self, point: int) -> float:
         """Return normal retract plus any raster end-of-line safety distance."""
-        grid = self.grid()
-        ends_raster_line = (
-            not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
+        next_point = point + 1
+        long_move = self.is_marker(next_point) or (
+            not self.serpentine and 0 < next_point < self.point_count
+            and next_point % self.x_points == 0
         )
-        return self.retract_distance_um + (self.raster_line_retract_um if ends_raster_line else 0.0)
+        return self.retract_distance_um + (self.raster_line_retract_um if long_move else 0.0)
 
     def retract_z_for_point(self, point: int, contact_z_um: float | None = None) -> float:
         """Return the Z target relative to contact at one hop.
@@ -599,26 +650,26 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
 
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
-        grid = self.grid()
+        grid = self.execution_grid()
         lateral = sum(
             math.hypot(current[2] - previous[2], current[3] - previous[3])
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
         repeated_approaches = sum(
             self.retract_distance_for_point(point - 1) / self.approach_rate_um_s
-            for point in range(1, self.point_count)
+            for point in range(1, self.execution_point_count)
         )
         retracts = sum(
-            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.point_count
+            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.execution_point_count
              else self.retract_distance_for_point(point)) / self.retract_rate_um_s
-            for point in range(self.point_count)
+            for point in range(self.execution_point_count)
         )
         cv_per_point = self.cycles * (
             abs(self.cv_vertex1_v - self.cv_start_v)
             + abs(self.cv_vertex2_v - self.cv_vertex1_v)
             + abs(self.cv_start_v - self.cv_vertex2_v)
         ) / self.cv_scan_rate_v_s
-        return lateral + repeated_approaches + retracts + self.point_count * (self.settling_time_s + cv_per_point)
+        return lateral + repeated_approaches + retracts + self.execution_point_count * (self.settling_time_s + cv_per_point)
 
     @staticmethod
     def _axis_values(start: float, end: float, count: int) -> list[float]:
@@ -686,7 +737,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
             self.cv_start_v, self.cv_vertex1_v, self.cv_vertex2_v
         ):
             errors.append("Map potential must lie inside the CV potential range.")
-        waypoints = 1 + self.point_count * (
+        waypoints = 1 + self.execution_point_count * (
             4 + int(self.feedback_mode == "baseline_relative")
             + 3 * self.cycles + hold_frame_count(self.settling_time_s)
         )
@@ -695,6 +746,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
                 f"This scan needs {waypoints} waypoint tags; the deployed FIFO streams them, but the "
                 "sample line tag is only validated through signed I16 line 32767."
             )
+        errors.extend(self.marker_validation(settings))
         return errors
 
 
@@ -730,6 +782,10 @@ class ScanHoppingITParameters(BoundedScanRetraction):
     raster_line_retract_um: float = 5.0
     retract_distance_um: float = 10.0
     footprint_diameter_um: float = 1.0
+    marker_enabled: bool = True
+    marker_x_um: float | None = None
+    marker_y_um: float | None = None
+    marker_result: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     @property
     def point_count(self) -> int:
@@ -746,11 +802,12 @@ class ScanHoppingITParameters(BoundedScanRetraction):
 
     def retract_distance_for_point(self, point: int) -> float:
         """Return normal retract plus any raster end-of-line safety distance."""
-        grid = self.grid()
-        ends_raster_line = (
-            not self.serpentine and point + 1 < len(grid) and grid[point][0] != grid[point + 1][0]
+        next_point = point + 1
+        long_move = self.is_marker(next_point) or (
+            not self.serpentine and 0 < next_point < self.point_count
+            and next_point % self.x_points == 0
         )
-        return self.retract_distance_um + (self.raster_line_retract_um if ends_raster_line else 0.0)
+        return self.retract_distance_um + (self.raster_line_retract_um if long_move else 0.0)
 
     def retract_z_for_point(self, point: int, contact_z_um: float | None = None) -> float:
         """Return a safe Z target away from measured or estimated contact."""
@@ -766,22 +823,22 @@ class ScanHoppingITParameters(BoundedScanRetraction):
 
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
-        grid = self.grid()
+        grid = self.execution_grid()
         lateral = sum(
             math.hypot(current[2] - previous[2], current[3] - previous[3])
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
         repeated_approaches = sum(
             self.retract_distance_for_point(point - 1) / self.approach_rate_um_s
-            for point in range(1, self.point_count)
+            for point in range(1, self.execution_point_count)
         )
         retracts = sum(
-            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.point_count
+            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.execution_point_count
              else self.retract_distance_for_point(point)) / self.retract_rate_um_s
-            for point in range(self.point_count)
+            for point in range(self.execution_point_count)
         )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
-        return lateral + repeated_approaches + retracts + self.point_count * (self.settling_time_s + it_per_point)
+        return lateral + repeated_approaches + retracts + self.execution_point_count * (self.settling_time_s + it_per_point)
 
     def grid(self) -> list[tuple[int, int, float, float]]:
         """Return ``(row, column, x_um, y_um)`` points in path order."""
@@ -837,10 +894,11 @@ class ScanHoppingITParameters(BoundedScanRetraction):
         if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
         hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
-        total_tags = 1 + self.point_count * (
+        total_tags = 1 + self.execution_point_count * (
             3 + int(self.feedback_mode == "baseline_relative")
             + hold_frames + hold_frame_count(self.settling_time_s)
         )
         if settings.mode == "NI FPGA" and total_tags > 32767:
             errors.append(f"This scan needs {total_tags} waypoint tags, beyond the conservative signed-I16 scan limit.")
+        errors.extend(self.marker_validation(settings))
         return errors
