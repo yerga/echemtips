@@ -326,7 +326,7 @@ class AdaptiveExperiment:
     def _launch(self):
         p = self.params
         xy = np.asarray(self.proposal["xy"],dtype=float)
-        if not np.isfinite(xy).all() or not (p.x_min_um<=xy[0]<=p.x_max_um and p.y_min_um<=xy[1]<=p.y_max_um):
+        if xy.shape != (2,) or not np.isfinite(xy).all() or not (p.x_min_um<=xy[0]<=p.x_max_um and p.y_min_um<=xy[1]<=p.y_max_um):
             raise ValueError("Planner proposed an out-of-region position.")
         if any(np.linalg.norm(xy-a["xy"]) < p.minimum_spacing_um-1e-8 for a in p.attempts):
             raise ValueError("Planner proposed a previously wetted/excluded location.")
@@ -357,6 +357,7 @@ class AdaptiveExperiment:
     def _landing_done(self):
         p = self.params
         contact = self.backend.confirmed_contact_z() if self.backend.hardware_approach_cv_required else self._attempt.get("contact_z_um")
+        if contact is not None and not math.isfinite(contact): contact = None
         if contact is not None and math.isfinite(contact): self._attempt["contact_z_um"] = contact
         if self.child.state == ExperimentState.ABORTED:
             self._attempt.update(valid=False,reason=self.child.detail)
@@ -373,6 +374,8 @@ class AdaptiveExperiment:
             self._attempt['baseline_na'] = baseline
             self._attempt['baseline_mad_na'] = float(np.median(np.abs(np.asarray(self._baseline)-baseline)))
         if contact is None: self._attempt.update(valid=False,reason="Missing commanded contact coordinate")
+        if self._attempt.get("quality_warning"):
+            self._attempt.update(valid=False,reason=self._attempt["quality_warning"])
         self._log("landing_result",**self._attempt)
         self.child = None
         if not self.backend.hardware_approach_cv_required:
