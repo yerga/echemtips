@@ -1050,6 +1050,9 @@ class ManagedExperimentPage(BasePage):
             raise BackendError("Another experiment is already running.")
         if self.app.recorder.active:
             raise BackendError("Stop the current recording before starting an experiment.")
+        workspace = getattr(self.app, "operator_workspace", None)
+        if workspace is not None and not workspace.review(self, parameters):
+            raise ValueError("Experiment cancelled before any movement or recording.")
         watch = self.app.pages.get("Watch current")
         if isinstance(watch, WatchPage):
             watch.set_live_view(False)
@@ -1068,6 +1071,7 @@ class ManagedExperimentPage(BasePage):
         self.detail_label.setText("Preparing the FPGA/simulation sequence.")
         self.progress.setValue(0)
         self.app._sync_action_states()
+        if workspace: workspace.refresh()
 
     def elapsed_from_start(self, sample: Sample) -> float:
         """Return a display timestamp local to the current experiment."""
@@ -1651,7 +1655,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         )
 
     def _refresh_maps(self, *_args: object) -> None:
-        params = self.parameters()
+        params = self.experiment.params if self.experiment.active else self.parameters()
         xs = params._axis_values(params.x_start_um, params.x_end_um, params.x_points)
         ys = params._axis_values(params.y_start_um, params.y_end_um, params.y_points)
         mode = self.app.settings.map_view_mode
@@ -1793,7 +1797,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         )
 
     def _refresh_maps(self, *_args: object) -> None:
-        params = self.parameters()
+        params = self.experiment.params if self.experiment.active else self.parameters()
         xs = ScanHoppingCVParameters._axis_values(params.x_start_um, params.x_end_um, params.x_points)
         ys = ScanHoppingCVParameters._axis_values(params.y_start_um, params.y_end_um, params.y_points)
         mode = self.app.settings.map_view_mode
@@ -2102,6 +2106,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         last_recording.triggered.connect(lambda: self.launch_analysis(last_recording=True))
         analysis_menu.aboutToShow.connect(lambda: last_recording.setEnabled(
             not self.recorder.active and self.recorder.output_path is not None and self.recorder.output_path.exists()))
+        from .operator_workspace import OperatorWorkspace
+        self.operator_workspace = OperatorWorkspace(self)
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
 
     def launch_analysis(self, *, last_recording: bool = False) -> None:
@@ -2334,6 +2340,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                     return
                 allow_startup_actuation = True
             self.backend.connect(allow_startup_actuation=allow_startup_actuation)
+            if hasattr(self, "operator_workspace"): self.operator_workspace.recovery_required = False
             self._start_acquisition()
             self._set_connection_ui(True)
             suffix = " · startup outputs verified" if getattr(self.backend, "startup_verified", False) else ""
@@ -2375,7 +2382,6 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     def apply_settings(self, settings: AppSettings) -> None:
         """Persist preferences, rebuilding the backend only for non-display changes."""
-        if self.any_experiment_active: raise ValueError("Stop the experiment before changing instrument settings.")
         display_keys = {"display_max_points", "map_view_mode", "map_footprint_diameter_um",
                         "map_z_colormap", "map_current_colormap",
                         "map_z_auto_limits", "map_z_min_um", "map_z_max_um", "map_current_auto_limits",
@@ -2384,6 +2390,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         changed = {key for key, value in asdict(settings).items() if value != getattr(self.settings, key)}
         if Path(settings.save_directory).expanduser().resolve() == Path(self.settings.save_directory).expanduser().resolve():
             changed.discard("save_directory")
+        if self.any_experiment_active and not changed <= display_keys:
+            raise ValueError("Stop the experiment before changing instrument settings; display-only changes are allowed.")
         if changed <= display_keys:
             self.store.save(settings)
             self.settings = settings
@@ -2502,6 +2510,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             # recording the snapshot: either operation may fail independently.
             hardware = self.backend.hardware_approach_cv_required
             self.backend.stop_motion()
+            if hardware and hasattr(self, "operator_workspace"): self.operator_workspace.recovery_required = True
             self._consume_acquired(before.samples, finalize=False)
             if before.error is not None: raise BackendError(f"Acquisition failed before cancellation: {before.error}") from before.error
             if not hardware: experiment.state = ExperimentState.ABORTED; experiment.detail = "Experiment stopped by operator"
@@ -2655,11 +2664,18 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     def toast(self, message: str, level: str = "info") -> None:
         """Show a short color-coded status-bar message."""
+        workspace = getattr(self, "operator_workspace", None)
+        if workspace: workspace.record(message, level)
         color = {"success": COLORS["success"], "warning": COLORS["warning"], "danger": COLORS["danger"]}.get(level, COLORS["text"]); self.statusBar().setStyleSheet(f"QStatusBar {{ color:{color}; background:{COLORS['panel']}; font-weight:600; }}"); self.statusBar().showMessage(message, 4200)
 
     def show_error(self, message: str) -> None:
         """Display a modal operator error without changing hardware state."""
-        QtWidgets.QMessageBox.critical(self, "eChemTips", message)
+        workspace = getattr(self, "operator_workspace", None)
+        if workspace: workspace.record(message, "error")
+        box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Icon.Critical, "Operation could not be completed", str(message), parent=self)
+        box.setInformativeText("Check instrument state before retrying. Recording files may be partial; inspect their metadata status. Technical details can be copied from Instrument → Event history.")
+        box.setDetailedText(str(message))
+        box.exec()
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:
         """Confirm active work, stop hardware, drain data, and close resources."""
