@@ -17,6 +17,7 @@ class ExperimentEntry:
 
 
 EXPERIMENTS = (
+    ExperimentEntry("Adaptive hopping + LSV", "Scanning", "Bayesian spatial search with conservative tilt survey, contact-gated LSV and an auditable decision log.", "AdaptivePage", "adaptive"),
     ExperimentEntry("Watch current", "Monitoring", "Monitor both current channels over time.", "WatchPage"),
     ExperimentEntry("Watch position", "Monitoring", "Monitor measured X, Y and Z positions.", "WatchPositionPage"),
     ExperimentEntry("Preflight", "Setup and diagnostics", "Guided checks before an experiment.", "PreflightPage"),
