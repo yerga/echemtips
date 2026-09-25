@@ -61,10 +61,12 @@ class CombinatorialTests(unittest.TestCase):
             settings=AppSettings(polarity_convention='Instrument-native')
             backend=SimulationBackend(settings,seed=4); backend.connect()
             if cls is ScanHoppingCVParameters:
-                p.feedback_threshold_na=2
+                p.feedback_threshold_na=.005
+                p.feedback_mode="magnitude"
                 p.recipes[0]['cv_scan_rate_v_s']=10
             else:
-                p.feedback_threshold=2
+                p.feedback_threshold=.005
+                p.feedback_mode="magnitude"
                 for recipe in p.recipes:
                     recipe['initial_hold_s']=recipe['return_hold_s']=.01
             experiment=runner(backend,settings); experiment.start(p)

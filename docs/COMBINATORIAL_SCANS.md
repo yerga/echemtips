@@ -10,9 +10,13 @@ using a valuable sample; simulation and fake-device tests are not hardware valid
 
 1. Select Simulation and connect. Configure a small grid, for example three X
    points and six Y points. Choose a safe Z approach interval and contact settings
-   as for a normal scan. In the standard simulator the surface is near 68% of the
-   configured Z range; use an interval that includes it and a threshold above
-   the simulator's open-circuit background.
+   as for a normal scan. With combinatorial recipes enabled, the simulator places
+   a gently tilted surface inside the selected approach interval, independent of
+   the full piezo range. Use the default 5 pA magnitude threshold: the simulated
+   open-cell noise is approximately 0.15 pA, with a 40 pA contact transient and a
+   sustained wet-cell response. Both feedback channels are supported. Thresholds
+   are never adjusted automatically; an excessive threshold can still produce a
+   genuine simulated no-contact abort. Ordinary scans retain their existing model.
 2. Set the shared motion, feedback, settling and optional orientation-marker
    settings. These do not change between conditions.
 3. Open the recipe planner. The first recipe copies the default measurement

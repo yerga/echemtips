@@ -284,8 +284,9 @@ class SimulationBackend(InstrumentBackend):
         """Return deterministic simulated surface height at physical XY."""
         if getattr(self, "adaptive_scene", False):
             start, end, x0, x1, y0, y1 = self._adaptive_bounds
-            return start + (end-start)*(.65 + .08*((x_um-x0)/(x1-x0)-.5)
-                                        + .06*((y_um-y0)/(y1-y0)-.5))
+            x = max(0.0, min(1.0, (x_um-x0)/(x1-x0)))
+            y = max(0.0, min(1.0, (y_um-y0)/(y1-y0)))
+            return start + (end-start)*(.65 + .08*(x-.5) + .06*(y-.5))
         sx = (x_um / self.settings.x_range_um - 0.5) * math.tau
         sy = (y_um / self.settings.y_range_um - 0.5) * math.tau
         return self.settings.z_range_um * 0.68 + 2.4 * math.sin(sx) * math.cos(sy) + 0.7 * math.sin(2 * sy)
@@ -298,12 +299,46 @@ class SimulationBackend(InstrumentBackend):
         spatial hotspot fixed for the duration of a run. Failed-landings injected
         by tests still produce only the open-circuit baseline.
         """
+        self._hopping_scene = False
         self._adaptive_bounds = (params.start_z_um,params.end_z_um,
                                  params.x_min_um,params.x_max_um,params.y_min_um,params.y_max_um)
         self._adaptive_wet_pixel = None
         self._adaptive_contact_time = 0.0
         self.adaptive_scene = True
         self.set_diagnostic_circuit("normal")
+
+    @_synchronized_io
+    def configure_hopping_scene(self, params) -> None:
+        """Reuse the low-noise contact model for combinatorial scans only.
+
+        Place the surface within the approach interval, independent of the
+        instrument's full piezo range. Single-row/column scans remain valid.
+        Never change feedback thresholds or any hardware configuration.
+        """
+        from types import SimpleNamespace
+        x0, x1 = sorted((params.x_start_um, params.x_end_um))
+        y0, y1 = sorted((params.y_start_um, params.y_end_um))
+        self.configure_adaptive_scene(SimpleNamespace(
+            start_z_um=params.start_z_um, end_z_um=params.end_z_um,
+            x_min_um=x0, x_max_um=max(x1, x0 + 1),
+            y_min_um=y0, y_max_um=max(y1, y0 + 1)))
+        self._hopping_scene = True
+        self.adaptive_pixel = -1
+
+    @_synchronized_io
+    def begin_hopping_point(self, point: int) -> None:
+        """Reset contact memory before moving to a fresh simulated landing."""
+        if getattr(self, "_hopping_scene", False):
+            self.adaptive_pixel = point
+            self._adaptive_wet_pixel = None
+
+    @_synchronized_io
+    def clear_hopping_scene(self) -> None:
+        """Prevent a combinatorial scene leaking into another experiment."""
+        if getattr(self, "_hopping_scene", False):
+            self.adaptive_scene = False
+            self.adaptive_pixel = -1
+            self._hopping_scene = False
 
     @_synchronized_io
     def commanded_position(self) -> dict[str, float]:
@@ -379,11 +414,15 @@ class SimulationBackend(InstrumentBackend):
             activity = .025 + .15*math.exp(-((x-.7)**2+(y-.65)**2)/.025)
             pixel = getattr(self, "adaptive_pixel", -1)
             failed = getattr(self, "adaptive_failure_pixel", -99) == pixel
+            direction = 1 if end > start else -1
+            depth = direction * (z - surface_z)
+            approaching = (not getattr(self, "_hopping_scene", False)
+                           or self._targets["Z"] == end)
             # Latch meniscus contact until retract: stopping Z on the transient
             # must not immediately turn the cell back into an open circuit.
-            if pixel < 0 or failed or z < surface_z-.2 or self._adaptive_wet_pixel != pixel:
+            if pixel < 0 or failed or depth < -.2 or self._adaptive_wet_pixel != pixel:
                 self._adaptive_wet_pixel = None
-            if pixel >= 0 and not failed and z >= surface_z and self._adaptive_wet_pixel is None:
+            if pixel >= 0 and not failed and depth >= 0 and approaching and self._adaptive_wet_pixel is None:
                 self._adaptive_wet_pixel = pixel
                 self._adaptive_contact_time = elapsed
             wet = self._adaptive_wet_pixel is not None
@@ -418,7 +457,7 @@ class SimulationBackend(InstrumentBackend):
             commanded_x_um=self._positions["X"],
             commanded_y_um=self._positions["Y"],
             commanded_z_um=self._positions["Z"],
-            scan_pixel=getattr(self, "adaptive_pixel", -1),
+            scan_pixel=(-1 if getattr(self, "_hopping_scene", False) else getattr(self, "adaptive_pixel", -1)),
         )
 
     @_synchronized_io

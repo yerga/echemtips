@@ -93,6 +93,8 @@ class ApproachCVExperiment:
 
     def start(self, params: ApproachCVParameters) -> None:
         """Validate and start either the FPGA sequence or host simulation."""
+        clear_scene = getattr(self.backend, "clear_hopping_scene", None)
+        if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -356,6 +358,8 @@ class ScanHoppingCVExperiment:
 
     def start(self, params: ScanHoppingCVParameters) -> None:
         """Validate/reset maps and start hardware or simulated hopping CV."""
+        clear_scene = getattr(self.backend, "clear_hopping_scene", None)
+        if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -385,6 +389,7 @@ class ScanHoppingCVExperiment:
             self.state = ExperimentState.PREPOSITION
             self.detail = f"FPGA scan started · {params.execution_point_count} points"
         else:
+            if params.recipes: self.backend.configure_hopping_scene(params)
             self._start_simulated_point()
 
     def abort(self) -> None:
@@ -419,6 +424,7 @@ class ScanHoppingCVExperiment:
         sample.scan_column = column
 
     def _start_simulated_point(self) -> None:
+        if self.params.recipes: self.backend.begin_hopping_point(self.point_index)
         row, column, x, y = self._grid[self.point_index]
         p = self.params
         self._z_position_target = p.start_z_um if self.point_index == 0 else self._retract_target_z
@@ -664,6 +670,8 @@ class CVExperiment:
 
     def start(self, params: CVParameters) -> None:
         """Validate and start FPGA or host-simulated cyclic voltammetry."""
+        clear_scene = getattr(self.backend, "clear_hopping_scene", None)
+        if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -762,6 +770,8 @@ class ApproachExperiment:
 
     def start(self, params: ApproachParameters) -> None:
         """Validate and start hardware or simulated standalone approach."""
+        clear_scene = getattr(self.backend, "clear_hopping_scene", None)
+        if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -891,6 +901,8 @@ class ApproachITExperiment:
 
     def start(self, params: ApproachITParameters) -> None:
         """Validate and start hardware or simulated Approach + I–t."""
+        clear_scene = getattr(self.backend, "clear_hopping_scene", None)
+        if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -1043,6 +1055,8 @@ class ScanHoppingITExperiment:
 
     def start(self, params: ScanHoppingITParameters) -> None:
         """Validate/reset maps and start hardware or simulated hopping I–t."""
+        clear_scene = getattr(self.backend, "clear_hopping_scene", None)
+        if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("\n".join(errors))
@@ -1062,6 +1076,7 @@ class ScanHoppingITExperiment:
             self.backend.start_hardware_program("scan_hopping_it", params)
             self.state, self.detail = ExperimentState.PREPOSITION, f"FPGA hopping I-t scan · {params.execution_point_count} points"
         else:
+            if params.recipes: self.backend.configure_hopping_scene(params)
             self._start_point()
 
     def abort(self) -> None:
@@ -1088,6 +1103,7 @@ class ScanHoppingITExperiment:
         sample.scan_pixel, sample.scan_row, sample.scan_column = self.params.recorded_pixel(point), row, column
 
     def _start_point(self) -> None:
+        if self.params.recipes: self.backend.begin_hopping_point(self.point_index)
         p = self.params
         self._z_position_target = p.start_z_um if self.point_index == 0 else self._retract_target_z
         p.update_marker(self.point_index, 'running')
