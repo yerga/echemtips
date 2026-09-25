@@ -61,7 +61,10 @@ class AdaptiveTests(unittest.TestCase):
                                     approach_rate_um_s=60,xy_speed_um_s=100,settling_time_s=0,
                                     cv_scan_rate_v_s=.5,objective_window_v=.04)
         with tempfile.TemporaryDirectory() as folder:
-            experiment.configure_recording(Path(folder)/'run.csv')
+            settings.save_directory=folder
+            recorder=DataRecorder()
+            recorder.start('Adaptive hopping + LSV',settings,params)
+            experiment.configure_recording(recorder.output_path)
             experiment.start(params)
             for _ in range(20000):
                 # Advance physical simulation and its LSV clock without sleeping.
@@ -69,6 +72,7 @@ class AdaptiveTests(unittest.TestCase):
                 sample = backend.read_sample()
                 if experiment.child: experiment.child._last_tick -= .01
                 experiment.tick_samples([sample])
+                recorder.append(sample)
                 if experiment.phase == 'tilt_approval': experiment.approve()
                 if experiment.phase == 'model': time.sleep(.002)
                 if not experiment.active: break
@@ -76,9 +80,14 @@ class AdaptiveTests(unittest.TestCase):
             self.assertEqual(len(experiment.params.attempts),7,experiment.detail)
             self.assertTrue(all(a['valid'] for a in experiment.params.attempts))
             self.assertAlmostEqual(backend.commanded_position()['Z'],params.start_z_um,delta=.08)
-            experiment.finish_report(Path(folder)/'run.csv','complete')
-            self.assertTrue((Path(folder)/'run.report.md').exists())
-            self.assertIn('tilt_approved',(Path(folder)/'run.decisions.jsonl').read_text())
+            csv_path=recorder.finish(settings,experiment.params)
+            experiment.finish_report(csv_path,'complete')
+            self.assertTrue(csv_path.with_suffix('.report.md').exists())
+            self.assertIn('tilt_approved',csv_path.with_suffix('.decisions.jsonl').read_text())
+            from echemtips.analysis_core import AnalysisDataset,extract_cv_cycles
+            dataset=AnalysisDataset.load(csv_path)
+            self.assertEqual(len(dataset.metadata['scan_grid']['pixels']),7)
+            self.assertEqual(len(extract_cv_cycles(dataset)),7)
             self.assertIn('scan_pixel',DataRecorder._fields_for_parameters(params))
         experiment.close()
 
@@ -109,6 +118,57 @@ class AdaptiveTests(unittest.TestCase):
         regs['WaitingForWayPoints'].value = True; d.read_samples()
         d.approach_cv_status()
         self.assertEqual(d.approach_contact_z_um,raw_to_position(regs['Applied Z'].value,d.settings.z_range_um,d.settings.z_bipolar))
+
+    def test_budget_prevents_first_movement(self):
+        backend=SimulationBackend(AppSettings()); backend.connect()
+        e=AdaptiveExperiment(backend,backend.settings)
+        with tempfile.TemporaryDirectory() as folder:
+            e.configure_recording(Path(folder)/'run.csv')
+            e.start(AdaptiveParameters(region_confirmed=True,approve_each=False,max_duration_s=.001))
+            e._started-=1
+            e.tick_samples([backend.read_sample()])
+            self.assertEqual(e.phase,'return')
+            self.assertEqual(e.params.attempts,[])
+            self.assertEqual(backend._targets['X'],backend._positions['X'])
+        e.close()
+
+    def test_failed_contact_stops_without_training(self):
+        backend=SimulationBackend(AppSettings()); backend.connect()
+        backend.adaptive_failure_pixel=0
+        e=AdaptiveExperiment(backend,backend.settings)
+        with tempfile.TemporaryDirectory() as folder:
+            e.configure_recording(Path(folder)/'run.csv')
+            e.start(AdaptiveParameters(region_confirmed=True,approve_each=False,approach_rate_um_s=60,xy_speed_um_s=100))
+            for _ in range(5000):
+                backend._last_tick-=.05
+                sample=backend.read_sample()
+                if e.child: e.child._last_tick-=.05
+                e.tick_samples([sample])
+                if not e.active: break
+            self.assertEqual(e.state,ExperimentState.ABORTED,e.detail)
+            self.assertEqual(len(e.params.attempts),1)
+            self.assertFalse(e.params.attempts[0]['valid'])
+            self.assertIsNone(e.model)
+        e.close()
+
+    def test_native_motion_requires_completion_even_when_ao_matches(self):
+        from echemtips.host import ExecutionSnapshot,ExecutionState
+        class HardwareFixture(SimulationBackend):
+            hardware_approach_cv_required=True
+            adaptive_contact_available=True
+            def execution_status(self):
+                return ExecutionSnapshot('move',ExecutionState.RUNNING,1,0,0,1)
+        backend=HardwareFixture(AppSettings()); backend.connect()
+        e=AdaptiveExperiment(backend,backend.settings)
+        with tempfile.TemporaryDirectory() as folder:
+            e.configure_recording(Path(folder)/'run.csv')
+            e.start(AdaptiveParameters(region_confirmed=True,approve_each=False))
+            e.tick_samples([backend.read_sample()])
+            backend._positions['Z']=e.params.start_z_um
+            e.tick_samples([backend.read_sample()])
+            self.assertEqual(e.phase,'travel_z')
+            self.assertEqual(backend._targets['X'],backend._positions['X'])
+        e.close()
 
 
 if __name__ == '__main__': unittest.main()

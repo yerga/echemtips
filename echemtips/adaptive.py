@@ -250,11 +250,13 @@ class AdaptiveExperiment:
         self.close()
         if not self.backend.hardware_approach_cv_required:
             self.backend.adaptive_scene = True
+            self.backend.set_diagnostic_circuit("normal")
         self.params = replace(params,attempts=[])
         self._started = time.monotonic()
         self._stopping = False
         self._line_attempt = {}
         self.child,self.plane,self.model = None,None,None
+        self._last_sample = None
         self._pool = ThreadPoolExecutor(max_workers=1,thread_name_prefix="adaptive-model")
         self._future = None
         self._log("start",parameters=asdict(self.params),coordinate_system="commanded AO position; decreasing Z retracts")
@@ -343,6 +345,7 @@ class AdaptiveExperiment:
         self._log("landing_reserved",**self._attempt)
         p.attempts.append(self._attempt)
         self._e,self._i = [],[]
+        self._baseline = []
         self.child = None
         if not self.backend.hardware_approach_cv_required:
             self.backend.adaptive_pixel = -1
@@ -365,9 +368,15 @@ class AdaptiveExperiment:
             return
         channel = 1 if p.objective_channel == "Current 1" else 2
         self._attempt.update(score_lsv(self._e,self._i,p,getattr(self.settings,f"current{channel}_v_per_na")))
+        if self._baseline:
+            baseline = float(np.median(self._baseline))
+            self._attempt['baseline_na'] = baseline
+            self._attempt['baseline_mad_na'] = float(np.median(np.abs(np.asarray(self._baseline)-baseline)))
         if contact is None: self._attempt.update(valid=False,reason="Missing commanded contact coordinate")
         self._log("landing_result",**self._attempt)
         self.child = None
+        if not self.backend.hardware_approach_cv_required:
+            self.backend.adaptive_pixel = -1
         if not self._attempt["valid"] or self._attempt.get("quality_warning"):
             self._finish("Quality check requires operator review: "+(self._attempt.get("quality_warning") or self._attempt["reason"]),success=False)
             return
@@ -393,6 +402,7 @@ class AdaptiveExperiment:
     def tick_samples(self,samples):
         """Tag every raw sample, then advance at most one supervisor transition."""
         p = self.params
+        if samples: self._last_sample = samples[-1]
         for sample in samples:
             if self.child is not None and self.phase == "landing":
                 if self.backend.hardware_approach_cv_required:
@@ -401,6 +411,11 @@ class AdaptiveExperiment:
                     is_lsv = context.startswith("cv")
                     if context: self._line_attempt[sample.line_number] = sample.scan_pixel
                 else: is_lsv = sample.cv_rate_index == 0 and sample.scan_pixel == self._attempt["scan_pixel"]
+                precontact = (context in {"preposition","baseline"} if self.backend.hardware_approach_cv_required
+                              else self.child.state == ExperimentState.PREPOSITION and sample.scan_pixel == self._attempt['scan_pixel'])
+                if precontact and len(self._baseline)<128:
+                    value = sample.current1_na if p.objective_channel == 'Current 1' else sample.current2_na
+                    if math.isfinite(value): self._baseline.append(value)
                 if is_lsv:
                     self._e.append(sample.voltage1_v)
                     self._i.append(sample.current1_na if p.objective_channel == "Current 1" else sample.current2_na)
@@ -439,9 +454,9 @@ class AdaptiveExperiment:
                     if not self.backend.hardware_approach_cv_required:
                         self.backend.adaptive_pixel = self._attempt["scan_pixel"]
                 self.phase = "landing"
-        elif self.phase == "landing" and samples:
+        elif self.phase == "landing" and (samples or (self.backend.hardware_approach_cv_required and self._last_sample is not None)):
             before = self.child.state
-            update = self.child.tick(samples[-1])
+            update = self.child.tick(self._last_sample)
             if not self.backend.hardware_approach_cv_required and before == ExperimentState.APPROACHING and self.child.state in {ExperimentState.SETTLING,ExperimentState.CV}:
                 self._attempt["contact_z_um"] = samples[-1].commanded_z_um
             self.state = update.state if self.child.active else ExperimentState.PREPOSITION

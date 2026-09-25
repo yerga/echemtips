@@ -143,6 +143,7 @@ class DataRecorder:
             scan_grid = self._scan_grid_metadata(parameters)
             if scan_grid is not None:
                 self._metadata["scan_grid"] = scan_grid
+            if isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
                 from .scan_orientation import orientation_svg
                 diagram = csv_path.with_suffix('.orientation.svg')
                 diagram.write_text(orientation_svg(parameters), encoding='utf-8')
@@ -263,8 +264,9 @@ class DataRecorder:
             metadata["acquisition_rate_tags"] = True
         scan_grid = self._scan_grid_metadata(parameters)
         if scan_grid is not None:
-            from .scan_orientation import orientation_svg
             metadata["scan_grid"] = self._scan_grid_metadata(parameters, status)
+        if isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
+            from .scan_orientation import orientation_svg
             diagram = csv_path.with_suffix('.orientation.svg')
             diagram.write_text(orientation_svg(parameters), encoding='utf-8')
             metadata['orientation_diagram'] = diagram.name
@@ -383,7 +385,8 @@ class DataRecorder:
         if hasattr(parameters, "attempts"):
             return {"coordinate_unit":"um", "path":"adaptive", "pixel_count":len(parameters.attempts),
                     "pixels":[{"scan_pixel":a['scan_pixel'],"x_um":a['xy'][0],"y_um":a['xy'][1],
-                               "valid":a.get('valid',False)} for a in parameters.attempts]}
+                               "valid":a.get('valid',False),"contact_detected":a.get('contact_z_um') is not None,
+                               "status":"complete" if a.get('valid') else "failed"} for a in parameters.attempts]}
         if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
             return None
         pixels = [

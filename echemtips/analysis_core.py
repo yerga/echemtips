@@ -242,11 +242,15 @@ def pixel_groups(dataset: AnalysisDataset) -> list[tuple[int, NumericRows]]:
     tags = dataset.column("scan_pixel")
     boundaries = np.r_[0, np.flatnonzero(tags[1:] != tags[:-1]) + 1, len(tags)]
     groups = {}
+    adaptive_invalid = set()
+    grid = dataset.metadata.get('scan_grid') or {}
+    if grid.get('path') == 'adaptive':
+        adaptive_invalid = {int(p['scan_pixel']) for p in grid.get('pixels',[]) if not p.get('valid',False)}
     for start, end in zip(boundaries[:-1], boundaries[1:]):
         if start == end:
             continue
         pixel = tags[start]
-        if np.isfinite(pixel) and pixel >= 0 and pixel == int(pixel):
+        if np.isfinite(pixel) and pixel >= 0 and pixel == int(pixel) and int(pixel) not in adaptive_invalid:
             groups.setdefault(int(pixel), []).append(dataset.rows.matrix[start:end])
     return [(pixel, NumericRows(dataset.columns, parts[0] if len(parts) == 1
                                else np.concatenate(parts)))
