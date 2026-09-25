@@ -317,7 +317,9 @@ def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
         if grouped:
             separated: list[CVCycle] = []
             for pixel, pixel_rows in grouped:
-                subset = AnalysisDataset(dataset.path, dataset.columns, pixel_rows, dataset.metadata)
+                from .combinatorial import pixel_parameters
+                metadata = {**dataset.metadata, "parameters": pixel_parameters(dataset.metadata, pixel)}
+                subset = AnalysisDataset(dataset.path, dataset.columns, pixel_rows, metadata)
                 for cycle in _extract_single_cv_cycles(subset):
                     cycle.pixel = pixel
                     separated.append(cycle)

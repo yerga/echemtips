@@ -97,6 +97,11 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         main_layout = QtWidgets.QVBoxLayout(main)
         main_layout.setContentsMargins(24, 18, 24, 20)
         main_layout.setSpacing(12)
+        self.condition_selector = QtWidgets.QComboBox()
+        self.condition_selector.setToolTip("Analyze one measurement condition at a time; raw source data remain unchanged.")
+        self.condition_selector.currentIndexChanged.connect(self._condition_changed)
+        main_layout.addWidget(self.condition_selector)
+        self.condition_selector.hide()
         self.title_label = label("Select a recording", "pageTitle")
         self.subtitle_label = label("Raw traces and separately extracted voltammograms", "pageDescription", word_wrap=True)
         main_layout.addWidget(self.title_label)
@@ -281,10 +286,16 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             window += 1
             self.smoothing_window.setValue(window)
         task = LoadRecording(self._load_token, path, source=source, smoothing_window=window,
-                             smoothing_method=self.smoothing_method.currentData(), polynomial_order=self.smoothing_order.value())
+                             smoothing_method=self.smoothing_method.currentData(), polynomial_order=self.smoothing_order.value(),
+                             condition=self.condition_selector.currentData() if source is not None else None)
         task.signals.finished.connect(self._loaded)
         self._load_tasks[self._load_token] = task
         self._pool.start(task)
+
+    def _condition_changed(self, *_):
+        """Rebuild all views off-thread with one comparable condition."""
+        if self.source_dataset is not None and self.condition_selector.currentIndex() >= 0:
+            self.load_recording(self.source_dataset.path, source=self.source_dataset)
 
     def _apply_smoothing(self):
         if self.source_dataset is not None and not self.loading:
@@ -301,6 +312,15 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             return
         self.dataset, self.cycles, self.groups = bundle
         self.source_dataset = task.source
+        if not task.reprocessing:
+            recipes = (task.source.metadata.get("parameters") or {}).get("recipes", [])
+            self.condition_selector.blockSignals(True)
+            self.condition_selector.clear()
+            for index, recipe in enumerate(recipes):
+                self.condition_selector.addItem(f"Condition {index+1}: {recipe["name"]}", index)
+            self.condition_selector.setCurrentIndex(self.dataset.metadata.get("analysis_condition", {}).get("id", 0))
+            self.condition_selector.setVisible(bool(recipes))
+            self.condition_selector.blockSignals(False)
         controls = (self.explorer.provider, self.explorer.selection, self.explorer.x_signal,
                     self.explorer.y_signal, self.map_panel.channel, self.cv_current,
                     self.map_panel.direction, self.map_panel.cycle,
