@@ -1,7 +1,9 @@
 # Combinatorial scans
 
-Use **Scan hopping + CV** (including LSV) or **Scan hopping + I–t** and open
-**Combinatorial scan → Plan recipes and assignments…**. This extends the normal
+Open **All experiments…** and choose **Combinatorial scan + CV / LSV** or
+**Combinatorial scan + I–t**. Both can be pinned as favorites. Regular scan pages
+remain single-program experiments, without recipe controls. In the dedicated
+page, open **Plan recipes and assignments…**; a confirmed plan is required to start. This extends the normal
 scan runner rather than introducing a separate hardware protocol. No bitfile
 change is required. Verify new recipes on a controlled electrical load before
 using a valuable sample; simulation and fake-device tests are not hardware validation.

@@ -234,28 +234,25 @@ class RecipeDialog(Q.QDialog):
 
 
 def install_planner(page, layout, default_card, preview_card):
-    """Attach an optional planner without creating a second scan lifecycle."""
+    """Attach a mandatory recipe planner to a dedicated combinatorial page."""
     original = page.parameters
     page._recipe_plan = None
     card = Card('Combinatorial scan', '')
     box = Q.QVBoxLayout(card.body)
-    enabled = Q.QCheckBox('Vary measurement conditions between landings')
-    box.addWidget(enabled)
-    summary = label('One shared program at every landing.', word_wrap=True); box.addWidget(summary)
+    summary = label('Configure recipes before starting.', word_wrap=True); box.addWidget(summary)
     edit = button('Plan recipes and assignments…', lambda: open_plan())
     box.addWidget(edit); layout.insertWidget(2, card)
 
     def parameters():
         """Attach a frozen, geometry-checked plan to the scan parameters."""
         params = original()
-        if enabled.isChecked():
-            if page._recipe_plan is None: raise ValueError('Configure the combinatorial plan first.')
-            recipes, assignment, shape = page._recipe_plan
-            if shape != (params.x_points, params.y_points):
-                raise ValueError('Grid size changed. Reopen the recipe planner to confirm assignments.')
-            params.recipes, params.recipe_assignment = deepcopy(recipes), list(assignment)
-            options = getattr(page, "_recipe_options", ("Interleaved", 1, 0))
-            params.recipe_design = dict(schema=1, assignment=options[0], rows_per_recipe=options[1], seed=options[2], indexing="physical row-major")
+        if page._recipe_plan is None: raise ValueError('Configure the combinatorial plan first.')
+        recipes, assignment, shape = page._recipe_plan
+        if shape != (params.x_points, params.y_points):
+            raise ValueError('Grid size changed. Reopen the recipe planner to confirm assignments.')
+        params.recipes, params.recipe_assignment = deepcopy(recipes), list(assignment)
+        options = getattr(page, "_recipe_options", ("Interleaved", 1, 0))
+        params.recipe_design = dict(schema=1, assignment=options[0], rows_per_recipe=options[1], seed=options[2], indexing="physical row-major")
         return params
 
     def open_plan():
@@ -272,27 +269,27 @@ def install_planner(page, layout, default_card, preview_card):
             if dialog.exec() == Q.QDialog.DialogCode.Accepted:
                 page._recipe_options = (dialog.mode.currentText(), dialog.rows.value(), dialog.seed.value())
                 page._recipe_plan = (dialog.result_recipes, dialog.result_assignment, (params.x_points, params.y_points))
-                enabled.setChecked(True); sync()
+                sync()
         except (ValueError, TypeError) as exc: page.app.show_error(str(exc))
 
     def sync():
         """Keep the shared-program controls and plan summary unambiguous."""
-        if page.app.any_experiment_active:
-            enabled.blockSignals(True); enabled.setChecked(not enabled.isChecked()); enabled.blockSignals(False)
-            return
-        active = enabled.isChecked()
-        default_card.setEnabled(not active); preview_card.setVisible(not active)
-        if active and page._recipe_plan:
+        if page._recipe_plan:
             recipes, assignment, _ = page._recipe_plan
             counts = Counter(assignment)
             summary.setText('; '.join(f'{r["name"]}: {counts[i]} landings' for i,r in enumerate(recipes)) + '\nMap values may reflect different conditions; compare like recipes in Analysis.')
-        else: summary.setText('Configure recipes before starting.' if active else 'One shared program at every landing.')
+        else: summary.setText('Configure recipes before starting.')
         try:
             duration = parameters().estimated_known_duration_s()
             page.duration_label.setText(f'Estimated known duration: {duration / 60:.1f} min + first approach / positioning')
         except (ValueError, ZeroDivisionError, AttributeError):
             pass
-    enabled.toggled.connect(sync)
+    default_card.hide()
+    preview_card.hide()
+    if hasattr(page, 'map_v'):
+        map_card = Card('Current map', '')
+        map_layout = Q.QVBoxLayout(map_card.body)
+        map_layout.addWidget(page.map_v)
+        layout.insertWidget(3, map_card)
     page.parameters = parameters
-    page.recipe_enabled = enabled
     page.recipe_edit_button = edit

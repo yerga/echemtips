@@ -148,15 +148,41 @@ class CombinatorialTests(unittest.TestCase):
         self.assertEqual(results[0][1][0].metadata['analysis_condition']['id'],1)
         self.assertIs(task.source,source)
 
+    def test_combinatorial_recording_finalization(self):
+        """Dedicated recording names select their own runner for finalization."""
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from echemtips.ui import EChemTipsApp
+        for family in ('CV', 'IT'):
+            key = 'combinatorial_' + family.lower()
+            params = object()
+            for state, status in ((ExperimentState.COMPLETE, None), (ExperimentState.ABORTED, 'aborted')):
+                host = SimpleNamespace(
+                    recorder=SimpleNamespace(active=True, name='Combinatorial Scan Hopping ' + family),
+                    experiments={key: SimpleNamespace(state=state, params=params)},
+                    settings=SimpleNamespace(auto_save=True),
+                    finish_recording=Mock(return_value=Path('recording.csv')), toast=Mock())
+                EChemTipsApp._finalize_experiments(host, True)
+                if status:
+                    host.finish_recording.assert_called_once_with(params, status=status)
+                else:
+                    host.finish_recording.assert_called_once_with(params)
+
     def test_planner_laptop_and_existing_page(self):
         from echemtips.ui import create_application, EChemTipsApp
         from echemtips.combinatorial_ui import RecipeDialog
         app=create_application([])
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{'ECHEMTIPS_SETTINGS_PATH':str(Path(folder)/'settings.json')}):
             window=EChemTipsApp(); window.resize(1280,800); window.show()
-            page=window.pages['Scan hopping + CV']; window.show_page('Scan hopping + CV')
+            regular=window.pages['Scan hopping + CV']
+            self.assertFalse(hasattr(regular, 'recipe_enabled'))
+            self.assertEqual(regular.parameters().recipes, [])
+            page=window.pages['Combinatorial scan + CV / LSV']; window.show_page('Combinatorial scan + CV / LSV')
+            self.assertIsNot(page.experiment, regular.experiment)
+            with self.assertRaisesRegex(ValueError, 'Configure'):
+                page.parameters()
             app.processEvents()
-            dialog=RecipeDialog(page.parameters(),window.settings,[],page)
+            dialog=RecipeDialog(type(regular).parameters(page),window.settings,[],page)
             dialog.add(); dialog.mode.setCurrentText('Interleaved'); dialog.show(); app.processEvents()
             self.assertEqual(dialog.table.rowCount(),2)
             self.assertGreater(dialog.preview.height(),100)
@@ -167,8 +193,15 @@ class CombinatorialTests(unittest.TestCase):
             dialog.accept_plan()
             self.assertEqual(dialog.result(),dialog.DialogCode.Accepted)
             page._recipe_plan=(dialog.result_recipes,dialog.result_assignment,(3,3))
-            page.recipe_enabled.setChecked(True)
             self.assertEqual(len(page.parameters().recipes),2)
+            it = window.pages['Combinatorial scan + I-t']
+            self.assertIsNot(it.experiment, window.pages['Scan hopping + I-t'].experiment)
+            with self.assertRaisesRegex(ValueError, 'Configure'):
+                it.parameters()
+            page.x_points.entry.setText('4')
+            with self.assertRaisesRegex(ValueError, 'Grid size changed'):
+                page.parameters()
+            window.grab().save('/private/tmp/combinatorial-separated.png')
             window.close()
 
 

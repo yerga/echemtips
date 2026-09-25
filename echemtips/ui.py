@@ -1570,10 +1570,12 @@ class ScanHoppingCVPage(ManagedExperimentPage):
     """Hopping-CV grid controls, traces, per-hop CV, and physical maps."""
     experiment_key = "scan_cv"
     recording_name = "Scan Hopping CV"
+    page_title = "Scan hopping + CV"
+    combinatorial = False
     manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Scan hopping + CV", "Approach, acquire a CV, retract, and repeat over the selected XY scan path.")
+        super().__init__(app, self.page_title, "Approach, acquire a CV, retract, and repeat over the selected XY scan path.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
         controls_host = QtWidgets.QWidget(); hl = _vbox(controls_host)
         area = Card("1 · Scan area and path", "Define grid bounds and whether rows alternate or use a unidirectional flyback.")
@@ -1616,7 +1618,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             waveform=self.waveform,
         )
         from .combinatorial_ui import install_planner
-        install_planner(self, hl, electrochemistry, preview)
+        if self.combinatorial:
+            install_planner(self, hl, electrochemistry, preview)
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
         self.visual_tabs = QtWidgets.QTabWidget()
@@ -1715,10 +1718,12 @@ class ScanHoppingITPage(ManagedExperimentPage):
     """Hopping-I–t grid controls, traces, per-hop response, and maps."""
     experiment_key = "scan_it"
     recording_name = "Scan Hopping IT"
+    page_title = "Scan hopping + I–t"
+    combinatorial = False
     manual_approach = True
 
     def __init__(self, app: "EChemTipsApp") -> None:
-        super().__init__(app, "Scan hopping + I–t", "Approach, run timed potential steps, retract, and repeat over an XY grid.")
+        super().__init__(app, self.page_title, "Approach, run timed potential steps, retract, and repeat over an XY grid.")
         root = QtWidgets.QHBoxLayout(self.body); root.setContentsMargins(0, 0, 0, 0); root.setSpacing(14)
         controls_host = QtWidgets.QWidget(); hl = _vbox(controls_host)
         area = Card("1 · Scan area and path", "Define grid bounds and whether rows alternate or use a unidirectional flyback.")
@@ -1759,7 +1764,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
         )
         from .combinatorial_ui import install_planner
-        install_planner(self, hl, electrochemistry, preview)
+        if self.combinatorial:
+            install_planner(self, hl, electrochemistry, preview)
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QVBoxLayout(traces); traces.setMinimumHeight(540); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
@@ -2059,6 +2065,22 @@ class SettingsPage(BasePage):
         except ValueError as exc: self.app.show_error(str(exc))
 
 
+class CombinatorialCVPage(ScanHoppingCVPage):
+    """Recipe-planned CV/LSV scans sharing the standard scan lifecycle."""
+    experiment_key = "combinatorial_cv"
+    recording_name = "Combinatorial Scan Hopping CV"
+    page_title = "Combinatorial scan + CV / LSV"
+    combinatorial = True
+
+
+class CombinatorialITPage(ScanHoppingITPage):
+    """Recipe-planned potential-step scans sharing the standard lifecycle."""
+    experiment_key = "combinatorial_it"
+    recording_name = "Combinatorial Scan Hopping IT"
+    page_title = "Combinatorial scan + I–t"
+    combinatorial = True
+
+
 class EChemTipsApp(QtWidgets.QMainWindow):
     """Top-level owner of backend, acquisition, experiments, recorder, and pages."""
     PAGE_NAMES = tuple(entry.name for entry in EXPERIMENTS)
@@ -2101,7 +2123,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     def _make_experiments(self) -> None:
         self.experiment = ApproachCVExperiment(self.backend, self.settings); self.scan_experiment = ScanHoppingCVExperiment(self.backend, self.settings); self.cv_experiment = CVExperiment(self.backend, self.settings)
         self.approach_experiment = ApproachExperiment(self.backend, self.settings); self.approach_it_experiment = ApproachITExperiment(self.backend, self.settings); self.scan_it_experiment = ScanHoppingITExperiment(self.backend, self.settings)
-        self.experiments = {"adaptive": AdaptiveExperiment(self.backend, self.settings), "approach_cv_series": ApproachCVExperiment(self.backend, self.settings), "approach_cv": self.experiment, "scan_cv": self.scan_experiment, "cv": self.cv_experiment, "approach": self.approach_experiment, "approach_it": self.approach_it_experiment, "scan_it": self.scan_it_experiment}
+        self.experiments = {"combinatorial_cv": ScanHoppingCVExperiment(self.backend, self.settings), "combinatorial_it": ScanHoppingITExperiment(self.backend, self.settings), "adaptive": AdaptiveExperiment(self.backend, self.settings), "approach_cv_series": ApproachCVExperiment(self.backend, self.settings), "approach_cv": self.experiment, "scan_cv": self.scan_experiment, "cv": self.cv_experiment, "approach": self.approach_experiment, "approach_it": self.approach_it_experiment, "scan_it": self.scan_it_experiment}
 
     def _build_shell(self) -> None:
         root = QtWidgets.QWidget(); root.setObjectName("window"); self.setCentralWidget(root); layout = QtWidgets.QHBoxLayout(root); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
@@ -2282,7 +2304,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     @property
     def active_parameters(self) -> object | None:
         """Return parameters associated with the recorder's active method."""
-        key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+        key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
         return self.experiments[key].params if key is not None else None
 
     def toggle_connection(self) -> None:
@@ -2344,7 +2366,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             watch.start_recording_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active)
             watch.stop_recording_button.setEnabled(watch_owned)
             watch.live_button.setEnabled(connected and not self.any_experiment_active)
-        for page_name, key in {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it"}.items():
+        for page_name, key in {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it", "Combinatorial scan + CV / LSV": "combinatorial_cv", "Combinatorial scan + I-t": "combinatorial_it"}.items():
             page = self.pages[page_name]; page.start_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); page.stop_button.setEnabled(self.experiments[key].active)
         diagnostic_busy = any(getattr(self.pages.get(name), "is_busy", False) for name in ("Preflight", "Characterize pipette"))
         for name in ("Preflight", "Characterize pipette"):
@@ -2530,7 +2552,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         except (BackendError, OSError, ValueError, RuntimeError) as exc: self.show_error(str(exc))
 
     def _consume_acquired(self, samples: list[Sample], *, finalize: bool = True) -> None:
-        for name in ("Adaptive hopping + LSV", "Scan hopping + CV", "Scan hopping + I-t"):
+        for name in ("Adaptive hopping + LSV", "Scan hopping + CV", "Scan hopping + I-t", "Combinatorial scan + CV / LSV", "Combinatorial scan + I-t"):
             page = self.pages.get(name)
             if page is not None: page.on_samples(samples)
         if samples:
@@ -2539,7 +2561,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if readout is not None:
                 readout.set_sample(self._sample)
             for name, page in self.pages.items():
-                if name in {"Adaptive hopping + LSV", "Scan hopping + CV", "Scan hopping + I-t"}: continue
+                if name in {"Adaptive hopping + LSV", "Scan hopping + CV", "Scan hopping + I-t", "Combinatorial scan + CV / LSV", "Combinatorial scan + I-t"}: continue
                 if name in {"Watch current", "Watch position"} and not page.live_enabled: continue
                 page.on_samples(samples)
         else:
@@ -2552,9 +2574,10 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 self.pages["Approach + CV scan-rate series"].poll_status(self._sample)
         # Final drains can arrive after the experiment becomes inactive. Keep
         # their marker tags too, so no tail samples leak into analysis plots.
-        if self.recorder.active and self.recorder.name in {"Scan Hopping CV", "Scan Hopping IT"}:
-            scan_cv = self.recorder.name == "Scan Hopping CV"
-            experiment = EChemTipsApp._experiments_for(self)["scan_cv" if scan_cv else "scan_it"]
+        if self.recorder.active and self.recorder.name in {"Scan Hopping CV", "Scan Hopping IT", "Combinatorial Scan Hopping CV", "Combinatorial Scan Hopping IT"}:
+            scan_cv = self.recorder.name.endswith("Scan Hopping CV")
+            prefix = "combinatorial_" if self.recorder.name.startswith("Combinatorial") else "scan_"
+            experiment = EChemTipsApp._experiments_for(self)[prefix + ("cv" if scan_cv else "it")]
             for sample in samples:
                 if sample.scan_pixel != -1:
                     continue
@@ -2579,7 +2602,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not self.recorder.active:
             if callable(sync): sync()
             return
-        key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+        key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
         if key is None:
             if callable(sync): sync()
             return
@@ -2604,7 +2627,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 if worker is None: samples, acquisition_error = self.backend.read_samples(), None
                 else: drained = worker.drain(); samples, acquisition_error = drained.samples, drained.error
                 EChemTipsApp._consume_acquired(self, samples, finalize=False)
-                key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it"}.get(self.recorder.name)
+                key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
                 terminal = bool(self.recorder.active and key is not None and EChemTipsApp._experiments_for(self)[key].state in (ExperimentState.COMPLETE, ExperimentState.ABORTED))
                 if terminal and worker is not None:
                     final = worker.pause_and_snapshot(); EChemTipsApp._consume_acquired(self, final.samples, finalize=False); samples += final.samples; acquisition_error = acquisition_error or final.error; worker.resume()

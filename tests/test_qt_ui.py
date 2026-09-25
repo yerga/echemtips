@@ -396,7 +396,7 @@ class QtLayoutTests(unittest.TestCase):
                  "Mean pulse current help", "Acquisition help",
                  "Command voltage ratio help", "Display help"},
             )
-            self.assertEqual(len(window.findChildren(InfoButton)), 6)
+            self.assertEqual(len(window.findChildren(InfoButton)), 8)
             for key in ("Approach", "Approach + CV", "Approach + I-t", "CV", "Watch current", "Watch position"):
                 self.assertEqual(window.pages[key].findChildren(InfoButton), [])
             notes = [w.text() for w in window.findChildren(QtWidgets.QLabel)]
