@@ -7,6 +7,11 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Experimental adaptive hopping + LSV: conservative tilt survey, separately
+  validated travel, off-thread spatial GP, Hotspots/Mapping/Balanced selection,
+  explicit approvals, attempted-location exclusion, quality checks, live maps,
+  budgets and durable decision journals/reports. No FPGA bitfile change.
+
 - Explicit CV/LSV waveform selection for standalone, approach, hopping and
   scan-rate-series voltammetry; one-way previews, between-rate reset settling,
   and single-sweep analysis, maps and movies using the existing FPGA protocol.

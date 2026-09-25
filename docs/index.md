@@ -27,6 +27,9 @@ not distributed or relicensed by this project.
 5. Read the [Recording data format](DATA_FORMAT.md) before building an analysis
    workflow.
 
+For experimental active learning, see [Adaptive hopping + LSV](ADAPTIVE_LSV.md),
+including simulation, clearance assumptions and staged hardware testing.
+
 ## Commission or maintain real hardware
 
 1. Read [Real hardware setup](REAL_HARDWARE_SETUP.md) completely before

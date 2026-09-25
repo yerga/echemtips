@@ -24,6 +24,20 @@ evolving persisted settings or metadata.
         - ScanHoppingCVParameters
         - ScanHoppingITParameters
 
+## Adaptive spatial acquisition
+
+The planner returns XY proposals only. The supervisor validates travel separately
+and uses the existing contact-gated approach/LSV implementation.
+
+::: echemtips.adaptive
+    options:
+      members:
+        - AdaptiveParameters
+        - TiltEnvelope
+        - AdaptiveExperiment
+        - propose
+        - score_lsv
+
 ## Instrument backends
 
 Pages and experiment state machines depend on `InstrumentBackend`. A new

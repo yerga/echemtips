@@ -59,6 +59,11 @@ Select **Simulation**, connect, and choose an experiment. The simulated surface 
 
 For control meanings, experiment sequences, plot interpretation, contact behavior, scan paths, and safe stopping, see the [Operator guide](docs/OPERATOR_GUIDE.md).
 
+The experimental [Adaptive hopping + LSV](docs/ADAPTIVE_LSV.md) workflow adds a
+coarse tilt survey and Bayesian spatial selection, with explicit approvals,
+clearance checks and a decision report. Start in simulation and retain approval
+mode for initial hardware tests.
+
 Use **Settings → Save as defaults and apply** to persist the selected backend, piezo ranges, bitfile, data folder, Current 1/2 sensitivities, command-voltage ratio, and acquisition options. Defaults are stored in the operating system's per-user application-settings folder and load regardless of the directory used to start eChemTips.
 
 See the [Settings reference](docs/SETTINGS_REFERENCE.md) for defaults, units, validation limits, persistence locations, and the physical effect of each option.
