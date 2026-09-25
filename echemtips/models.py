@@ -624,6 +624,15 @@ class BoundedScanRetraction:
 @dataclass(slots=True)
 class ScanHoppingCVParameters(BoundedScanRetraction):
     """Physical grid, hopping motion, contact, and per-pixel CV configuration."""
+    recipes: list[dict[str, Any]] = field(default_factory=list)
+    recipe_assignment: list[int] = field(default_factory=list)
+    recipe_design: dict[str, Any] = field(default_factory=dict)
+
+    def for_point(self, point: int):
+        """Resolve the program without mutating shared scan settings."""
+        from .combinatorial import resolve
+        return resolve(self, point)
+
     retraction_events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False, compare=False)
     x_start_um: float = 35.0
     x_end_um: float = 65.0
@@ -699,6 +708,9 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
 
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
+        if self.recipes:
+            from .combinatorial import estimated_duration
+            return estimated_duration(self)
         grid = self.execution_grid()
         lateral = sum(
             math.hypot(current[2] - previous[2], current[3] - previous[3])
@@ -742,6 +754,9 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate geometry, motion, contact, CV, retraction, and tag limits."""
+        if self.recipes or self.recipe_assignment:
+            from .combinatorial import validate_recipes
+            return validate_recipes(self, settings)
         errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
         for name, low, high, limit in (
             ("X", self.x_start_um, self.x_end_um, settings.x_range_um),
@@ -812,6 +827,15 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
 @dataclass(slots=True)
 class ScanHoppingITParameters(BoundedScanRetraction):
     """Physical grid, hopping motion, contact, and per-pixel I–t configuration."""
+    recipes: list[dict[str, Any]] = field(default_factory=list)
+    recipe_assignment: list[int] = field(default_factory=list)
+    recipe_design: dict[str, Any] = field(default_factory=dict)
+
+    def for_point(self, point: int):
+        """Resolve the program without mutating shared scan settings."""
+        from .combinatorial import resolve
+        return resolve(self, point)
+
     retraction_events: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False, compare=False)
     x_start_um: float = 35.0
     x_end_um: float = 65.0
@@ -882,6 +906,9 @@ class ScanHoppingITParameters(BoundedScanRetraction):
 
     def estimated_known_duration_s(self) -> float:
         """Estimate all deterministic time except initial positioning/approach."""
+        if self.recipes:
+            from .combinatorial import estimated_duration
+            return estimated_duration(self)
         grid = self.execution_grid()
         lateral = sum(
             math.hypot(current[2] - previous[2], current[3] - previous[3])
@@ -924,6 +951,9 @@ class ScanHoppingITParameters(BoundedScanRetraction):
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate geometry, motion, contact, I–t, retraction, and tag limits."""
+        if self.recipes or self.recipe_assignment:
+            from .combinatorial import validate_recipes
+            return validate_recipes(self, settings)
         approach = ApproachITParameters(
             start_z_um=self.start_z_um, end_z_um=self.end_z_um,
             approach_rate_um_s=self.approach_rate_um_s, retract_rate_um_s=self.retract_rate_um_s,

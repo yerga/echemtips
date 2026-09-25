@@ -1197,9 +1197,9 @@ class WECSPMDriver:
         # tags to assign samples to pixels after the signed transport range.
         baseline = int(self._read_register("LineNumber"))
         baseline_frames = int(params.feedback_mode == "baseline_relative")
-        total = 1 + params.execution_point_count * (
-            4 + baseline_frames + 3 * params.cycles + hold_frame_count(params.settling_time_s)
-        )
+        total = 1 + sum(4 + baseline_frames + 3 * params.for_point(i).cycles
+                        + hold_frame_count(params.settling_time_s)
+                        for i in range(params.execution_point_count))
         if baseline < 0 or baseline + total > 32767:
             raise ValueError("Scan line tags would exceed the verified I16 range. Reinitialize the target before scanning.")
         s = self.settings
@@ -1322,6 +1322,7 @@ class WECSPMDriver:
         params = self._scan_params
         if params is None:
             raise RuntimeError("Scan CV phase has no parameters")
+        params = params.for_point(point)
         params.update_marker(point, "contact")
         current = self._current_targets()
         contact_z = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
@@ -1518,9 +1519,10 @@ class WECSPMDriver:
             )
             if isinstance(parameters, ScanHoppingITParameters):
                 baseline_frames = int(parameters.feedback_mode == "baseline_relative")
-                total_tags = 1 + parameters.execution_point_count * (
-                    3 + baseline_frames + hold_frames + hold_frame_count(parameters.settling_time_s)
-                )
+                total_tags = 1 + sum(3 + baseline_frames + hold_frame_count(parameters.settling_time_s)
+                    + sum(max(1, math.ceil(duration * 1_000_000 / 32767))
+                          for _, duration, _ in parameters.for_point(i).it_steps())
+                    for i in range(parameters.execution_point_count))
             else:
                 total_tags = (
                     2 + int(parameters.feedback_mode == "baseline_relative")
@@ -1658,6 +1660,7 @@ class WECSPMDriver:
 
     def _submit_method_it(self, params: ApproachITParameters | ScanHoppingITParameters, point: int) -> None:
         if isinstance(params, ScanHoppingITParameters):
+            params = params.for_point(point)
             params.update_marker(point, "contact")
         settle_plan = timed_hold_plan(params.settling_time_s)
         method_plan, labels = potential_step_plan(params.it_steps())

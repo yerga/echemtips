@@ -434,7 +434,7 @@ class ScanHoppingCVExperiment:
         self.detail = f"Point {self.point_index + 1}/{p.execution_point_count} · positioning ({row + 1}, {column + 1})"
 
     def _begin_simulated_cv(self) -> None:
-        p = self.params
+        p = self.params.for_point(self.point_index)
         self.backend.stop_motion()
         self.backend.set_voltage(1, p.cv_start_v)
         self._cv_voltage = p.cv_start_v
@@ -459,6 +459,11 @@ class ScanHoppingCVExperiment:
         )
 
     def _track_current(self, sample: Sample, point: int) -> None:
+        program = self.params.for_point(point)
+        bounds = [program.cv_start_v, program.cv_vertex1_v]
+        if program.waveform == "CV": bounds.append(program.cv_vertex2_v)
+        if not min(bounds) <= self.params.map_potential_v <= max(bounds):
+            return  # This recipe does not measure the requested map potential.
         error = abs(sample.voltage1_v - self.params.map_potential_v)
         if self._current_candidate is None or error < self._current_candidate[0]:
             self._current_candidate = error, sample.current1_na
@@ -474,7 +479,7 @@ class ScanHoppingCVExperiment:
             self.current_at_potential[key] = self._current_candidate[1]
 
     def _tick_simulated(self, sample: Sample) -> None:
-        p = self.params
+        p = self.params.for_point(self.point_index)
         self._tag(sample, self.point_index)
         row, column, x, y = self._grid[self.point_index]
         tolerance = 0.08
@@ -1093,6 +1098,7 @@ class ScanHoppingITExperiment:
         self.state, self.detail = ExperimentState.PREPOSITION, f"Point {self.point_index + 1}/{p.execution_point_count} · positioning"
 
     def _start_it(self) -> None:
+        self._steps = self.params.for_point(self.point_index).it_steps()
         potential, duration, label = self._steps[0]
         self.backend.stop_motion(); self.backend.set_voltage(1, potential)
         self._step_index, self.it_label = 0, label

@@ -391,6 +391,10 @@ class DataRecorder:
             return None
         pixels = [
             {
+                **({"condition_id": parameters.recipe_assignment[row * parameters.x_points + column],
+                    "condition_name": parameters.recipes[parameters.recipe_assignment[row * parameters.x_points + column]]["name"],
+                    "measurement_program": parameters.recipes[parameters.recipe_assignment[row * parameters.x_points + column]]}
+                   if parameters.recipes else {}),
                 "scan_pixel": pixel,
                 "scan_row": row,
                 "scan_column": column,
@@ -420,7 +424,7 @@ class DataRecorder:
             "excluded_from_analysis": True,
             "x_um": x,
             "y_um": y,
-            "program": "same as array hops",
+            "program": "last array recipe" if parameters.recipes else "same as array hops",
             "contact_detected": parameters.marker_result.get("contact_detected", False),
             "status": marker_status if parameters.marker_enabled else "disabled",
         }
