@@ -106,9 +106,17 @@ metadata for quantitative spatial analysis of adaptive data.
 
 1. Select **Simulation**, connect and open this experiment. Enable automatic
    recording, leave approval mode enabled and confirm the safe-region checkbox.
-2. Use defaults with a budget of 7–10 landings. The adaptive simulator provides
-   a planar tilt, spatial hotspot and low-amplitude current noise. Approve each
-   survey point. Inspect the LSV and contact-height result.
+2. Use defaults with a budget of 7–10 landings and a **5 pA** contact threshold.
+   The adaptive simulator places a tilted surface inside the selected initial-Z
+   to approach-limit interval (58–72% of that span), independently of the full
+   calibrated piezo range. Thus the default 10–90 µm approach works with either
+   a 100 or 200 µm piezo range. It provides a spatial hotspot, approximately
+   0.15 pA current noise, and a 40 pA charging transient with a 0.15 s decay time
+   on Current 1 (Current 2 follows at approximately 80%). A sustained contact
+   response remains until retraction. These are synthetic demonstration signals,
+   not a quantitative meniscus model. Thresholds are never adjusted automatically;
+   an excessively high threshold can still produce a genuine no-contact result.
+   Approve each survey point. Inspect the LSV and contact-height result.
 3. Check and approve the fitted plane. Inspect the next proposal and uncertainty
    map. Complete the run and verify initial Z, CSV/JSON, journal and report.
 4. Repeat with approval disabled, with Mapping and Hotspots, and with a small

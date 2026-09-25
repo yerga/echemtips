@@ -249,8 +249,7 @@ class AdaptiveExperiment:
             raise ValueError("This driver cannot expose verified commanded contact Z for adaptive travel.")
         self.close()
         if not self.backend.hardware_approach_cv_required:
-            self.backend.adaptive_scene = True
-            self.backend.set_diagnostic_circuit("normal")
+            self.backend.configure_adaptive_scene(params)
         self.params = replace(params,attempts=[])
         self._started = time.monotonic()
         self._stopping = False

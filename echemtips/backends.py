@@ -283,10 +283,27 @@ class SimulationBackend(InstrumentBackend):
     def surface_z_at(self, x_um: float, y_um: float) -> float:
         """Return deterministic simulated surface height at physical XY."""
         if getattr(self, "adaptive_scene", False):
-            return self.settings.z_range_um * .60 + .06*x_um + .03*y_um
+            start, end, x0, x1, y0, y1 = self._adaptive_bounds
+            return start + (end-start)*(.65 + .08*((x_um-x0)/(x1-x0)-.5)
+                                        + .06*((y_um-y0)/(y1-y0)-.5))
         sx = (x_um / self.settings.x_range_um - 0.5) * math.tau
         sy = (y_um / self.settings.y_range_um - 0.5) * math.tau
         return self.settings.z_range_um * 0.68 + 2.4 * math.sin(sx) * math.cos(sy) + 0.7 * math.sin(2 * sy)
+
+    @_synchronized_io
+    def configure_adaptive_scene(self, params) -> None:
+        """Place a synthetic tilted surface inside the requested approach span.
+
+        This affects simulation only, never changes thresholds, and keeps the
+        spatial hotspot fixed for the duration of a run. Failed-landings injected
+        by tests still produce only the open-circuit baseline.
+        """
+        self._adaptive_bounds = (params.start_z_um,params.end_z_um,
+                                 params.x_min_um,params.x_max_um,params.y_min_um,params.y_max_um)
+        self._adaptive_wet_pixel = None
+        self._adaptive_contact_time = 0.0
+        self.adaptive_scene = True
+        self.set_diagnostic_circuit("normal")
 
     @_synchronized_io
     def commanded_position(self) -> dict[str, float]:
@@ -357,11 +374,23 @@ class SimulationBackend(InstrumentBackend):
         current1 = 0.22 + drift + contact * (2.7 + faradaic) + capacitive + noise
         current2 = -0.15 + contact * 0.7 + self._rng.gauss(0.0, 0.025)
         if getattr(self, "adaptive_scene", False):
-            x,y = self._positions['X']/self.settings.x_range_um,self._positions['Y']/self.settings.y_range_um
+            start,end,x0,x1,y0,y1 = self._adaptive_bounds
+            x,y = (self._positions['X']-x0)/(x1-x0),(self._positions['Y']-y0)/(y1-y0)
             activity = .025 + .15*math.exp(-((x-.7)**2+(y-.65)**2)/.025)
-            failed = getattr(self, "adaptive_failure_pixel", -99) == getattr(self, "adaptive_pixel", -1)
-            wet = 0.0 if failed else contact
-            current1 = .00015 + wet*(.015 + activity*(v+.25)) + self._rng.gauss(0,.00015)
+            pixel = getattr(self, "adaptive_pixel", -1)
+            failed = getattr(self, "adaptive_failure_pixel", -99) == pixel
+            # Latch meniscus contact until retract: stopping Z on the transient
+            # must not immediately turn the cell back into an open circuit.
+            if pixel < 0 or failed or z < surface_z-.2 or self._adaptive_wet_pixel != pixel:
+                self._adaptive_wet_pixel = None
+            if pixel >= 0 and not failed and z >= surface_z and self._adaptive_wet_pixel is None:
+                self._adaptive_wet_pixel = pixel
+                self._adaptive_contact_time = elapsed
+            wet = self._adaptive_wet_pixel is not None
+            transient = .04*math.exp(-max(0,elapsed-self._adaptive_contact_time)/.15) if wet else 0.0
+            # 40 pA charging transient + 15 pA sustained contact baseline;
+            # 0.15 pA noise cannot normally trigger the default 5 pA criterion.
+            current1 = .00015 + wet*(.015 + activity*(v+.25)) + transient + self._rng.gauss(0,.00015)
             current2 = current1*.8 + self._rng.gauss(0,.0001)
         dt = elapsed - self._last_sample_elapsed
         scan_rate = (v - self._last_sample_voltage) / dt if dt > 0 else 0.0

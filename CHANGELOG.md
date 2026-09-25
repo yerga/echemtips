@@ -5,6 +5,13 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Fixed
+
+- Adaptive simulation now places its synthetic surface within the configured
+  approach span, including with 200 µm piezo calibration. Added a repeatable
+  contact transient and latched wetting response for both current channels;
+  hardware behavior and operator thresholds are unchanged.
+
 ### Added
 
 - Experimental adaptive hopping + LSV: conservative tilt survey, separately

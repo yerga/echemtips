@@ -16,6 +16,58 @@ from echemtips.data import DataRecorder
 
 
 class AdaptiveTests(unittest.TestCase):
+    def test_default_approach_span_reaches_surface_with_200_um_piezo(self):
+        # Realistic clock progression also exercises settling and the charging
+        # transient, unlike tests that fast-forward only motion/LSV internals.
+        for convention,channel in [('IUPAC','Current 1'),('Instrument-native','Current 2')]:
+            with self.subTest(convention=convention,channel=channel), tempfile.TemporaryDirectory() as folder:
+                clock=[1000.0]
+                with patch('time.monotonic',side_effect=lambda:clock[0]):
+                    settings=AppSettings(z_range_um=200,polarity_convention=convention)
+                    backend=SimulationBackend(settings); backend.connect()
+                    e=AdaptiveExperiment(backend,settings)
+                    p=AdaptiveParameters(region_confirmed=True,approve_each=False,max_landings=7,
+                                         settling_time_s=.5,feedback_channel=channel)
+                    e.configure_recording(Path(folder)/'run.csv'); e.start(p)
+                    for xy in p.survey_points():
+                        self.assertTrue(p.start_z_um<backend.surface_z_at(*xy)<p.end_z_um)
+                    for _ in range(50000):
+                        clock[0]+=.01
+                        sample=backend.read_sample()
+                        e.tick_samples([sample])
+                        if e.phase=='tilt_approval': e.approve()
+                        if e.phase=='model': time.sleep(.001)
+                        if not e.active: break
+                    self.assertEqual(e.state,ExperimentState.COMPLETE,e.detail)
+                    self.assertEqual(len(e.params.attempts),7,e.detail)
+                    self.assertTrue(all(a['valid'] for a in e.params.attempts))
+                    self.assertIsNotNone(e.model)
+                    self.assertAlmostEqual(backend.commanded_position()['Z'],p.start_z_um,delta=.08)
+                    e.close()
+
+    def test_contact_transient_latches_then_retracts_without_changing_threshold(self):
+        backend=SimulationBackend(AppSettings(z_range_um=200)); backend.connect()
+        p=AdaptiveParameters(region_confirmed=True)
+        backend.configure_adaptive_scene(p)
+        backend.adaptive_pixel=0
+        backend._positions.update(X=20,Y=20,Z=10)
+        backend._targets=dict(backend._positions)
+        backend.set_voltage(1,p.approach_voltage_v)
+        before=backend.read_sample()
+        self.assertLess(abs(before.current1_na),p.feedback_threshold_na)
+        surface=backend.surface_z_at(20,20)
+        backend._positions['Z']=backend._targets['Z']=surface
+        contact=backend.read_sample()
+        self.assertGreater(abs(contact.current1_na),.04)
+        self.assertGreater(abs(contact.current2_na),p.feedback_threshold_na)
+        backend._adaptive_contact_time-=2
+        settled=backend.read_sample()
+        self.assertGreater(abs(settled.current1_na),p.feedback_threshold_na)
+        self.assertLess(abs(settled.current1_na),abs(contact.current1_na))
+        backend._positions['Z']=backend._targets['Z']=surface-1
+        self.assertLess(abs(backend.read_sample().current1_na),p.feedback_threshold_na)
+        self.assertEqual(p.feedback_threshold_na,.005)
+
     def test_validation(self):
         p = AdaptiveParameters(region_confirmed=True)
         self.assertEqual(p.validate(AppSettings()),[])
