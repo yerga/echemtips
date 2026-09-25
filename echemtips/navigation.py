@@ -27,8 +27,8 @@ EXPERIMENTS = (
     ExperimentEntry("Approach + CV", "Single-point", "Detect contact, then record CV or one-way LSV.", "ApproachCVPage", "approach_cv"),
     ExperimentEntry("Approach + CV scan-rate series", "Single-point", "One contact, then CV or LSV at an ordered list of scan rates.", "ApproachCVSeriesPage", "approach_cv_series"),
     ExperimentEntry("Approach + I-t", "Single-point", "Detect contact, then measure potential steps and current over time.", "ApproachITPage", "approach_it"),
-    ExperimentEntry("Scan hopping + CV", "Scanning", "Record CV or one-way LSV at each surface hop.", "ScanHoppingCVPage", "scan_cv"),
-    ExperimentEntry("Scan hopping + I-t", "Scanning", "Record potential steps and current over time at each hop.", "ScanHoppingITPage", "scan_it"),
+    ExperimentEntry("Scan hopping + CV", "Scanning", "Record CV or one-way LSV at each surface hop; optional combinatorial recipes, parameter matrices and randomized conditions.", "ScanHoppingCVPage", "scan_cv"),
+    ExperimentEntry("Scan hopping + I-t", "Scanning", "Record potential steps and current over time at each hop; optional combinatorial recipes and randomized conditions.", "ScanHoppingITPage", "scan_it"),
     ExperimentEntry("Move piezo", "Setup and diagnostics", "Manually position X, Y and Z piezos.", "MovePiezoPage"),
     ExperimentEntry("Settings", "Setup and diagnostics", "Instrument, recording and display preferences.", "SettingsPage"),
 )

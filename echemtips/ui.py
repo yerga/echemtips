@@ -1107,6 +1107,11 @@ class ManagedExperimentPage(BasePage):
             if notice:
                 self.status.detail_label.setText((update.detail + notice).replace("I-t", "I–t"))
                 self.status.detail_label.setVisible(True)
+        if update is not None and getattr(params, "recipes", None):
+            point = min(max(0, self.experiment.point_index), params.point_count - 1)
+            row, col, *_ = params.grid()[point]
+            recipe = params.recipes[params.recipe_assignment[row * params.x_points + col]]
+            self.status.detail_label.setText(self.status.detail_label.text() + " · " + recipe["name"])
         if self.accept_approach_button is not None:
             state = update.state if update is not None else self.experiment.state
             self.accept_approach_button.setEnabled(state == ExperimentState.APPROACHING)
@@ -1601,7 +1606,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled, self.waveform]
+            lambda: self.parameters(), [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled, self.waveform]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
@@ -1610,6 +1615,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
             ("CV start", "Vertex 1", "Vertex 2", "Return"),
             waveform=self.waveform,
         )
+        from .combinatorial_ui import install_planner
+        install_planner(self, hl, electrochemistry, preview)
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan"))
         self.visual_tabs = QtWidgets.QTabWidget()
@@ -1744,13 +1751,15 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
-            self.parameters, [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled]
+            lambda: self.parameters(), [*controls_host.findChildren(QtWidgets.QLineEdit), self.scan_pattern, self.marker_enabled]
         )
         hl.addWidget(summary)
         preview, self.program_preview = _program_card(
             "I–t profile at each hop", "Potential E1 (V)",
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
         )
+        from .combinatorial_ui import install_planner
+        install_planner(self, hl, electrochemistry, preview)
         hl.addWidget(preview); hl.addStretch(1); root.addWidget(_left_scroll(controls_host, 410))
         right = QtWidgets.QWidget(); rl = _vbox(right); rl.addWidget(self.build_status("Scan status", "Start scan")); self.visual_tabs = tabs = QtWidgets.QTabWidget()
         traces = QtWidgets.QWidget(); tl = QtWidgets.QVBoxLayout(traces); traces.setMinimumHeight(540); self.z_plot = Plot("Z vs time", "Z (µm)", (COLORS["accent"],), app.settings.display_max_points, rolling_window_s=60); self.current_plot = Plot("Current vs time", "Feedback current (nA)", (COLORS["blue"],), app.settings.display_max_points, rolling_window_s=60)
