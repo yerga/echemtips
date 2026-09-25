@@ -34,6 +34,13 @@ class DocumentationTests(unittest.TestCase):
                 missing.append(f"{path.relative_to(ROOT)}:{node.lineno}: {node.name}")
         self.assertEqual([], missing, "Missing public docstrings:\n" + "\n".join(missing))
 
+    def test_minimum_python_syntax(self) -> None:
+        """Catch newer syntax locally even when tests run on a newer Python."""
+        for path in sorted((ROOT / "echemtips").rglob("*.py")):
+            with self.subTest(module=str(path.relative_to(ROOT))):
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path),
+                          feature_version=(3, 11))
+
     def test_internal_markdown_links_resolve(self) -> None:
         """Reject broken relative file links in public Markdown sources."""
         documents = [ROOT / "README.md", ROOT / "CONTRIBUTING.md", ROOT / "CHANGELOG.md"]

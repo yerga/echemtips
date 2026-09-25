@@ -317,7 +317,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.condition_selector.blockSignals(True)
             self.condition_selector.clear()
             for index, recipe in enumerate(recipes):
-                self.condition_selector.addItem(f"Condition {index+1}: {recipe["name"]}", index)
+                self.condition_selector.addItem(f"Condition {index+1}: {recipe['name']}", index)
             self.condition_selector.setCurrentIndex(self.dataset.metadata.get("analysis_condition", {}).get("id", 0))
             self.condition_selector.setVisible(bool(recipes))
             self.condition_selector.blockSignals(False)
