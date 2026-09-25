@@ -46,15 +46,35 @@ class WorkspaceTests(unittest.TestCase):
         page = self.w.pages['Scan hopping + CV']
         page.experiment.state = ExperimentState.APPROACHING
         self.w.operator_workspace.refresh()
-        self.assertFalse(page.body.layout().itemAt(0).widget().isEnabled())
+        self.assertFalse(page.setup_panel.isEnabled())
         self.w.apply_settings(replace(self.w.settings, trace_width_px=1.5))
         with self.assertRaisesRegex(ValueError, 'Stop'):
             self.w.apply_settings(replace(self.w.settings, sample_time_us=20))
         page.experiment.state = ExperimentState.COMPLETE
         self.w.operator_workspace.refresh()
-        self.assertTrue(page.body.layout().itemAt(0).widget().isEnabled())
+        self.assertTrue(page.setup_panel.isEnabled())
 
     def test_event_journal(self):
         """Operational events are retained for troubleshooting."""
         self.w.toast('UX test saved', 'success')
         self.assertIn('UX test saved', self.w.store.path.with_name('operator-events.jsonl').read_text())
+
+    def test_presets_and_numeric_validation(self):
+        """Presets round-trip known controls and numeric errors identify fields."""
+        from echemtips.workspace_layout import form_values, restore_form
+        page = self.w.pages['Scan hopping + CV']
+        before = form_values(page)
+        page.start_z.entry.setText('not a number')
+        with self.assertRaisesRegex(ValueError, 'Initial approach Z'):
+            page.parameters()
+        restore_form(page, before)
+        self.assertEqual(page.parameters().start_z_um, float(before['start_z']))
+
+    def test_freeze_is_display_only(self):
+        """A frozen plot still receives data and can return to its latest buffer."""
+        plot = self.w.pages['Watch current'].current1_plot
+        plot.view_controls.set_frozen(True)
+        plot.append(0, 1); plot.redraw()
+        self.assertEqual(list(plot.x_values), [0])
+        plot.view_controls.set_frozen(False)
+        self.assertEqual(len(plot.curves[0].getData()[0]), 1)

@@ -293,3 +293,4 @@ def install_planner(page, layout, default_card, preview_card):
         layout.insertWidget(3, map_card)
     page.parameters = parameters
     page.recipe_edit_button = edit
+    page.refresh_recipe_summary = sync

@@ -67,7 +67,7 @@ class OperatorWorkspace(QtCore.QObject):
         for page in a.pages.values():
             if hasattr(page, 'experiment_key') and page.experiment_key:
                 layout = page.body.layout()
-                setup = layout.itemAt(0).widget() if layout and layout.count() else None
+                setup = getattr(page, "setup_panel", None) or (layout.itemAt(0).widget() if layout and layout.count() else None)
                 if setup: setup.setEnabled(not page.experiment.active)
                 if hasattr(page, 'start_button'):
                     problem = reason

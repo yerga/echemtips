@@ -986,7 +986,7 @@ class ManagedExperimentPage(BasePage):
         self._plots_dialog = None
 
     def _toggle_setup(self) -> None:
-        controls = self.body.layout().itemAt(0).widget()
+        controls = getattr(self, "setup_panel", self.body.layout().itemAt(0).widget())
         controls.setVisible(not self.setup_toggle.isChecked())
         self.setup_toggle.setText("Show setup" if self.setup_toggle.isChecked() else "Hide setup")
 
@@ -1998,7 +1998,17 @@ class SettingsPage(BasePage):
         actions = QtWidgets.QWidget(); al = _hbox(actions)
         self.save_defaults_button = button("Save as defaults and apply", self.save, "primary")
         self.save_defaults_button.setToolTip("Save and apply settings from every tab.")
-        al.addWidget(self.save_defaults_button); al.addStretch(1)
+        self.apply_button = button('Apply for this session', self.apply_temporary)
+        al.addWidget(self.apply_button)
+        al.addWidget(self.save_defaults_button)
+        al.addWidget(button('Revert edits', self.revert_edits)); al.addStretch(1)
+        from .workspace_layout import form_values
+        self._applied_form = form_values(self)
+        self.dirty_label = label('', 'muted')
+        al.addWidget(self.dirty_label)
+        for edit in self.findChildren(QtWidgets.QLineEdit): edit.textEdited.connect(lambda *_: self.dirty_label.setText('Unapplied edits'))
+        for choice in self.findChildren(QtWidgets.QComboBox): choice.currentIndexChanged.connect(lambda *_: self.dirty_label.setText('Unapplied edits'))
+        for check in self.findChildren(QtWidgets.QCheckBox): check.toggled.connect(lambda *_: self.dirty_label.setText('Unapplied edits'))
         body_layout = _vbox(self.body)
         body_layout.addWidget(self.tabs, 1); body_layout.addWidget(actions)
         self.sample_time.entry.textChanged.connect(self._refresh_period); self.samples_per_point.entry.textChanged.connect(self._refresh_period); self.command_ratio.entry.textChanged.connect(self._refresh_command_ratio); self.mode.currentTextChanged.connect(self._sync_mode)
@@ -2060,12 +2070,34 @@ class SettingsPage(BasePage):
             current_display_unit=self.current_units.get(), font_size_pt=self.font_size.float(), trace_width_px=self.trace_width.float(),
         )
 
+    def revert_edits(self):
+        """Restore the last successfully applied controls, not factory defaults."""
+        from .workspace_layout import restore_form
+        restore_form(self, self._applied_form)
+        self.bitfile.setText(self.app.settings.bitfile)
+        self.dirty_label.clear()
+
+    def apply_temporary(self):
+        """Apply validated settings without replacing startup defaults."""
+        try:
+            settings = self.values(); errors = settings.validate()
+            if errors: raise ValueError('\n'.join(errors))
+            if self.app.backend.connected and settings.mode != self.app.settings.mode:
+                if QtWidgets.QMessageBox.question(self, 'Disconnect instrument?', 'Applying a different backend disconnects the current instrument. Continue?') != QtWidgets.QMessageBox.StandardButton.Yes: return
+            self.app.apply_settings(settings, persist=False)
+            from .workspace_layout import form_values
+            self._applied_form = form_values(self); self.dirty_label.setText('Applied for this session; startup defaults unchanged')
+        except ValueError as exc: self.app.show_error(str(exc))
+
     def save(self) -> None:
         """Persist settings; instrument changes require reconnect, display changes do not."""
         try:
             settings = self.values(); errors = settings.validate()
             if errors: raise ValueError("\n".join(errors))
-            self.app.apply_settings(settings); self.app.toast("Defaults saved and applied; they will load at next startup", "success")
+            self.app.apply_settings(settings)
+            from .workspace_layout import form_values
+            self._applied_form = form_values(self); self.dirty_label.clear()
+            self.app.toast("Defaults saved and applied; they will load at next startup", "success")
         except ValueError as exc: self.app.show_error(str(exc))
 
 
@@ -2108,6 +2140,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             not self.recorder.active and self.recorder.output_path is not None and self.recorder.output_path.exists()))
         from .operator_workspace import OperatorWorkspace
         self.operator_workspace = OperatorWorkspace(self)
+        from .workspace_layout import LayoutWorkspace
+        self.layout_workspace = LayoutWorkspace(self)
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
 
     def launch_analysis(self, *, last_recording: bool = False) -> None:
@@ -2380,7 +2414,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             page = self.pages[name]
             if isinstance(page, DiagnosticWorkflowPage): page.sync_actions(connected, diagnostic_busy and not page.is_busy)
 
-    def apply_settings(self, settings: AppSettings) -> None:
+    def apply_settings(self, settings: AppSettings, *, persist: bool = True) -> None:
         """Persist preferences, rebuilding the backend only for non-display changes."""
         display_keys = {"display_max_points", "map_view_mode", "map_footprint_diameter_um",
                         "map_z_colormap", "map_current_colormap",
@@ -2393,7 +2427,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if self.any_experiment_active and not changed <= display_keys:
             raise ValueError("Stop the experiment before changing instrument settings; display-only changes are allowed.")
         if changed <= display_keys:
-            self.store.save(settings)
+            if persist: self.store.save(settings)
             self.settings = settings
             self._apply_display_settings()
             return
@@ -2401,7 +2435,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if was_connected: self.flush_acquisition()
         if self.recorder.active: self.finish_recording(self.active_parameters)
         if was_connected: self._stop_acquisition(); self.backend.disconnect()
-        self.store.save(settings); self.settings = settings; self.backend = create_backend(settings, self.driver_module); self._make_experiments()
+        if persist: self.store.save(settings)
+        self.settings = settings; self.backend = create_backend(settings, self.driver_module); self._make_experiments()
         for page_name in ("Preflight", "Characterize pipette"):
             page = self.pages.get(page_name)
             if isinstance(page, DiagnosticWorkflowPage): page._cv_runner = CVExperiment(self.backend, self.settings)
@@ -2414,7 +2449,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.setStyleSheet(application_stylesheet(settings.font_size_pt))
         font = QtGui.QFont(); font.setPointSizeF(settings.font_size_pt)
         sidebar = self.findChild(QtWidgets.QFrame, "sidebar")
-        sidebar.setFixedWidth(max(225, max(nav.sizeHint().width() for nav in self.nav_buttons.values()) + 28))
+        sidebar.setFixedWidth(max(225, max(nav.sizeHint().width() for name, nav in self.nav_buttons.items() if name in self.favorites or name in ANCHORED) + 28))
         for area in self.findChildren(QtWidgets.QScrollArea):
             area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded if settings.font_size_pt > 10 else QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
@@ -2692,6 +2727,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         finally:
             self._stop_acquisition()
             if self.backend.connected: self.backend.disconnect()
+        if hasattr(self, "layout_workspace"): self.layout_workspace.save()
         event.accept()
 
 

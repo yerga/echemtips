@@ -612,7 +612,7 @@ class QtLayoutTests(unittest.TestCase):
         self.qt_app.processEvents()
         try:
             labels = [window.tabs.tabText(index) for index in range(window.tabs.count())]
-            self.assertEqual(labels, ["Explore and measure", "CV / LSV", "Hop maps", "Map movie", "Raw data table", "Metadata"])
+            self.assertEqual(labels, ["Explore and measure", "CV / LSV", "Hop maps", "Map movie", "Data table", "Metadata"])
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()
@@ -732,7 +732,7 @@ class QtLayoutTests(unittest.TestCase):
                     self.assertGreater(panel.verticalScrollBar().maximum(), 0)
                 page.setup_toggle.click()
                 self.qt_app.processEvents()
-                self.assertFalse(page.body.layout().itemAt(0).widget().isVisible())
+                self.assertFalse(page.setup_panel.isVisible())
                 page.expand_plots.click()
                 self.qt_app.processEvents()
                 self.assertTrue(page._plots_dialog.isVisible())

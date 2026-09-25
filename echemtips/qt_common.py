@@ -206,7 +206,11 @@ class Field(QtWidgets.QFrame):
         layout.addWidget(caption)
         row = QtWidgets.QHBoxLayout()
         row.setSpacing(6)
+        self.caption_text = label_text
         self.entry = QtWidgets.QLineEdit(value)
+        caption.setBuddy(self.entry)
+        self.entry.setAccessibleName(label_text + (" (" + unit + ")" if unit else ""))
+        self.entry.textEdited.connect(lambda: self.entry.setStyleSheet(""))
         self.entry.setMinimumWidth(80)
         self.variable = TextValue(self.entry)
         row.addWidget(self.entry, 1)
@@ -220,11 +224,21 @@ class Field(QtWidgets.QFrame):
 
     def float(self) -> float:
         """Parse the current text as a floating-point value."""
-        return float(self.entry.text().strip())
+        try:
+            value = float(self.entry.text().strip())
+            if not math.isfinite(value): raise ValueError()
+            return value
+        except ValueError:
+            self.entry.setStyleSheet('border: 2px solid #bb3850;')
+            self.entry.setFocus()
+            raise ValueError(f'{self.caption_text}: enter a finite number ({self.unit_label.text()}).') from None
 
     def integer(self) -> int:
         """Parse the current text as an integer."""
-        return int(self.entry.text().strip())
+        try: return int(self.entry.text().strip())
+        except ValueError:
+            self.entry.setStyleSheet('border: 2px solid #bb3850;'); self.entry.setFocus()
+            raise ValueError(f'{self.caption_text}: enter a whole number.') from None
 
     def optional_float(self) -> float | None:
         """Parse a float, returning ``None`` when the field is blank."""
@@ -347,6 +361,8 @@ class Plot(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.graph)
         self.setMinimumHeight(190)
+        from .plot_controls import PlotControls
+        self.view_controls = PlotControls(self, live=True)
 
     def clear(self) -> None:
         """Clear this plot's display buffer and rendered curves."""
@@ -385,6 +401,7 @@ class Plot(QtWidgets.QWidget):
 
     def redraw(self) -> None:
         """Immediately render retained samples; live callers use request_redraw."""
+        if getattr(self, "view_controls", None) and self.view_controls.frozen: return
         self._render_timer.stop()
         self._render_pending = False
         self._prune_history()
@@ -756,6 +773,8 @@ class XYPlot(QtWidgets.QWidget):
         layout.addWidget(self.graph)
         self.setMinimumHeight(190)
         self.redraw()
+        from .plot_controls import PlotControls
+        self.view_controls = PlotControls(self)
 
     def set_data(self, series: Iterable[tuple[str, list[float], list[float], str]]) -> None:
         """Replace all named XY curves with the supplied series."""
@@ -771,6 +790,8 @@ class XYPlot(QtWidgets.QWidget):
     def redraw(self) -> None:
         """Rebuild legend and curves from the most recently supplied series."""
         self.graph.clear()
+        controls = getattr(self, 'view_controls', None)
+        if controls: self.graph.addItem(controls.cursor, ignoreBounds=True)
         self.graph.addLegend(offset=(8, 8), brush=pg.mkBrush(255, 255, 255, 220))
         scale, unit = current_display_scale(self.current_display_unit, (value for _, _, ys, _ in self.series for value in ys)) if "(nA)" in self.y_label else (1.0, "")
         self.graph.setLabel("bottom", self.x_label, color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
@@ -798,7 +819,7 @@ class XYPlot(QtWidgets.QWidget):
             # take seconds, even for a small file. Segments preserve the data,
             # gaps and requested pen width without that expensive path stroking.
             curve.curve.setSegmentedLineMode("on")
-        self.graph.enableAutoRange()
+        if not controls or not controls.manual: self.graph.enableAutoRange()
 
 
 class PlotPanel(QtWidgets.QScrollArea):
@@ -821,11 +842,12 @@ class PlotPanel(QtWidgets.QScrollArea):
 
     def _reflow(self) -> None:
         layout = self.widget().layout()
-        horizontal = self.viewport().width() >= 880 and len(self._cards) == 2
+        cards = [card for card in self._cards if not card.isHidden()]
+        horizontal = self.viewport().width() >= 880 and len(cards) == 2
         if isinstance(layout, QtWidgets.QBoxLayout):
             layout.setDirection(QtWidgets.QBoxLayout.Direction.LeftToRight if horizontal
                                 else QtWidgets.QBoxLayout.Direction.TopToBottom)
-        heights = [card.minimumHeight() for card in self._cards]
+        heights = [card.minimumHeight() for card in cards]
         height = (max(heights, default=0) if horizontal else
                   sum(heights) + max(0, len(heights) - 1) * layout.spacing())
         self.widget().setMinimumHeight(height)
