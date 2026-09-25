@@ -243,7 +243,7 @@ class MapPanel(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         controls = QtWidgets.QGridLayout()
         self.channel, self.statistic, self.palette = QtWidgets.QComboBox(), QtWidgets.QComboBox(), QtWidgets.QComboBox()
-        self.statistic.addItems(("Mean", "Minimum", "Maximum", "Std deviation", "CV at potential"))
+        self.statistic.addItems(("Mean", "Minimum", "Maximum", "Std deviation", "CV at potential", "Surface I–t mean"))
         self.palette.addItems(("viridis", "plasma", "cividis", "inferno"))
         self.potential = QtWidgets.QDoubleSpinBox(); self.potential.setRange(-100, 100); self.potential.setDecimals(4); self.potential.setSuffix(" V")
         self.potential.setKeyboardTracking(False)
@@ -270,6 +270,9 @@ class MapPanel(QtWidgets.QWidget):
         for number in sorted({group.cycle for group in cv_groups}): self.cycle.addItem(f"Cycle {number}", number)
         self.cycle.addItem("Average complete cycles", None); self.cycle.blockSignals(False)
         self.hop_groups = hop_groups
+        self.statistic.blockSignals(True)
+        self.statistic.setCurrentText('CV at potential' if cv_groups else 'Surface I–t mean' if 'step_hold_s' in (dataset.metadata.get('parameters') or {}) else 'Mean')
+        self.statistic.blockSignals(False)
         self.channel.blockSignals(True); self.channel.clear()
         for column in dataset.columns:
             if column not in {"elapsed_s", "scan_pixel", "line_number", "feedback_type"}:
@@ -291,6 +294,19 @@ class MapPanel(QtWidgets.QWidget):
                 if channel not in {"current1_na", "current2_na"}: raise AnalysisError("Choose a current channel for CV potential maps.")
                 self.points = prepare_frames(self.dataset, self.cv_groups, channel=channel, cycle=self.cycle.currentData(),
                                              leg=self.direction.currentIndex(), axis=[self.potential.value()]).points(0)
+            elif self.statistic.currentText() == 'Surface I–t mean':
+                from .analysis_frames import it_surface_rows
+                from .analysis_tools import hop_selections
+                coordinates = {p['scan_pixel']: p for p in self.dataset.metadata.get('scan_grid', {}).get('pixels', [])}
+                for group in self.hop_groups or hop_selections(self.dataset):
+                    match = it_surface_rows(self.dataset, group)
+                    if match is None or group.pixel not in coordinates: continue
+                    rows, _ = match
+                    values = rows.matrix[:, rows.columns.index(channel)]
+                    values = values[np.isfinite(values)]
+                    if len(values):
+                        pixel = coordinates[group.pixel]
+                        self.points.append(dict(scan_pixel=group.pixel, x_um=pixel['x_um'], y_um=pixel['y_um'], value=float(np.mean(values)), samples=len(values)))
             else:
                 self.points = hop_map(self.dataset, channel, self.statistic.currentText(), self.hop_groups)
             if not self.points: raise AnalysisError("No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
@@ -304,7 +320,8 @@ class MapPanel(QtWidgets.QWidget):
             self.map.colormap_name = self.palette.currentText()
             self.map.set_data(values, len(ys), len(xs), x_values=xs, y_values=ys)
             self.map.setVisible(True)
-            self.notice.setText(("Selected chronological segment and cycle; adjacent samples interpolated, never extrapolated. Average mode uses only available complete cycles." if cv else
+            missing = len(pixels) - len(self.points)
+            self.notice.setText(f"{len(self.points)}/{len(pixels)} usable hops · {missing} blank (unmeasured, excluded, incomplete, or outside selected waveform). " + ("Validated surface I–t program mean; ambiguous programs remain blank." if self.statistic.currentText() == 'Surface I–t mean' else "Selected chronological segment and cycle; adjacent samples interpolated, never extrapolated. Average mode uses only available complete cycles." if cv else
                 "Whole-hop statistics include approach and retract; these are not isolated surface data or confirmed contact Z.") + " Click a visited cell to inspect its trace.")
         except (AnalysisError, KeyError, TypeError, ValueError) as exc:
             self.map.setVisible(False); self.notice.setText(str(exc))

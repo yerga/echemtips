@@ -147,6 +147,15 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         processing.addWidget(self.smoothing_apply)
         processing.addStretch(1)
         main_layout.addLayout(processing)
+        self.context_label = label("No recording selected", "muted", word_wrap=True)
+        main_layout.addWidget(self.context_label)
+        self.processing_pending = label("", "muted")
+        main_layout.addWidget(self.processing_pending)
+        for widget, signal in ((self.smoothing_enabled, 'toggled'), (self.smoothing_method, 'currentIndexChanged'),
+                               (self.smoothing_window, 'valueChanged'), (self.smoothing_order, 'valueChanged')):
+            getattr(widget, signal).connect(lambda *_: self.processing_pending.setText('Processing changes not applied — press Apply'))
+        self.cancel_load = button('Cancel loading', self._cancel_loading)
+        self.cancel_load.hide(); main_layout.addWidget(self.cancel_load)
         self.tabs = QtWidgets.QTabWidget()
         main_layout.addWidget(self.tabs, 1)
         splitter.addWidget(main)
@@ -211,6 +220,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _build_table_tab(self) -> None:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
+        self.table_original = QtWidgets.QCheckBox("Original file values (all conditions; no smoothing)")
+        self.table_original.setChecked(True)
+        self.table_original.toggled.connect(self._refresh_table)
+        layout.addWidget(self.table_original)
         self.table_status = label("", "muted")
         layout.addWidget(self.table_status)
         self.data_table = QtWidgets.QTableView()
@@ -218,7 +231,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.data_table.setAlternatingRowColors(True)
         self.data_table.setSortingEnabled(False)
         layout.addWidget(self.data_table, 1)
-        self.tabs.addTab(tab, "Raw data table")
+        self.tabs.addTab(tab, "Data table")
 
     def _build_metadata_tab(self) -> None:
         self.metadata_text = QtWidgets.QPlainTextEdit()
@@ -280,6 +293,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         for previous in self._load_tasks.values():
             previous.cancelled = True
         self.loading = True
+        self.cancel_load.show()
+        self.tabs.setEnabled(False)
+        self.context_label.setText(f"Loading {Path(path).name} — previous plots are inactive until complete")
         self.statusBar().showMessage(f"Loading {Path(path).name}…")
         window = self.smoothing_window.value() if self.smoothing_enabled.isChecked() else 1
         if window % 2 == 0:
@@ -291,6 +307,14 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         task.signals.finished.connect(self._loaded)
         self._load_tasks[self._load_token] = task
         self._pool.start(task)
+
+    def _cancel_loading(self):
+        """Invalidate a pending load while preserving the previously displayed data."""
+        self._load_token += 1
+        for task in self._load_tasks.values(): task.cancelled = True
+        self.loading = False
+        self.cancel_load.hide(); self.tabs.setEnabled(True)
+        self.context_label.setText('Load cancelled; previous recording remains displayed')
 
     def _condition_changed(self, *_):
         """Rebuild all views off-thread with one comparable condition."""
@@ -306,7 +330,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if token != self._load_token:
             return
         self.loading = False
+        self.cancel_load.hide(); self.tabs.setEnabled(True)
         if error:
+            self.context_label.setText('Loading failed; displayed data belong to the previous recording')
             self.statusBar().showMessage(error)
             QtWidgets.QMessageBox.warning(self, "Recording could not be loaded", error)
             return
@@ -340,6 +366,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         description = (f"Smoothed currents · {method_label} · {mode['window_samples']} samples"
                        if mode else "Original currents · smoothing off")
         self.statusBar().showMessage(f"{len(self.dataset.rows):,} samples · {description}")
+        condition = self.dataset.metadata.get('analysis_condition', {}).get('name', 'All conditions')
+        self.context_label.setText(f"{self.dataset.path.name} · {condition} · {description} · source status: {self.dataset.metadata.get('status', 'unknown')}")
+        self.processing_pending.clear()
 
     def _inspect_hop(self, pixel):
         self.tabs.setCurrentWidget(self.explorer_tab)
@@ -415,7 +444,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         selected = [int(item.data(0, QtCore.Qt.ItemDataRole.UserRole)) for item in self.cycle_tree.selectedItems()]
         cycles = self.cycles if not selected or -1 in selected else [self.cycles[i] for i in selected]
         total = len(cycles)
-        cycles = cycles[:50]
+        if total > 50:
+            cycles = [cycles[round(i * (total - 1) / 49)] for i in range(50)]
         column = CURRENT_COLUMNS[self.cv_current.currentText()]
         view = self.cv_view.currentText()
         self.cv_plot.x_label = "Potential E1 (V)" if view == "i vs E" else "Time from cycle start (s)"
@@ -432,18 +462,19 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             kind = "Smoothed" if self.dataset.metadata.get("analysis_processing") else "Raw"
             self.cv_detail.setText(f"Maximum current\n{maximum:+.4g} nA at {max_v:+.4g} V\n\nMinimum current\n{minimum:+.4g} nA at {min_v:+.4g} V\n\n{kind} extrema; no peak fitting or baseline correction.")
         else:
-            self.cv_detail.setText(f"Overlaying {len(cycles)} of {total} selected cycles (display limit 50).\nCtrl/Cmd-click to select cycles. Exports retain all cycles.")
+            self.cv_detail.setText(f"Overlaying {len(cycles)} of {total} selected cycles (up to 50 evenly spaced selections; exports retain all).\nCtrl/Cmd-click to select cycles. Exports retain all cycles.")
 
     def _refresh_table(self) -> None:
         if self.dataset is None:
             return
         old = self.data_table.model()
-        self.data_table.setModel(RecordingTableModel(self.dataset, self.data_table))
+        shown = self.source_dataset if self.table_original.isChecked() and self.source_dataset is not None else self.dataset
+        self.data_table.setModel(RecordingTableModel(shown, self.data_table))
         if old is not None:
             old.deleteLater()
         self.data_table.horizontalHeader().setDefaultSectionSize(145)
-        kind = "smoothed currents" if self.dataset.metadata.get("analysis_processing") else "original values"
-        self.table_status.setText(f"All {len(self.dataset.rows):,} rows · {kind} · native units · read-only")
+        kind = "smoothed currents" if shown.metadata.get("analysis_processing") else "original values"
+        self.table_status.setText(f"All {len(shown.rows):,} rows · {kind} · native units · read-only")
 
     def _edit_cv_program(self) -> None:
         if self.dataset is None:
