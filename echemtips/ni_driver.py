@@ -61,6 +61,7 @@ class WECSPMDriver:
 
     supports_cv_rate_series = True
     supports_lsv = True
+    supports_contact_snapshot = True
 
     BASELINE_HOLD_US = 25_000
     BASELINE_SAMPLE_COUNT = 16
@@ -900,6 +901,7 @@ class WECSPMDriver:
 
     def start_approach_cv(self, params: ApproachCVParameters) -> None:
         """Start preposition/baseline/approach; gate CV on confirmed contact."""
+        self.approach_contact_z_um = None
         errors = params.validate(self.settings)
         if errors:
             raise ValueError("; ".join(errors))
@@ -1037,6 +1039,7 @@ class WECSPMDriver:
         if params is None:
             raise RuntimeError("Approach parameters were not retained for the CV follow-up")
         current = self._current_targets()
+        self.approach_contact_z_um = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
         plan, contexts = approach_cv_followup_plan(params)
         compiled = self.compiler.compile(plan, current)
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))

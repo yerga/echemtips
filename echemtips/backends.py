@@ -282,9 +282,21 @@ class SimulationBackend(InstrumentBackend):
 
     def surface_z_at(self, x_um: float, y_um: float) -> float:
         """Return deterministic simulated surface height at physical XY."""
+        if getattr(self, "adaptive_scene", False):
+            return self.settings.z_range_um * .60 + .06*x_um + .03*y_um
         sx = (x_um / self.settings.x_range_um - 0.5) * math.tau
         sy = (y_um / self.settings.y_range_um - 0.5) * math.tau
         return self.settings.z_range_um * 0.68 + 2.4 * math.sin(sx) * math.cos(sy) + 0.7 * math.sin(2 * sy)
+
+    @_synchronized_io
+    def commanded_position(self) -> dict[str, float]:
+        """Return current simulated AO positions, not pending motion targets."""
+        return dict(self._positions)
+
+    @property
+    def operator_paused(self) -> bool:
+        """Expose simulator operator pause to higher-level supervisors."""
+        return self._paused
 
     @property
     def label(self) -> str:
@@ -344,6 +356,13 @@ class SimulationBackend(InstrumentBackend):
         noise = self._rng.gauss(0.0, 0.035)
         current1 = 0.22 + drift + contact * (2.7 + faradaic) + capacitive + noise
         current2 = -0.15 + contact * 0.7 + self._rng.gauss(0.0, 0.025)
+        if getattr(self, "adaptive_scene", False):
+            x,y = self._positions['X']/self.settings.x_range_um,self._positions['Y']/self.settings.y_range_um
+            activity = .025 + .15*math.exp(-((x-.7)**2+(y-.65)**2)/.025)
+            failed = getattr(self, "adaptive_failure_pixel", -99) == getattr(self, "adaptive_pixel", -1)
+            wet = 0.0 if failed else contact
+            current1 = .00015 + wet*(.015 + activity*(v+.25)) + self._rng.gauss(0,.00015)
+            current2 = current1*.8 + self._rng.gauss(0,.0001)
         dt = elapsed - self._last_sample_elapsed
         scan_rate = (v - self._last_sample_voltage) / dt if dt > 0 else 0.0
         self._last_sample_voltage = v
@@ -370,6 +389,7 @@ class SimulationBackend(InstrumentBackend):
             commanded_x_um=self._positions["X"],
             commanded_y_um=self._positions["Y"],
             commanded_z_um=self._positions["Z"],
+            scan_pixel=getattr(self, "adaptive_pixel", -1),
         )
 
     @_synchronized_io
@@ -653,6 +673,26 @@ class NIFPGABackend(InstrumentBackend):
         if channel not in (1, 2):
             raise BackendError(f"Unknown current channel: {channel}")
         return self.settings.polarity_factor * raw_to_current(raw, getattr(self.settings, f"current{channel}_v_per_na"))
+
+    @property
+    def adaptive_contact_available(self) -> bool:
+        """Require a driver that snapshots commanded Z at confirmed contact."""
+        return bool(getattr(self._driver, "supports_contact_snapshot", False))
+
+    @property
+    def operator_paused(self) -> bool:
+        """Distinguish operator intent from internal FPGA contact pauses."""
+        return bool(getattr(self._driver, "_operator_paused", False))
+
+    @_synchronized_io
+    def commanded_position(self) -> dict[str, float]:
+        """Read applied AO coordinates, explicitly distinct from position sensors."""
+        return {axis:self._raw_to_position(int(self._register('Applied '+axis).read()),axis) for axis in 'XYZ'}
+
+    @_synchronized_io
+    def confirmed_contact_z(self) -> float | None:
+        """Return the native driver's frozen approach contact, never a live AO value."""
+        return getattr(self._driver, "approach_contact_z_um", None)
 
     @_synchronized_io
     def read_sample(self) -> Sample:

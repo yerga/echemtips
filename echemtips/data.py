@@ -359,7 +359,7 @@ class DataRecorder:
         omitted = set(cls._PER_SAMPLE_OMISSIONS)
         if not isinstance(parameters, ApproachCVParameters) or parameters.scan_rates_v_s is None:
             omitted.add("cv_rate_index")
-        if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
+        if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)) and not hasattr(parameters, "attempts"):
             omitted.add("scan_pixel")
         return tuple(field.name for field in fields(Sample) if field.name not in omitted)
 
@@ -380,6 +380,10 @@ class DataRecorder:
 
     @staticmethod
     def _scan_grid_metadata(parameters: Any, recording_status: str = "running") -> dict[str, Any] | None:
+        if hasattr(parameters, "attempts"):
+            return {"coordinate_unit":"um", "path":"adaptive", "pixel_count":len(parameters.attempts),
+                    "pixels":[{"scan_pixel":a['scan_pixel'],"x_um":a['xy'][0],"y_um":a['xy'][1],
+                               "valid":a.get('valid',False)} for a in parameters.attempts]}
         if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)):
             return None
         pixels = [
