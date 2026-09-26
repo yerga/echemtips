@@ -2742,5 +2742,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 def create_application(argv: list[str] | None = None) -> QtWidgets.QApplication:
     """Return the process QApplication configured with eChemTips styling."""
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(argv or [])
-    configure_application_identity(app)
-    app.setStyle("Fusion"); app.setStyleSheet(application_stylesheet()); return app
+    if not app.property("echemtipsInitialized"):
+        configure_application_identity(app)
+        app.setStyle("Fusion")
+        app.setStyleSheet(application_stylesheet())
+        app.setProperty("echemtipsInitialized", True)
+    return app

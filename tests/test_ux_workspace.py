@@ -54,6 +54,12 @@ class WorkspaceTests(unittest.TestCase):
         self.w.operator_workspace.refresh()
         self.assertTrue(page.setup_panel.isEnabled())
 
+    def test_application_initialization_is_idempotent(self):
+        """Reusing Qt must not reset its stylesheet or restyle every open window."""
+        with patch.object(self.qt, 'setStyleSheet') as restyle:
+            self.assertIs(create_application([]), self.qt)
+            restyle.assert_not_called()
+
     def test_close_stops_ui_timers(self):
         """Closed windows must not keep refreshing their hidden controls."""
         self.w.close()
