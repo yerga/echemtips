@@ -30,6 +30,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.reference_config = {}
         self.cycles: list[CVCycle] = []
         self.original_cycles = []
+        self.model_cycles = []
         self.data_folder = Path(data_folder).expanduser().resolve() if data_folder else self._default_data_folder()
         self.file_paths: list[Path] = []
         self._load_token = 0
@@ -53,7 +54,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.refresh_files()
         from .seccm_model_dialog import open_model_dialog
         self.menuBar().addMenu("Models").addAction("SECCM analytical models…",
-            lambda: open_model_dialog(self, self.source_dataset, self.original_cycles))
+            lambda: open_model_dialog(self, self.source_dataset, self.model_cycles))
         from .about import install_help_menu
         install_help_menu(self)
         if initial_path:
@@ -351,6 +352,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.loading = False
         self.cancel_load.hide(); self.tabs.setEnabled(True)
         self.context_label.setText('Load cancelled; previous recording remains displayed')
+        self.reference_config = dict(self.dataset.metadata.get('analysis_reference') or {}) if self.dataset else {}
 
     def _condition_changed(self, *_):
         """Rebuild all views off-thread with one comparable condition."""
@@ -368,6 +370,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.loading = False
         self.cancel_load.hide(); self.tabs.setEnabled(True)
         if error:
+            self.reference_config = dict(self.dataset.metadata.get('analysis_reference') or {}) if self.dataset else {}
             if hasattr(self, 'workspace'): self.workspace.pending = None
             self.context_label.setText('Loading failed; displayed data belong to the previous recording')
             self.statusBar().showMessage(error)
@@ -377,6 +380,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.source_dataset = task.source
         self.reference_config = dict(task.reference_config)
         self.original_cycles = getattr(task, "original_cycles", [])
+        self.model_cycles = getattr(task, 'model_cycles', self.original_cycles)
         if not task.reprocessing:
             recipes = (task.source.metadata.get("parameters") or {}).get("recipes", [])
             self.condition_selector.blockSignals(True)

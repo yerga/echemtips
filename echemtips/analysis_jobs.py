@@ -37,12 +37,14 @@ class LoadRecording(QtCore.QRunnable):
             from .analysis_conditions import condition_dataset
             dataset = condition_dataset(dataset, self.condition)
             from .analysis_reference import convert_dataset
+            source_cycles = extract_cv_cycles(dataset) if self.reference_config.get('enabled') else None
             dataset = convert_dataset(dataset, self.reference_config)
             if self.cancelled:
                 self.signals.finished.emit(self.token, None, "")
                 return
             cycles = extract_cv_cycles(dataset)
             self.original_cycles = cycles
+            self.model_cycles = source_cycles if source_cycles is not None else cycles
             import numpy as np
             dt = np.diff(dataset.column('elapsed_s')[:10001])
             dt = dt[np.isfinite(dt) & (dt > 0)]
