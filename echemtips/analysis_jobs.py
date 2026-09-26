@@ -39,6 +39,12 @@ class LoadRecording(QtCore.QRunnable):
                 self.signals.finished.emit(self.token, None, "")
                 return
             cycles = extract_cv_cycles(dataset)
+            self.original_cycles = cycles
+            import numpy as np
+            dt = np.diff(dataset.column('elapsed_s')[:10001])
+            dt = dt[np.isfinite(dt) & (dt > 0)]
+            self.sample_interval_s = float(np.median(dt)) if len(dt) else None
+            self.irregular_sampling = bool(len(dt) and np.any(np.abs(dt - self.sample_interval_s) > self.sample_interval_s * 0.05))
             if self.smoothing_window > 1:
                 dataset = smooth_currents(dataset, self.smoothing_window, cycles,
                                           method=self.smoothing_method, polynomial_order=self.polynomial_order)

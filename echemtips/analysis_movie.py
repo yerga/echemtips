@@ -155,7 +155,7 @@ class MoviePanel(QtWidgets.QWidget):
         self.colour.setToolTip("Auto: fixed robust limits across all prepared frames. Dynamic: each frame's finite minimum/maximum. Manual: entered nA limits. Outlier clipping changes only colour limits, not values.")
         self.stride.setToolTip("Use every Nth frame from the requested frame grid.")
         items=(("Frame axis",self.kind),("Current",self.channel),("Cycle per hop",self.cycle),("CV segment",self.leg),
-               ("Frames",self.count),("Every Nth frame",self.stride),("Output FPS",self.fps),("Hold per frame",self.hold),
+               ("Frames",self.count),("Every Nth frame",self.stride),("Encoding FPS",self.fps),("Playback time per frame",self.hold),
                ("Colour limits",self.colour),("Palette",self.palette),("Minimum",self.low),("Maximum",self.high),("Exclude hops",self.excluded))
         for index,(title,w) in enumerate(items):
             if isinstance(w,QtWidgets.QComboBox):
@@ -170,6 +170,13 @@ class MoviePanel(QtWidgets.QWidget):
         advanced.addWidget(button("Done",self.options.accept,"primary"),2,3)
         self.options.hide()
         self.notice=label("Open a scan recording, select a cycle/segment, then prepare frames.","muted",word_wrap=True); layout.addWidget(self.notice)
+        import pyqtgraph as pg
+        self.timeline = pg.PlotWidget(background='w'); self.timeline.setMaximumHeight(100)
+        self.timeline.setLabel('bottom', 'Movie frame'); self.timeline.setLabel('left', 'Frame axis')
+        self.timeline_curve = self.timeline.plot([], [], pen=pg.mkPen('#12877f', width=2))
+        self.timeline_cursor = pg.InfiniteLine(angle=90, pen=pg.mkPen('#bb3850', width=2)); self.timeline.addItem(self.timeline_cursor)
+        layout.addWidget(self.timeline)
+        self.timeline.hide()
         self.map=Heatmap("nA","Current"); self.map.setMinimumHeight(250); layout.addWidget(self.map,1)
         bar=QtWidgets.QHBoxLayout(); layout.addLayout(bar)
         self.play=button("Play",self.toggle); bar.addWidget(self.play)
@@ -254,6 +261,10 @@ class MoviePanel(QtWidgets.QWidget):
         self.timer.setInterval(interval)
         if self.frames is None: return
         index=self.slider.value(); frames=self.frames
+        self.timeline.setVisible(frames.recipe["kind"] == "CV potential" and frames.recipe.get("leg") == 3)
+        self.timeline_curve.setData(list(range(1, len(frames.axis) + 1)), frames.axis)
+        self.timeline_cursor.setPos(index + 1)
+        self.timeline.setLabel('left', 'Potential (V)' if frames.recipe['kind'] == 'CV potential' else 'Local time (s)')
         try:
             limits=(frames.auto_limits if self.colour.currentText()=="Auto" and hasattr(frames,"auto_limits")
                     else frames.limits(self.colour.currentText(),index,(self.low.value(),self.high.value())))
@@ -268,7 +279,7 @@ class MoviePanel(QtWidgets.QWidget):
         self.map.quantity="Current "+frames.recipe["channel"][7]
         self.map.set_data({(yi[p["y_um"]],xi[p["x_um"]]):p["value"] for p in points},len(ys),len(xs),x_values=xs,y_values=ys)
         unit="V" if frames.recipe["kind"]=="CV potential" else "s from surface-program start" if frames.recipe["kind"]=="I–t time" else "s from cycle start"
-        self.notice.setText(f"Frame {index+1}/{len(frames.axis)} · {frames.axis[index]:.5g} {unit} · {len(points)} valid hops · {frames.omitted} omitted · {interval} ms/frame. Auto limits suppress extreme outliers; values are unchanged.")
+        self.notice.setText(f"Movie duration {len(frames.axis) * interval / 1000:.1f} s · Frame {index+1}/{len(frames.axis)} · {frames.axis[index]:.5g} {unit} · {len(points)} valid hops · {frames.omitted} omitted · {interval} ms/frame. Auto limits suppress extreme outliers; values are unchanged.")
         if frames.recipe["kind"]=="CV potential" and frames.recipe["leg"]==3:
             self.notice.setText(leg_labels_from_recipe(frames,index)+" · "+self.notice.text())
 

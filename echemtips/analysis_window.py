@@ -28,6 +28,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.dataset: AnalysisDataset | None = None
         self.source_dataset: AnalysisDataset | None = None
         self.cycles: list[CVCycle] = []
+        self.original_cycles = []
         self.data_folder = Path(data_folder).expanduser().resolve() if data_folder else self._default_data_folder()
         self.file_paths: list[Path] = []
         self._load_token = 0
@@ -43,6 +44,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             plot.font_size_pt = preferences.font_size_pt
             plot.trace_width_px = preferences.trace_width_px
             plot.redraw()
+        from .analysis_workspace import AnalysisWorkspace
+        self.workspace = AnalysisWorkspace(self)
         self.refresh_files()
         if initial_path:
             self.load_recording(Path(initial_path))
@@ -84,6 +87,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.file_list.setAccessibleName("Available recordings")
         self.file_list.currentRowChanged.connect(self._load_selected_file)
         side.addWidget(self.file_list, 1)
+        self.file_details = label("", "sidebarMuted", word_wrap=True); side.addWidget(self.file_details)
         side.addWidget(button("Open recording…", self.open_file, "primary"))
         side.addWidget(button("Choose folder…", self.choose_folder))
         side.addWidget(button("Refresh", self.refresh_files))
@@ -191,6 +195,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cv_view = QtWidgets.QComboBox(); self.cv_view.addItems(("i vs E", "E vs t", "i vs t"))
         self.cv_view.currentIndexChanged.connect(self._refresh_cv_plot)
         controls.addWidget(self.cv_view)
+        self.overlay_original = QtWidgets.QCheckBox('Overlay original')
+        self.overlay_original.setToolTip('Compare unsmoothed currents with the processed CV; source files are unchanged.')
+        self.overlay_original.toggled.connect(self._refresh_cv_plot)
+        controls.addWidget(self.overlay_original)
         controls.addWidget(button("Set CV program…", self._edit_cv_program))
         controls.addStretch(1)
         self.export_button = button("Export separated CVs…", self.export_cycles, "primary")
@@ -204,9 +212,12 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         summary_layout.setContentsMargins(0, 4, 0, 0)
         self.cycle_tree = QtWidgets.QTreeWidget()
         self.cycle_tree.setHeaderLabels(("Cycle", "Max / nA", "Min / nA"))
-        self.cycle_tree.setRootIsDecorated(False)
+        self.cycle_tree.setRootIsDecorated(True)
         self.cycle_tree.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.cycle_tree.itemSelectionChanged.connect(self._refresh_cv_plot)
+        self.cycle_search = QtWidgets.QLineEdit(); self.cycle_search.setPlaceholderText('Filter hop / rate / cycle…')
+        self.cycle_search.textChanged.connect(self._filter_cycles)
+        summary_layout.addWidget(self.cycle_search)
         summary_layout.addWidget(self.cycle_tree, 1)
         self.cv_detail = label("", "muted", word_wrap=True)
         summary_layout.addWidget(self.cv_detail)
@@ -220,7 +231,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _build_table_tab(self) -> None:
         tab = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(tab)
-        self.table_original = QtWidgets.QCheckBox("Original file values (all conditions; no smoothing)")
+        self.table_original = QtWidgets.QCheckBox("Original measurement values (all conditions; marker excluded)")
         self.table_original.setChecked(True)
         self.table_original.toggled.connect(self._refresh_table)
         layout.addWidget(self.table_original)
@@ -281,6 +292,15 @@ class AnalysisWindow(QtWidgets.QMainWindow):
 
     def _load_selected_file(self, row: int) -> None:
         if 0 <= row < len(self.file_paths):
+            path = self.file_paths[row]
+            detail = f'{path.stat().st_size / 1e6:.2f} MB'
+            try:
+                metadata_path = path.with_suffix('.json')
+                if metadata_path.stat().st_size < 1_000_000:
+                    metadata = json.loads(metadata_path.read_text())
+                    detail += f" · {metadata.get('experiment', 'Unknown experiment')} · {metadata.get('status', 'unknown status')}"
+            except (OSError, ValueError): pass
+            self.file_details.setText(detail)
             self.load_recording(self.file_paths[row])
 
     def load_recording(self, path: Path, *, source=None) -> None:
@@ -311,6 +331,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _cancel_loading(self):
         """Invalidate a pending load while preserving the previously displayed data."""
         self._load_token += 1
+        if hasattr(self, "workspace"): self.workspace.pending = None
         for task in self._load_tasks.values(): task.cancelled = True
         self.loading = False
         self.cancel_load.hide(); self.tabs.setEnabled(True)
@@ -332,12 +353,14 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.loading = False
         self.cancel_load.hide(); self.tabs.setEnabled(True)
         if error:
+            if hasattr(self, 'workspace'): self.workspace.pending = None
             self.context_label.setText('Loading failed; displayed data belong to the previous recording')
             self.statusBar().showMessage(error)
             QtWidgets.QMessageBox.warning(self, "Recording could not be loaded", error)
             return
         self.dataset, self.cycles, self.groups = bundle
         self.source_dataset = task.source
+        self.original_cycles = getattr(task, "original_cycles", [])
         if not task.reprocessing:
             recipes = (task.source.metadata.get("parameters") or {}).get("recipes", [])
             self.condition_selector.blockSignals(True)
@@ -365,10 +388,15 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         method_label = "Savitzky–Golay" if mode.get("method") == "savitzky_golay" else "Moving average"
         description = (f"Smoothed currents · {method_label} · {mode['window_samples']} samples"
                        if mode else "Original currents · smoothing off")
+        if mode and task.sample_interval_s is not None:
+            span_ms = (mode['window_samples'] - 1) * task.sample_interval_s * 1000
+            description += f" · approx. {span_ms:g} ms span"
+            if task.irregular_sampling: description += ' · irregular timing: sample-based smoothing'
         self.statusBar().showMessage(f"{len(self.dataset.rows):,} samples · {description}")
         condition = self.dataset.metadata.get('analysis_condition', {}).get('name', 'All conditions')
         self.context_label.setText(f"{self.dataset.path.name} · {condition} · {description} · source status: {self.dataset.metadata.get('status', 'unknown')}")
         self.processing_pending.clear()
+        if hasattr(self, "workspace"): self.workspace.loaded()
 
     def _inspect_hop(self, pixel):
         self.tabs.setCurrentWidget(self.explorer_tab)
@@ -376,9 +404,18 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         selections = self.groups.get("hops", [])
         index = next((i for i, group in enumerate(selections) if group.pixel == pixel), -1)
         self.explorer.selection.setCurrentIndex(index)
+        self.cycle_tree.clearSelection()
+        iterator = QtWidgets.QTreeWidgetItemIterator(self.cycle_tree)
+        while iterator.value():
+            item = iterator.value(); iterator += 1
+            cycle_index = item.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            if isinstance(cycle_index, int) and cycle_index >= 0 and self.cycles[cycle_index].pixel == pixel:
+                item.setSelected(True)
+        self.context_label.setText(self.context_label.text().split(' · Selected hop')[0] + f' · Selected hop {pixel + 1}')
 
     def closeEvent(self, event):
         """Discard stale load results when closing; never terminate worker I/O."""
+        if hasattr(self, "workspace"): self.workspace.close()
         self._load_token += 1
         self.loading = False
         self.movie_panel.shutdown()
@@ -428,20 +465,42 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         all_item = QtWidgets.QTreeWidgetItem(("All", "", ""))
         all_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, -1)
         self.cycle_tree.addTopLevelItem(all_item)
+        parents = {}
         for index, cycle in enumerate(self.cycles):
             maximum, _max_v, minimum, _min_v = cycle.peak_summary(column)
             item = QtWidgets.QTreeWidgetItem((cycle.label, f"{maximum:.3g}", f"{minimum:.3g}"))
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, index)
-            self.cycle_tree.addTopLevelItem(item)
+            key = f'Hop {cycle.pixel + 1}' if cycle.pixel >= 0 else f'Rate {cycle.rate_index + 1}' if cycle.rate_index >= 0 else 'Single position'
+            if key not in parents:
+                parent = QtWidgets.QTreeWidgetItem((key, '', '')); parent.setData(0, QtCore.Qt.ItemDataRole.UserRole, -2)
+                self.cycle_tree.addTopLevelItem(parent); parents[key] = parent
+            parents[key].addChild(item)
+        self._filter_cycles()
         self.cycle_tree.resizeColumnToContents(0)
         self.cycle_tree.setCurrentItem(all_item)
+
+    def _filter_cycles(self, *_):
+        """Filter grouped cycles without changing data or extraction results."""
+        query = self.cycle_search.text().casefold()
+        for i in range(1, self.cycle_tree.topLevelItemCount()):
+            parent = self.cycle_tree.topLevelItem(i); visible = False
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                match = query in (parent.text(0) + ' ' + child.text(0)).casefold()
+                child.setHidden(not match); visible |= match
+            parent.setHidden(not visible)
+            if query and visible: parent.setExpanded(True)
 
     def _refresh_cv_plot(self, *_args: object) -> None:
         if not self.cycles or not self.cv_current.currentText():
             return
-        item = self.cycle_tree.currentItem()
-        index = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole)) if item else -1
-        selected = [int(item.data(0, QtCore.Qt.ItemDataRole.UserRole)) for item in self.cycle_tree.selectedItems()]
+        selected = []
+        for item in self.cycle_tree.selectedItems():
+            index = int(item.data(0, QtCore.Qt.ItemDataRole.UserRole))
+            if index == -2:
+                selected.extend(int(item.child(i).data(0, QtCore.Qt.ItemDataRole.UserRole)) for i in range(item.childCount()) if not item.child(i).isHidden())
+            else: selected.append(index)
+        selected = list(dict.fromkeys(selected))
         cycles = self.cycles if not selected or -1 in selected else [self.cycles[i] for i in selected]
         total = len(cycles)
         if total > 50:
@@ -456,6 +515,11 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             x=cycle.potential_v if view == "i vs E" else [t-times[0] for t in times]
             y=cycle.potential_v if view == "E vs t" else cycle.current_na(column)
             series.append((cycle.label,x,y,PLOT_COLORS[i % len(PLOT_COLORS)]))
+            if self.overlay_original.isChecked() and self.dataset.metadata.get('analysis_processing') and view != 'E vs t':
+                original = next((c for c in self.original_cycles if (c.pixel, c.number, c.rate_index) == (cycle.pixel, cycle.number, cycle.rate_index)), None)
+                if original is not None:
+                    ts = [row['elapsed_s'] for row in original.rows]
+                    series.append((cycle.label + ' · original', original.potential_v if view == 'i vs E' else [t-ts[0] for t in ts], original.current_na(column), '#a0a8b2'))
         self.cv_plot.set_data(series)
         if len(cycles) == 1:
             maximum, max_v, minimum, min_v = cycles[0].peak_summary(column)
