@@ -54,6 +54,7 @@ def export_result(parent, dataset, rows, columns, recipe, suffix):
             "source_size_bytes": stat.st_size, "source_mtime_ns": stat.st_mtime_ns,
             "source_status": dataset.metadata.get("status", "unknown"),
             "processing": dataset.metadata.get("analysis_processing", {"method": "none"}),
+            "potential_reference": dataset.metadata.get('analysis_reference'),
             "analysis": recipe}, indent=2, allow_nan=False)
         with target.open("w", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream); writer.writerow(columns); writer.writerows(rows)
@@ -165,6 +166,7 @@ class ExplorerPanel(QtWidgets.QWidget):
         self.plot.x_label, self.plot.y_label = signal_label(xcol), signal_label(ycol)
         series = [(subset.label, x, y, COLORS["accent"])]
         matching_reference = self.reference is not None and self.reference[0:2] == (xcol, ycol)
+        matching_reference = matching_reference and getattr(self, 'reference_scale', None) == self.dataset.metadata.get('analysis_reference')
         if matching_reference:
             _xcol, _ycol, ref_x, ref_y, ref_name = self.reference
             series.append((ref_name, ref_x, ref_y, COLORS["warning"]))
@@ -184,6 +186,7 @@ class ExplorerPanel(QtWidgets.QWidget):
     def _pin_reference(self):
         if self.result is not None:
             x, y, result = self.result
+            self.reference_scale = self.dataset.metadata.get('analysis_reference')
             self.reference = (result["x_column"], result["y_column"], x.copy(), y.copy(),
                               f"Reference: {self.dataset.path.stem} · {result['selection']} · "
                               + (f"{self.dataset.metadata['analysis_processing']['method']} · "

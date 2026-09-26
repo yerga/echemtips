@@ -27,6 +27,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.setMinimumSize(960, 640)
         self.dataset: AnalysisDataset | None = None
         self.source_dataset: AnalysisDataset | None = None
+        self.reference_config = {}
         self.cycles: list[CVCycle] = []
         self.original_cycles = []
         self.data_folder = Path(data_folder).expanduser().resolve() if data_folder else self._default_data_folder()
@@ -158,6 +159,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         processing.addWidget(self.smoothing_order)
         processing.addWidget(self.smoothing_apply)
         processing.addStretch(1)
+        from .analysis_reference import edit_reference
+        processing.addWidget(button('Potential reference…', lambda: edit_reference(self)))
         main_layout.addLayout(processing)
         self.context_label = label("No recording selected", "muted", word_wrap=True)
         main_layout.addWidget(self.context_label)
@@ -314,6 +317,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
 
     def load_recording(self, path: Path, *, source=None) -> None:
         """Queue a background import; only the newest selection may update views."""
+        if source is None and not (hasattr(self, 'workspace') and self.workspace.pending):
+            self.reference_config = {}
         if (self.smoothing_enabled.isChecked() and self.smoothing_method.currentData() == "savitzky_golay"
                 and self.smoothing_order.value() >= self.smoothing_window.value()):
             QtWidgets.QMessageBox.warning(self, "Smoothing settings", "Use a sample window larger than the polynomial order.")
@@ -332,7 +337,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.smoothing_window.setValue(window)
         task = LoadRecording(self._load_token, path, source=source, smoothing_window=window,
                              smoothing_method=self.smoothing_method.currentData(), polynomial_order=self.smoothing_order.value(),
-                             condition=self.condition_selector.currentData() if source is not None else None)
+                             condition=self.condition_selector.currentData() if source is not None else None,
+                             reference_config=self.reference_config)
         task.signals.finished.connect(self._loaded)
         self._load_tasks[self._load_token] = task
         self._pool.start(task)
@@ -369,6 +375,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             return
         self.dataset, self.cycles, self.groups = bundle
         self.source_dataset = task.source
+        self.reference_config = dict(task.reference_config)
         self.original_cycles = getattr(task, "original_cycles", [])
         if not task.reprocessing:
             recipes = (task.source.metadata.get("parameters") or {}).get("recipes", [])
@@ -404,6 +411,11 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"{len(self.dataset.rows):,} samples · {description}")
         condition = self.dataset.metadata.get('analysis_condition', {}).get('name', 'All conditions')
         self.context_label.setText(f"{self.dataset.path.name} · {condition} · {description} · source status: {self.dataset.metadata.get('status', 'unknown')}")
+        reference = self.dataset.metadata.get('analysis_reference')
+        if reference:
+            self.context_label.setText(self.context_label.text() + f" · E1 vs {reference['target_label']} ({reference['offset_v']:+.6g} V offset; IUPAC E1, current sign unchanged)")
+            self.map_panel.potential.setToolTip(f"Potential vs {reference['target_label']}; converted scale")
+        else: self.map_panel.potential.setToolTip('Potential in the recorded reference scale')
         self.processing_pending.clear()
         if hasattr(self, "workspace"): self.workspace.loaded()
 
@@ -555,10 +567,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if self.dataset is None:
             QtWidgets.QMessageBox.information(self, "eChemTips Data Analysis", "Open a recording before setting its CV program.")
             return
-        existing = self.dataset.metadata.get("parameters")
+        existing = (self.source_dataset or self.dataset).metadata.get("parameters")
         existing = existing if isinstance(existing, dict) else {}
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Set CV program")
+        dialog.setWindowTitle("Set CV program · original recorded potential scale")
         form = QtWidgets.QFormLayout(dialog)
         fields = (("Start voltage", "cv_start_v", "V"), ("First vertex", "cv_vertex1_v", "V"), ("Second vertex", "cv_vertex2_v", "V"), ("Approach voltage", "approach_voltage_v", "V"), ("Number of cycles", "cycles", ""))
         edits: dict[str, QtWidgets.QLineEdit] = {}

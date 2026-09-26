@@ -30,7 +30,9 @@ def snapshot(plot):
         series = [(name, np.asarray(x, dtype=float).copy(), np.asarray(y, dtype=float).copy()*scale, colour)
                   for name, x, y, colour in plot.series if len(x) and len(y)]
         if not series: raise ValueError('This plot has no data to export.')
-        return FigureData(plot.x_label, plot.y_label.replace('(nA)', f'({unit})') if unit else plot.y_label, series=series)
+        from .analysis_reference import potential_label
+        return FigureData(potential_label(plot.x_label, _dataset(plot)),
+            potential_label(plot.y_label.replace('(nA)', f'({unit})') if unit else plot.y_label, _dataset(plot)), series=series)
     if not plot.values: raise ValueError('This map has no data to export.')
     return FigureData('X position (µm)', 'Y position (µm)',
         cells={key: value*plot.display_scale for key, value in plot.values.items()},

@@ -32,6 +32,8 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     p=QtGui.QPainter(image); p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
     p.setPen(QtGui.QColor("#18323e")); p.setFont(QtGui.QFont("Arial",16))
     unit="V" if frames.recipe["kind"]=="CV potential" else "s"
+    reference=frames.recipe.get('potential_reference')
+    if reference and unit=='V': unit+=f" vs {reference['target_label']}"
     cycle=frames.recipe["cycle"]
     p.drawText(40,38,f'eChemTips · {frames.recipe["kind"]} · {frames.axis[index]:.4g} {unit}')
     p.setFont(QtGui.QFont("Arial",11))
@@ -294,6 +296,8 @@ class MoviePanel(QtWidgets.QWidget):
         self.map.quantity="Current "+frames.recipe["channel"][7]
         self.map.set_data({(yi[p["y_um"]],xi[p["x_um"]]):p["value"] for p in points},len(ys),len(xs),x_values=xs,y_values=ys)
         unit="V" if frames.recipe["kind"]=="CV potential" else "s from surface-program start" if frames.recipe["kind"]=="I–t time" else "s from cycle start"
+        reference=frames.recipe.get('potential_reference')
+        if reference and unit=='V': unit+=f" vs {reference['target_label']}"
         self.notice.setText(f"Movie duration {len(frames.axis) * interval / 1000:.1f} s · Frame {index+1}/{len(frames.axis)} · {frames.axis[index]:.5g} {unit} · {len(points)} valid hops · {frames.omitted} omitted · {interval} ms/frame. Auto limits suppress extreme outliers; values are unchanged.")
         if frames.recipe["kind"]=="CV potential" and frames.recipe["leg"]==3:
             self.notice.setText(leg_labels_from_recipe(frames,index)+" · "+self.notice.text())

@@ -43,6 +43,7 @@ class AnalysisWorkspace(QtCore.QObject):
                     source_size=stat.st_size, source_mtime_ns=stat.st_mtime_ns,
                     condition=w.condition_selector.currentData(), controls=values, tab=w.tabs.currentIndex(),
                     map_crop=w.map_panel.crop_bounds, movie_crop=w.movie_panel.crop_bounds,
+                    reference_config=w.reference_config,
                     bounds=w.explorer.bounds, baseline=w.explorer.baseline)
 
     def save(self):
@@ -81,6 +82,7 @@ class AnalysisWorkspace(QtCore.QObject):
             if stat.st_size != payload['source_size'] or stat.st_mtime_ns != payload['source_mtime_ns']:
                 raise ValueError('The source recording has changed. Open it normally and review the analysis instead.')
             self._restore(payload['controls'], smoothing_only=True)
+            self.window.reference_config = payload.get('reference_config', {})
             self.pending = payload; self.window.load_recording(source)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.pending = None; Q.QMessageBox.warning(self.window, 'Session not opened', str(exc))

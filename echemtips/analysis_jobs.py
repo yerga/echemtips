@@ -14,7 +14,7 @@ class LoadRecording(QtCore.QRunnable):
     """Load outside the event loop; the receiver alone updates UI widgets."""
 
     def __init__(self, token, path, *, source=None, smoothing_window=1,
-                 smoothing_method="savitzky_golay", polynomial_order=2, condition=None):
+                 smoothing_method="savitzky_golay", polynomial_order=2, condition=None, reference_config=None):
         super().__init__()
         self.token, self.path = token, path
         self.signals = LoadSignals()
@@ -22,6 +22,7 @@ class LoadRecording(QtCore.QRunnable):
         self.condition = condition
         self.source = source
         self.reprocessing = source is not None
+        self.reference_config = dict(reference_config or {})
         self.smoothing_window = smoothing_window
         self.smoothing_method, self.polynomial_order = smoothing_method, polynomial_order
 
@@ -35,6 +36,8 @@ class LoadRecording(QtCore.QRunnable):
             self.source = dataset
             from .analysis_conditions import condition_dataset
             dataset = condition_dataset(dataset, self.condition)
+            from .analysis_reference import convert_dataset
+            dataset = convert_dataset(dataset, self.reference_config)
             if self.cancelled:
                 self.signals.finished.emit(self.token, None, "")
                 return

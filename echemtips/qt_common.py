@@ -794,8 +794,11 @@ class XYPlot(QtWidgets.QWidget):
         if controls: self.graph.addItem(controls.cursor, ignoreBounds=True)
         self.graph.addLegend(offset=(8, 8), brush=pg.mkBrush(255, 255, 255, 220))
         scale, unit = current_display_scale(self.current_display_unit, (value for _, _, ys, _ in self.series for value in ys)) if "(nA)" in self.y_label else (1.0, "")
-        self.graph.setLabel("bottom", self.x_label, color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
-        self.graph.setLabel("left", self.y_label.replace("(nA)", f"({unit})") if unit else self.y_label, color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
+        from .analysis_export import _dataset
+        from .analysis_reference import potential_label
+        dataset = _dataset(self)
+        self.graph.setLabel("bottom", potential_label(self.x_label, dataset), color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
+        self.graph.setLabel("left", potential_label(self.y_label.replace("(nA)", f"({unit})") if unit else self.y_label, dataset), color=COLORS["muted"], **{"font-size": f"{self.font_size_pt:g}pt"})
         font = QtGui.QFont(); font.setPointSizeF(self.font_size_pt)
         for axis in ("left", "bottom"):
             self.graph.getAxis(axis).setTickFont(font)
