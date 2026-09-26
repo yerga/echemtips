@@ -42,6 +42,7 @@ nav:
   - Adaptive hopping + LSV: ADAPTIVE_LSV.md
   - Combinatorial scans: COMBINATORIAL_SCANS.md
   - Interface tour: USER_INTERFACE.md
+  - UX acceptance checklist: UX_TEST_CHECKLIST.md
   - Analysis workbench: ANALYSIS_GUIDE.md
   - Branding and optional integrations: BRANDING.md
   - Settings: SETTINGS_REFERENCE.md

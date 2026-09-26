@@ -100,3 +100,10 @@ python scripts/capture_docs_screenshots.py
 
 The script uses an isolated temporary settings path and the Qt offscreen
 platform. It never opens the NI FPGA backend.
+
+
+## Workspace improvements and testing
+
+See the [UX acceptance checklist](UX_TEST_CHECKLIST.md) for presets, workspace
+controls, analysis sessions, original/processed data, and step-by-step checks.
+The checklist also identifies partial features and current limitations.

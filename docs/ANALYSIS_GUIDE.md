@@ -203,3 +203,10 @@ mutate source samples, or guess ambiguous phases. Startup registration is explic
 the application does not execute plugins found beside a data file. The explorer
 discovers the registered provider automatically. Add numerical tests, incomplete
 recording tests and a UI test for each new provider.
+
+
+## Workspace improvements and testing
+
+See the [UX acceptance checklist](UX_TEST_CHECKLIST.md) for presets, workspace
+controls, analysis sessions, original/processed data, and step-by-step checks.
+The checklist also identifies partial features and current limitations.
