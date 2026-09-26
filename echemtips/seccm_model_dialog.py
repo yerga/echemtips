@@ -14,6 +14,7 @@ from .seccm_models import ModelParameters, limiting_current, step_current, stead
 class CompactNumber(Q.QDoubleSpinBox):
     """Show significant digits without eight distracting trailing zeroes."""
     def textFromValue(self, value):
+        """Format a value with the active locale and compact significant digits."""
         return self.locale().toString(value, 'g', 8)
 
 
@@ -55,6 +56,7 @@ class ModelDialog(Q.QDialog):
         self.origin = self.number(0, 1e9, 0)
         self.interval = self.number(0, 1e6, 0)
         options = Q.QWidget(); form = Q.QFormLayout(options)
+        self.options_form = form
         form.addRow("Prediction E start / end (V)", self.pair(self.e_start, self.e_end))
         form.addRow("Recording time bounds / step preview bounds (s)", self.pair(self.t_start, self.t_end))
         form.addRow("Step origin in recording time (s)", self.origin)
@@ -147,6 +149,13 @@ class ModelDialog(Q.QDialog):
         step = self.kind.currentIndex() == 1
         self.origin.setEnabled(step); self.interval.setEnabled(step)
         self.e_start.setEnabled(not step); self.e_end.setEnabled(not step)
+        rows = self.source.currentData() is not None
+        self.options_form.setRowVisible(0, not step and not rows)
+        self.options_form.setRowVisible(1, step or rows)
+        self.options_form.setRowVisible(2, step and rows)
+        self.options_form.setRowVisible(3, step)
+        self.options_form.setRowVisible(4, rows)
+        self.channel.setEnabled(rows)
 
     def select_source(self, *_):
         """Default bounds to the explicit selected original-data scope."""
@@ -156,6 +165,7 @@ class ModelDialog(Q.QDialog):
             finite = t[np.isfinite(t)]
             if len(finite): self.t_start.setValue(float(finite.min())); self.t_end.setValue(float(finite.max()))
         self.recording_sign.setEnabled(rows is not None)
+        self.mode_changed()
 
     def calculate(self):
         """Evaluate selected full-resolution samples; plot reduction is display-only."""
