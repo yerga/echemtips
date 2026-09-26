@@ -17,6 +17,9 @@ class PlotControls(QtCore.QObject):
             self.freeze = menu.addAction('Freeze display (recording continues)')
             self.freeze.setCheckable(True); self.freeze.toggled.connect(self.set_frozen)
         menu.addAction('Export figure…', self.export)
+        if not live:
+            from .analysis_export import export_plot_csv
+            menu.addAction('Export plotted data as CSV…', lambda: export_plot_csv(plot))
         toggle = Q.QToolButton(); toggle.setText('Plot ▾'); toggle.setMenu(menu)
         toggle.setPopupMode(Q.QToolButton.ToolButtonPopupMode.InstantPopup)
         row.addStretch(); row.addWidget(toggle); plot.layout().insertWidget(0, bar)
@@ -64,6 +67,9 @@ class PlotControls(QtCore.QObject):
 
     def export(self):
         """Export the current plotted view as PNG or scalable SVG."""
+        if not self.live:
+            from .analysis_export import export_figure
+            return export_figure(self.plot)
         from pyqtgraph.exporters import ImageExporter, SVGExporter
         path, selected = Q.QFileDialog.getSaveFileName(self.plot, 'Export plotted view', '', 'PNG (*.png);;SVG (*.svg)')
         if not path: return

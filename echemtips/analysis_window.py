@@ -37,6 +37,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self._pool = QtCore.QThreadPool(self)
         self._pool.setMaxThreadCount(1)
         self._build_ui()
+        from .analysis_export import install_map_export
+        for plot in (self.map_panel.map, self.movie_panel.map):
+            install_map_export(plot)
         preferences = SettingsStore().load()
         self.setStyleSheet(application_stylesheet(preferences.font_size_pt))
         for plot in self.findChildren(XYPlot):
@@ -206,7 +209,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         controls.addWidget(self.overlay_original)
         controls.addWidget(button("Set CV program…", self._edit_cv_program))
         controls.addStretch(1)
-        self.export_button = button("Export separated CVs…", self.export_cycles, "primary")
+        self.export_button = button("Export all separated CVs…", self.export_cycles, "primary")
+        self.export_button.hide()
         controls.addWidget(self.export_button)
         layout.addLayout(controls)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -464,8 +468,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.cv_plot.set_message("No complete CV cycles detected in this recording")
             self.cv_detail.setText("Raw traces remain available. Add the voltage program for legacy files without CV metadata.")
             self.export_button.setEnabled(False)
+            self.export_button.hide()
             return
         self.export_button.setEnabled(True)
+        self.export_button.show()
         column = CURRENT_COLUMNS[self.cv_current.currentText()]
         all_item = QtWidgets.QTreeWidgetItem(("All", "", ""))
         all_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, -1)
