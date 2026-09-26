@@ -54,6 +54,12 @@ class WorkspaceTests(unittest.TestCase):
         self.w.operator_workspace.refresh()
         self.assertTrue(page.setup_panel.isEnabled())
 
+    def test_close_stops_ui_timers(self):
+        """Closed windows must not keep refreshing their hidden controls."""
+        self.w.close()
+        self.assertFalse(self.w.poll_timer.isActive())
+        self.assertFalse(self.w.operator_workspace.timer.isActive())
+
     def test_event_journal(self):
         """Operational events are retained for troubleshooting."""
         self.w.toast('UX test saved', 'success')

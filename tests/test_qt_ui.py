@@ -516,7 +516,7 @@ class QtLayoutTests(unittest.TestCase):
                 self.assertAlmostEqual(page.parameters().settling_time_s, 0.5)
                 self.assertEqual(
                     window.pages[page_name].accept_approach_button.text(),
-                "Accept contact",
+                    "Accept Z as contact",
                 )
             self.assertAlmostEqual(window.pages["Approach"].parameters().feedback_threshold, 0.005)
             self.assertAlmostEqual(window.pages["Approach + CV"].parameters().feedback_threshold_na, 0.005)

@@ -2733,6 +2733,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         finally:
             self._stop_acquisition()
             if self.backend.connected: self.backend.disconnect()
+        self.poll_timer.stop()
+        if hasattr(self, "operator_workspace"): self.operator_workspace.timer.stop()
         if hasattr(self, "layout_workspace"): self.layout_workspace.save()
         event.accept()
 
