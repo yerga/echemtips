@@ -61,6 +61,7 @@ class WECSPMDriver:
 
     supports_cv_rate_series = True
     supports_lsv = True
+    supports_eis = True
     supports_contact_snapshot = True
 
     BASELINE_HOLD_US = 25_000

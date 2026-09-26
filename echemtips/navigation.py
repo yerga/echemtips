@@ -19,6 +19,7 @@ class ExperimentEntry:
 EXPERIMENTS = (
     ExperimentEntry("Adaptive hopping + LSV", "Scanning", "Bayesian spatial search with conservative tilt survey, contact-gated LSV and an auditable decision log.", "AdaptivePage", "adaptive"),
     ExperimentEntry("Watch current", "Monitoring", "Monitor both current channels over time.", "WatchPage"),
+    ExperimentEntry("Approach + EIS", "Experimental", "Contact-gated stepped-sine apparent impedance; validate with a dummy load first.", "EISPage", "eis"),
     ExperimentEntry("Watch position", "Monitoring", "Monitor measured X, Y and Z positions.", "WatchPositionPage"),
     ExperimentEntry("Preflight", "Setup and diagnostics", "Guided checks before an experiment.", "PreflightPage"),
     ExperimentEntry("Characterize pipette", "Setup and diagnostics", "Measure pipette resistance and response.", "PipetteCharacterizationPage"),

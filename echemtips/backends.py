@@ -392,6 +392,12 @@ class SimulationBackend(InstrumentBackend):
                 self._positions[axis] += math.copysign(step, delta)
 
     @_synchronized_io
+    def read_samples(self) -> list[Sample]:
+        """Use sample-clock RC synthesis only during the experimental EIS method."""
+        source = getattr(self, "_eis_source", None)
+        return source.read_batch() if source is not None else [self.read_sample()]
+
+    @_synchronized_io
     def read_sample(self) -> Sample:
         """Advance motion and synthesize calibrated position/current channels."""
         if not self.connected:

@@ -272,6 +272,8 @@ class Sample:
     commanded_y_um: float = math.nan
     commanded_z_um: float = math.nan
     cv_rate_index: int = -1
+    eis_frequency_index: int = -1
+    eis_phase: str = ""
 
     def as_row(self) -> dict[str, float | int]:
         """Return every runtime field as a flat mapping."""

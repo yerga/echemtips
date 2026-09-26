@@ -359,6 +359,8 @@ class DataRecorder:
     @classmethod
     def _fields_for_parameters(cls, parameters: Any) -> tuple[str, ...]:
         omitted = set(cls._PER_SAMPLE_OMISSIONS)
+        if not hasattr(parameters, "eis_reference"):
+            omitted.update({"eis_frequency_index", "eis_phase"})
         if not isinstance(parameters, ApproachCVParameters) or parameters.scan_rates_v_s is None:
             omitted.add("cv_rate_index")
         if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)) and not hasattr(parameters, "attempts"):
