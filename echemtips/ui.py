@@ -2150,6 +2150,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.operator_workspace = OperatorWorkspace(self)
         from .workspace_layout import LayoutWorkspace
         self.layout_workspace = LayoutWorkspace(self)
+        from .about import install_help_menu
+        install_help_menu(self)
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
 
     def launch_analysis(self, *, last_recording: bool = False) -> None:

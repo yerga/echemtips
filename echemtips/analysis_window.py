@@ -50,6 +50,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         from .seccm_model_dialog import open_model_dialog
         self.menuBar().addMenu("Models").addAction("SECCM analytical models…",
             lambda: open_model_dialog(self, self.source_dataset, self.original_cycles))
+        from .about import install_help_menu
+        install_help_menu(self)
         if initial_path:
             self.load_recording(Path(initial_path))
 
