@@ -123,6 +123,8 @@ def create_adaptive_page(app):
             self.approve_button = button('Approve next landing',self._approve)
             self.approve_button.setEnabled(False)
             content.addWidget(self.approve_button)
+            self.approval_detail = label('', 'muted', word_wrap=True)
+            content.addWidget(self.approval_detail)
             tabs = QtWidgets.QTabWidget()
             self.maps = {}
             for key,title,unit in [('measured','Measured objective','nA'),('predicted','Predicted objective','nA'),('uncertainty','Model uncertainty','nA'),('z','Contact Z (commanded)','µm')]:
@@ -205,6 +207,17 @@ def create_adaptive_page(app):
             self._show_update(update)
             self.approve_button.setEnabled(e.active and e.phase in {'approval','tilt_approval'})
             self.approve_button.setText('Approve tilt and continue' if e.phase=='tilt_approval' else 'Approve next landing')
+            if e.phase == 'tilt_approval':
+                self.approval_detail.setText(e.detail + f'\nClearance {e.params.clearance_um:g} µm · assumed relief allowance {e.params.relief_allowance_um:g} µm. Sparse measurements cannot establish absence of obstacles.')
+            elif e.phase == 'approval' and e.proposal:
+                proposal = e.proposal
+                detail = f"XY {proposal['xy']} µm · {proposal['reason']}"
+                if 'predicted_na' in proposal:
+                    detail += f"\nPredicted |i| {proposal['predicted_na']:.4g} nA · model σ {proposal['uncertainty_na']:.4g} nA (not measured)"
+                detail += f"\n{max(0, e.params.max_landings - len(e.params.attempts))} landings remaining; motion is revalidated at launch."
+                self.approval_detail.setText(detail)
+            else: self.approval_detail.clear()
+            self.approval_detail.setVisible(bool(self.approval_detail.text()))
             if e.params.attempts:
                 pixel=e.params.attempts[-1]['scan_pixel']
                 if pixel!=self._last_pixel:

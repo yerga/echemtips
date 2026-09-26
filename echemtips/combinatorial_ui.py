@@ -41,6 +41,7 @@ class RecipeDialog(Q.QDialog):
         actions = Q.QHBoxLayout(); layout.addLayout(actions)
         actions.addWidget(button('Add / duplicate', self.add))
         actions.addWidget(button('Remove', self.remove))
+        actions.addWidget(button('Edit selected…', self.edit_selected))
         actions.addWidget(button('Two-factor matrix…', self.matrix))
         actions.addWidget(button('Load recipes…', self.load))
         actions.addWidget(button('Save recipes…', self.save))
@@ -92,6 +93,42 @@ class RecipeDialog(Q.QDialog):
             else:
                 self.table.setItem(row, col, Q.QTableWidgetItem(str(recipe[field])))
 
+    def edit_selected(self):
+        """Edit one condition in a labelled form without horizontal table scrolling."""
+        try:
+            recipes = self.values(); index = max(0, self.table.currentRow()); recipe = recipes[index]
+            dialog = Q.QDialog(self); dialog.setWindowTitle('Edit recipe'); layout = Q.QFormLayout(dialog)
+            fields = {}
+            for key, value in recipe.items():
+                if key == 'waveform':
+                    widget = Q.QComboBox(); widget.addItems(['CV', 'LSV']); widget.setCurrentText(value)
+                else: widget = Q.QLineEdit(str(value))
+                fields[key] = widget; layout.addRow(CAPTIONS.get(key, key.title()), widget)
+            def waveform():
+                """Disable reverse-sweep fields when the condition is an LSV."""
+                lsv = 'waveform' in fields and fields['waveform'].currentText() == 'LSV'
+                for key in ('cv_vertex2_v', 'cycles'):
+                    if key in fields: fields[key].setEnabled(not lsv)
+                if lsv: fields['cycles'].setText('1')
+            if 'waveform' in fields: fields['waveform'].currentIndexChanged.connect(waveform)
+            waveform()
+            actions = Q.QDialogButtonBox(Q.QDialogButtonBox.StandardButton.Ok | Q.QDialogButtonBox.StandardButton.Cancel)
+            actions.accepted.connect(dialog.accept); actions.rejected.connect(dialog.reject); layout.addRow(actions)
+            if dialog.exec() != Q.QDialog.DialogCode.Accepted: return
+            result = {}
+            for key, widget in fields.items():
+                value = widget.currentText() if key == 'waveform' else widget.text().strip()
+                result[key] = value if key in ('name', 'waveform') else int(value) if key == 'cycles' else float(value)
+            candidate = deepcopy(self.params); candidate.recipes = [result]; candidate.recipe_assignment = [0] * candidate.point_count
+            errors = candidate.validate(self.settings)
+            if errors: raise ValueError('\n'.join(errors))
+            self.table.blockSignals(True)
+            for col, key in enumerate(('name', *self.fields)):
+                if key == 'waveform': self.table.cellWidget(index, col).setCurrentText(result[key])
+                else: self.table.item(index, col).setText(str(result[key]))
+            self.table.blockSignals(False); self.refresh()
+        except (ValueError, TypeError) as exc: self.error.setText(str(exc))
+
     def values(self):
         """Parse explicit values, rejecting partial or malformed table entries."""
         result = []
@@ -126,6 +163,18 @@ class RecipeDialog(Q.QDialog):
     def refresh(self, *_):
         """Preview repeat counts and the actual physical condition layout."""
         if not hasattr(self, 'summary'): return
+        blocker = QtCore.QSignalBlocker(self.table)
+        if 'waveform' in self.fields:
+            columns = ('name', *self.fields)
+            for row in range(self.table.rowCount()):
+                lsv = self.table.cellWidget(row, columns.index('waveform')).currentText() == 'LSV'
+                for key in ('cv_vertex2_v', 'cycles'):
+                    item = self.table.item(row, columns.index(key))
+                    flags = item.flags()
+                    item.setFlags(flags & ~QtCore.Qt.ItemFlag.ItemIsEditable if lsv else flags | QtCore.Qt.ItemFlag.ItemIsEditable)
+                    item.setForeground(QtGui.QColor('#8a98a4' if lsv else '#182b3a'))
+                    item.setToolTip('Not used by an LSV (one forward sweep)' if lsv else '')
+        del blocker
         self.rows.setEnabled(self.mode.currentText() == 'Row blocks')
         self.seed.setEnabled(self.mode.currentText() == 'Randomized')
         try:
@@ -137,7 +186,10 @@ class RecipeDialog(Q.QDialog):
                 item.setBackground(QtGui.QColor(PALETTE[condition % len(PALETTE)]))
                 item.setForeground(QtGui.QColor('#182b3a'))
                 item.setToolTip('\n'.join(f'{CAPTIONS.get(k,k)}: {v}' for k,v in recipe.items()))
-                self.preview.setItem(index // self.params.x_points, index % self.params.x_points, item)
+                row, col = divmod(index, self.params.x_points)
+                hop = row * self.params.x_points + (self.params.x_points - 1 - col if self.params.serpentine and row % 2 else col) + 1
+                item.setText(item.text() + f'\nHop {hop}')
+                self.preview.setItem(row, col, item)
             counts = Counter(assignment)
             self.summary.setText('Fresh-site replicates: ' + '; '.join(f'{r["name"]}: {counts[i]}' for i,r in enumerate(recipes)))
             self.error.setText('')

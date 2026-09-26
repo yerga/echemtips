@@ -78,7 +78,8 @@ class LayoutWorkspace(QtCore.QObject):
         self.splitters = {}
         view = app.menuBar().addMenu('View')
         sidebar = app.findChild(Q.QFrame, 'sidebar')
-        toggle = view.addAction('Show sidebar'); toggle.setCheckable(True); toggle.setChecked(True)
+        toggle = view.addAction('Show sidebar'); toggle.setCheckable(True); toggle.setChecked(self.store.value('sidebar_visible', True, type=bool))
+        self.sidebar_toggle = toggle; sidebar.setVisible(toggle.isChecked())
         toggle.setShortcut('Ctrl+B'); toggle.toggled.connect(sidebar.setVisible)
         view.addAction('Experiment library…', app.open_library).setShortcut('Ctrl+K')
         for name, page in app.pages.items():
@@ -97,6 +98,9 @@ class LayoutWorkspace(QtCore.QObject):
                 menu_button = Q.QToolButton(); menu_button.setText('Preset…'); menu = Q.QMenu(menu_button)
                 menu.addAction('Save / duplicate preset…', lambda checked=False, p=page: preset(p, True))
                 menu.addAction('Load preset…', lambda checked=False, p=page: preset(p, False))
+                if hasattr(page, 'x_points'):
+                    from .scan_geometry_ui import edit_geometry
+                    menu.addAction('Set scan center / size / spacing…', lambda checked=False, p=page: edit_geometry(p))
                 menu_button.setMenu(menu); menu_button.setPopupMode(Q.QToolButton.ToolButtonPopupMode.InstantPopup)
                 page.layout().itemAt(0).layout().addWidget(menu_button)
             tabs = page.body.findChild(Q.QTabWidget)
@@ -115,14 +119,17 @@ class LayoutWorkspace(QtCore.QObject):
                     tabs.currentChanged.connect(lambda value, selector=selector, index=index: selector.setVisible(value == index))
                     selector.setVisible(tabs.currentIndex() == index)
                 tabs.setCurrentIndex(int(self.store.value(name + '/tab', 0)))
+            if hasattr(page, 'setup_toggle') and self.store.value(name + '/setup_hidden', False, type=bool): page.setup_toggle.click()
         geometry = self.store.value('geometry')
         if geometry: app.restoreGeometry(geometry)
 
     def save(self):
         """Persist window geometry and per-experiment split/tab choices."""
         self.store.setValue('geometry', self.app.saveGeometry())
+        self.store.setValue('sidebar_visible', self.sidebar_toggle.isChecked())
         for name, splitter in self.splitters.items():
             self.store.setValue(name + '/sizes', splitter.sizes())
+            self.store.setValue(name + '/setup_hidden', self.app.pages[name].setup_toggle.isChecked())
             tabs = self.app.pages[name].body.findChild(Q.QTabWidget)
             if tabs: self.store.setValue(name + '/tab', tabs.currentIndex())
         self.store.sync()

@@ -49,7 +49,9 @@ class PlotControls(QtCore.QObject):
     def fit(self):
         """Restore automatic ranges and render the newest retained display data."""
         self.manual = False
-        if self.live: self.freeze.setChecked(False)
+        if self.live:
+            self.frozen = False
+            self.freeze.setChecked(False)
         self.plot.graph.enableAutoRange()
         self.mode.setText('Following' if self.live else 'Auto fit')
         self.plot.redraw()

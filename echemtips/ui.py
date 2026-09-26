@@ -355,6 +355,9 @@ class DiagnosticWorkflowPage(BasePage):
         self._ready()
         if not math.isfinite(duration_s) or duration_s <= 0:
             raise ValueError("Capture duration must be greater than zero.")
+        if self.app.settings.mode != 'Simulation':
+            fixture = 'the normal input wiring at zero-current conditions' if circuit == 'normal' else f'the {circuit} test circuit'
+            if QtWidgets.QMessageBox.warning(self, 'Prepare diagnostic fixture', f'Prepare {fixture}. Test: {kind}. Verify the amplifier settings and safe potential range. Continue?', QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel, QtWidgets.QMessageBox.StandardButton.Cancel) != QtWidgets.QMessageBox.StandardButton.Ok: return
         self.app.backend.set_diagnostic_circuit(circuit, resistance_mohm)
         self.app.backend.set_voltage(1, potential_v)
         self._capture_kind, self._duration_s = kind, duration_s
@@ -363,6 +366,9 @@ class DiagnosticWorkflowPage(BasePage):
 
     def _begin_sweep(self, kind: str, start_v: float, end_v: float, rate_v_s: float, circuit: str, resistance_mohm: float | None = None) -> None:
         self._ready()
+        if self.app.settings.mode != 'Simulation':
+            fixture = 'the normal input wiring at zero-current conditions' if circuit == 'normal' else f'the {circuit} test circuit'
+            if QtWidgets.QMessageBox.warning(self, 'Prepare diagnostic fixture', f'Prepare {fixture}. Test: {kind}. Verify the amplifier settings and safe potential range. Continue?', QtWidgets.QMessageBox.StandardButton.Ok | QtWidgets.QMessageBox.StandardButton.Cancel, QtWidgets.QMessageBox.StandardButton.Cancel) != QtWidgets.QMessageBox.StandardButton.Ok: return
         self.app.backend.set_diagnostic_circuit(circuit, resistance_mohm)
         self._cv_runner = CVExperiment(self.app.backend, self.app.settings)
         self._cv_runner.start(CVParameters(start_v=start_v, vertex1_v=end_v, vertex2_v=start_v, scan_rate_v_s=rate_v_s, cycles=1))
@@ -637,7 +643,7 @@ class InstrumentReadoutBar(QtWidgets.QFrame):
         self.setObjectName("instrumentStrip")
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Maximum)
         row = _hbox(self, (12, 8, 12, 8), 8)
-        heading = label("LIVE", "stripHeading")
+        heading = self.freshness_label = label("LIVE", "stripHeading")
         heading.setToolTip("Live measured channels (not commanded positions)")
         row.addWidget(heading)
 
@@ -1036,7 +1042,7 @@ class ManagedExperimentPage(BasePage):
         self.stop_button = self.status.stop_button
         self.accept_approach_button: QtWidgets.QPushButton | None = None
         if self.manual_approach:
-            self.accept_approach_button = button("Accept contact", self.accept_approach)
+            self.accept_approach_button = button("Accept Z as contact", self.accept_approach)
             self.accept_approach_button.setToolTip(
                 "Stops the current approach waypoint and deliberately starts the method's next step without waiting for the current threshold."
             )
@@ -2544,8 +2550,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             # Stopping the physical program takes priority over plotting and
             # recording the snapshot: either operation may fail independently.
             hardware = self.backend.hardware_approach_cv_required
-            self.backend.stop_motion()
             if hardware and hasattr(self, "operator_workspace"): self.operator_workspace.recovery_required = True
+            self.backend.stop_motion()
             self._consume_acquired(before.samples, finalize=False)
             if before.error is not None: raise BackendError(f"Acquisition failed before cancellation: {before.error}") from before.error
             if not hardware: experiment.state = ExperimentState.ABORTED; experiment.detail = "Experiment stopped by operator"

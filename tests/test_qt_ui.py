@@ -561,7 +561,7 @@ class QtLayoutTests(unittest.TestCase):
                 window.show_page(page_name)
                 scan_page.visual_tabs.setCurrentIndex(map_index)
                 self.qt_app.processEvents()
-                self.assertIsNone(scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner))
+                self.assertEqual(scan_page.visual_tabs.cornerWidget(QtCore.Qt.Corner.TopRightCorner).count(), 3)
             approach_cv_tabs = approach_cv.findChildren(QtWidgets.QTabWidget)[0]
             self.assertEqual(
                 tuple(approach_cv_tabs.tabText(index) for index in range(approach_cv_tabs.count())),

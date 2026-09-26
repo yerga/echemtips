@@ -21,6 +21,8 @@ class OperatorWorkspace(QtCore.QObject):
         app.menuBar().setCornerWidget(self.state)
         menu = app.menuBar().addMenu('Instrument')
         menu.addAction('Event history / support report…', self.history)
+        menu.addAction('Measured / commanded position details…', self.readback_details)
+        menu.addAction('Show current recording in folder', self.show_recording)
         menu.addAction('Open data folder', lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(Path(app.settings.save_directory).expanduser().resolve()))))
         advanced = menu.addMenu('Advanced controls')
         action = advanced.addAction('End current waypoint', app.end_current_waypoint)
@@ -61,7 +63,8 @@ class OperatorWorkspace(QtCore.QObject):
                  else 'Paused' if a.any_experiment_active and 'paused' in a.execution_label.text().lower() else 'Running' if a.any_experiment_active else 'Recording' if a.recorder.active else 'Ready')
         recording = a.recorder.output_path
         suffix = (' · Recording: ' + recording.name) if a.recorder.active and recording else ''
-        self.state.setText(f'{a.settings.mode.upper()} · {state}')
+        recording_state = f' · REC {a.recorder.sample_count:,} samples' if a.recorder.active else ''
+        self.state.setText(f'{a.settings.mode.upper()} · {state}{recording_state}')
         self.state.setToolTip((reason or 'Ready for a new experiment') + suffix)
         self.state.setStyleSheet('padding: 4px 10px; font-weight: bold;' + ('color: #a95e06;' if a.settings.mode == 'Simulation' else ''))
         for page in a.pages.values():
@@ -82,6 +85,15 @@ class OperatorWorkspace(QtCore.QObject):
         stale = not a.backend.connected or age is None or age > 2
         a.instrument_readout.setToolTip('No current readback' if age is None else f'Last received {age:.1f} s ago. Values are measured, not commanded.')
         a.instrument_readout.setEnabled(not stale)
+        a.instrument_readout.freshness_label.setText('STALE' if stale and age is not None else 'NO DATA' if age is None else 'LIVE')
+
+    def show_recording(self):
+        """Open the recording directory without trying to launch an incomplete CSV."""
+        path = self.app.recorder.output_path
+        if path is None:
+            Q.QMessageBox.information(self.app, 'Recording', 'No recording has been created in this session.'); return
+        QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(path.parent.resolve())))
+        self.app.toast(f'Recording: {path.name}', 'info')
 
     def history(self):
         """Open a searchable, copyable report without dismissing stored events."""
@@ -96,6 +108,20 @@ class OperatorWorkspace(QtCore.QObject):
         copy = Q.QPushButton('Copy report'); copy.clicked.connect(lambda: Q.QApplication.clipboard().setText(text.toPlainText())); layout.addWidget(copy)
         dialog.exec()
 
+    def readback_details(self):
+        """Explain the latest cached readback without issuing a hardware request."""
+        sample = self.app._sample
+        if sample is None:
+            Q.QMessageBox.information(self.app, 'Position readback', 'No acquired samples yet.'); return
+        import math
+        lines = []
+        for axis in 'xyz':
+            measured = getattr(sample, axis + '_um')
+            commanded = getattr(sample, 'commanded_' + axis + '_um')
+            command = f'{commanded:.4g} µm; difference {measured-commanded:+.4g} µm' if math.isfinite(commanded) else 'unavailable in latest sample'
+            lines.append(f'{axis.upper()}: measured {measured:.4g} µm; commanded {command}')
+        Q.QMessageBox.information(self.app, 'Latest position snapshot', '\n'.join(lines) + '\n\nA difference is not automatically a fault; check calibration and settling. This is a snapshot, not a live control.')
+
     def review(self, page, params):
         """Require an explicit output/recording review for real-device starts."""
         if self.recovery_required: raise ValueError(self.reason())
@@ -103,8 +129,14 @@ class OperatorWorkspace(QtCore.QObject):
         from dataclasses import asdict
         values = asdict(params)
         summary = f'{page.recording_name}\n{self.app.backend.label} · {self.app.settings.polarity_convention}\nData folder: {self.app.settings.save_directory}\n'
-        for key in ('start_z_um', 'end_z_um', 'feedback_channel', 'feedback_threshold_na', 'retract_distance_um', 'marker_enabled'):
-            if key in values: summary += f"\n{key.replace('_', ' ')}: {values[key]}"
+        captions = {'start_z_um': 'Initial Z (µm)', 'end_z_um': 'Approach limit Z (µm)',
+                    'feedback_channel': 'Feedback current', 'retract_distance_um': 'Contact-relative retract (µm)',
+                    'marker_enabled': 'Orientation marker landing', 'retract_after': 'Retract after measurement'}
+        for key, caption in captions.items():
+            if key in values: summary += f"\n{caption}: {values[key]}"
+        if 'feedback_threshold_na' in values:
+            summary += f"\nContact threshold: {values['feedback_threshold_na'] * 1000:g} pA"
+        summary += '\n\nFull parameter snapshot is available under Show Details.'
         box = Q.QMessageBox(Q.QMessageBox.Icon.Warning, 'Review hardware experiment', summary, parent=self.app)
         box.setInformativeText('Confirm the wiring, safe travel path and polarity before starting. Emergency stop remains available in the main window.')
         box.setDetailedText(json.dumps(values, indent=2, default=str))
