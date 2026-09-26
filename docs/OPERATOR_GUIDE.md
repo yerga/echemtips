@@ -261,11 +261,13 @@ does not start a marker. The marker itself requires confirmed or operator-accept
 contact; reaching the approach limit does not authorize the electrochemistry.
 
 Automatic placement is the first X coordinate, one Y spacing beyond the final
-row in the scan direction. For a single Y row the offset is the larger of 5 µm
-and three footprint diameters. This extends one corner rather than symmetrically
-extending the whole array. Enter explicit Marker X/Y coordinates to override it,
-or untick the option. Invalid/out-of-travel or overlapping positions block start;
-they are never silently clamped. Verify the preview and sample area before running.
+row in the scan direction. For a single Y row, the offset uses the X hop spacing.
+A single-point scan has no hop spacing: enter explicit marker coordinates or
+disable the marker. Footprint diameter does not affect placement or clearance.
+This extends one corner rather than the whole array. Explicit Marker X/Y values
+override automatic placement. Nonfinite coordinates, positions outside the piezo
+range, or positions inside/on the array block start; coordinates are never
+silently clamped. Verify the preview and physical separation before running.
 The trip to the marker uses normal retract distance plus the **Long-move extra retract**, even for serpentine scans. Duration estimates include the marker.
 
 The scan preview and exported `.orientation.svg` show landing order and X/Y

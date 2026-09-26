@@ -531,8 +531,8 @@ class BoundedScanRetraction:
         return self.point_count + int(self.marker_enabled)
 
     def marker_position(self) -> tuple[float, float]:
-        """Place the default marker at first X, one spacing beyond the last row."""
-        spacing = self.spacing_um[1] or max(5.0, 3 * self.footprint_diameter_um)
+        """Use one Y hop beyond the last row, or X hop spacing for a single row."""
+        spacing = self.spacing_um[1] or self.spacing_um[0]
         direction = 1 if self.y_end_um >= self.y_start_um else -1
         last_y = self.y_end_um if self.y_points > 1 else self.y_start_um
         return (self.x_start_um if self.marker_x_um is None else self.marker_x_um,
@@ -551,7 +551,7 @@ class BoundedScanRetraction:
         return -2 if self.is_marker(point) else point
 
     def marker_validation(self, settings: AppSettings) -> list[str]:
-        """Reject unsafe or overlapping marker positions before any motion."""
+        """Validate finite travel and an outside-array position, not footprint clearance."""
         if not self.marker_enabled:
             return []
         x, y = self.marker_position()
@@ -560,8 +560,8 @@ class BoundedScanRetraction:
         lo_x, hi_x = sorted((self.x_start_um, self.x_end_um if self.x_points > 1 else self.x_start_um))
         lo_y, hi_y = sorted((self.y_start_um, self.y_end_um if self.y_points > 1 else self.y_start_um))
         gap = math.hypot(max(lo_x - x, 0, x - hi_x), max(lo_y - y, 0, y - hi_y))
-        if gap <= self.footprint_diameter_um:
-            return ['Orientation marker must be outside the array with more than one footprint diameter clearance.']
+        if gap == 0:
+            return ['Orientation marker must be outside the array. For a single-point scan, set explicit marker coordinates or disable it.']
         return []
 
     def update_marker(self, point: int, status: str) -> None:

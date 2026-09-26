@@ -92,7 +92,7 @@ class MarkerTests(unittest.TestCase):
                 settings = AppSettings(polarity_convention='Instrument-native')
                 backend = SimulationBackend(settings)
                 backend.connect()
-                p = params_cls(start_z_um=10, end_z_um=11, x_points=1, y_points=1)
+                p = params_cls(start_z_um=10, end_z_um=11, x_points=1, y_points=1, marker_y_um=40)
                 if isinstance(p, ScanHoppingCVParameters): p.feedback_threshold_na = 9
                 else: p.feedback_threshold = 9
                 e = experiment_cls(backend, settings)

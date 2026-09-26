@@ -237,7 +237,7 @@ def _scan_marker_card(page, controls_host):
     page.marker_x = add_field(grid, Field("Marker X (blank = automatic)", "", "µm"), 0, 0)
     page.marker_y = add_field(grid, Field("Marker Y (blank = automatic)", "", "µm"), 0, 1)
     layout.addWidget(fields)
-    explanation = label("Repeats the same experiment outside the array. Automatic: first X, one spacing beyond the last Y row. Excluded from analysis.", "muted", word_wrap=True)
+    explanation = label("Repeats the experiment at first X, one Y hop beyond the last row (X hop spacing for a single row). Independent of footprint diameter; must stay within XY travel. Excluded from analysis.", "muted", word_wrap=True)
     layout.addWidget(explanation)
     preview = QtSvgWidgets.QSvgWidget()
     preview.setMinimumHeight(270)
