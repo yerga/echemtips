@@ -5,6 +5,39 @@ rewrite acquisition CSV/JSON files. After updating, run
 `python -m pip install -e .` in the project environment: publication rendering
 uses Matplotlib, now a required dependency.
 
+## Contact Z, topography and relative coordinates
+
+In **Hop maps**, choose **Contact Z (surface estimate)** in the statistic selector.
+This is separate from whole-hop measured-Z statistics, which include approach
+and retraction. Explicit per-pixel `contact_z_um` metadata is used when present;
+otherwise the map uses median measured Z from validated CV/LSV cycles or a
+validated surface I–t program. This is a surface-position estimate, not the exact
+threshold-crossing sample. Missing/failed/ambiguous landings remain blank;
+orientation-marker landings are excluded. Unrecognised surface programs cannot
+safely produce this map. Commanded and sensor Z should not be mixed.
+
+- **Remove tilt** subtracts a least-squares plane fitted to usable landings inside
+  the current crop. At least three noncollinear locations are needed. This can
+  remove real large-scale sample shape as well as mounting tilt, and outliers can
+  bias the fit. Inspect the raw map first; flattening is optional and reversible.
+- **Topography height** computes `max(Z) − Z`, after optional plane subtraction.
+  The largest contact Z therefore becomes the lowest height, at zero. The zero
+  is defined by the visible selection and changes if its crop/condition changes.
+- **3D view…** opens a rotatable snapshot. Points indicate landings; surface faces
+  connect only fully populated neighbouring grid cells, without filling holes.
+  Sparse or single-row maps show points without an invented surface. Vertical
+  scale is exaggerated for visibility. Publication export retains the viewing
+  angle and supports height units such as µm or nm.
+- **XY from scan start** is available for every hop-map channel and movie map.
+  The original first planned landing defines `(0, 0)`, even after cropping.
+  Reverse scans retain signed offsets; this is translation, not reflection.
+  Crop bounds remain in original piezo coordinates. Movie MP4s and figures use
+  the selected coordinates too.
+
+Map CSVs and figure sidecars record coordinate origins, plane coefficients and
+height conversion. Analysis sessions preserve these choices; source files and
+instrument commands are never modified.
+
 ## Export the selected plot's data
 
 Use **Plot → Export plotted data as CSV…** on an Explore/measure or CV plot.

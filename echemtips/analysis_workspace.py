@@ -25,8 +25,8 @@ class AnalysisWorkspace(QtCore.QObject):
         result = {name: getattr(w, name) for name in ('smoothing_enabled', 'smoothing_method', 'smoothing_window', 'smoothing_order', 'cv_current', 'cv_view')}
         for prefix, widget, names in (
             ('explorer', w.explorer, ('provider', 'selection', 'x_signal', 'y_signal')),
-            ('map', w.map_panel, ('channel', 'statistic', 'potential', 'direction', 'cycle', 'palette')),
-            ('movie', w.movie_panel, ('kind', 'channel', 'cycle', 'leg', 'count', 'stride', 'fps', 'hold', 'colour', 'palette', 'low', 'high', 'excluded'))):
+            ('map', w.map_panel, ('channel', 'statistic', 'potential', 'direction', 'cycle', 'palette', 'relative_xy', 'flatten', 'height')),
+            ('movie', w.movie_panel, ('kind', 'channel', 'cycle', 'leg', 'count', 'stride', 'fps', 'hold', 'colour', 'palette', 'low', 'high', 'excluded', 'relative_xy'))):
             result.update({prefix + '.' + name: getattr(widget, name) for name in names})
         return result
 

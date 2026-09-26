@@ -248,6 +248,7 @@ class MapPanel(QtWidgets.QWidget):
         controls = QtWidgets.QGridLayout()
         self.channel, self.statistic, self.palette = QtWidgets.QComboBox(), QtWidgets.QComboBox(), QtWidgets.QComboBox()
         self.statistic.addItems(("Mean", "Minimum", "Maximum", "Std deviation", "CV at potential", "Surface I–t mean"))
+        self.statistic.addItem('Contact Z (surface estimate)')
         self.palette.addItems(("viridis", "plasma", "cividis", "inferno"))
         self.potential = QtWidgets.QDoubleSpinBox(); self.potential.setRange(-100, 100); self.potential.setDecimals(4); self.potential.setSuffix(" V")
         self.potential.setKeyboardTracking(False)
@@ -260,6 +261,19 @@ class MapPanel(QtWidgets.QWidget):
         controls.addWidget(button("Export map…", self._export), 2, 2)
         self.crop_button = button("Crop XY…", self.edit_crop)
         controls.addWidget(self.crop_button, 2, 0)
+        self.relative_xy = QtWidgets.QCheckBox('XY from scan start')
+        self.relative_xy.setToolTip('Translate the first planned landing to (0, 0). Crop bounds remain in piezo coordinates; reverse scans retain negative offsets.')
+        controls.addWidget(self.relative_xy, 2, 1)
+        self.flatten = QtWidgets.QCheckBox('Remove tilt')
+        self.flatten.setToolTip('Subtract a least-squares plane fitted to usable visible landings. Real long-range sample shape may also be removed.')
+        self.height = QtWidgets.QCheckBox('Topography height')
+        self.height.setToolTip('Height = max(contact Z) − contact Z, after optional tilt removal. Lowest visible height is zero.')
+        self.three_d = button('3D view…', self.open_3d)
+        controls.addWidget(self.flatten, 3, 0)
+        controls.addWidget(self.height, 3, 1)
+        controls.addWidget(self.three_d, 3, 2)
+        for control in (self.relative_xy, self.flatten, self.height):
+            control.toggled.connect(self.refresh)
         layout.addLayout(controls)
         self.notice = label("Open a scan recording with physical grid metadata.", "muted", word_wrap=True)
         layout.addWidget(self.notice)
@@ -267,6 +281,12 @@ class MapPanel(QtWidgets.QWidget):
         for combo in (self.channel, self.statistic, self.palette, self.direction, self.cycle): combo.currentIndexChanged.connect(self.refresh)
         self.potential.valueChanged.connect(self.refresh)
         self.map.view.scene().sigMouseClicked.connect(self._clicked)
+
+    def open_3d(self):
+        """Inspect a rotatable snapshot of the selected surface Z representation."""
+        from .analysis_topography import show_3d
+        if self.points:
+            show_3d(self.map)
 
     def edit_crop(self):
         """Restrict map display and exports to an inclusive physical XY rectangle."""
@@ -302,12 +322,19 @@ class MapPanel(QtWidgets.QWidget):
         self.crop_button.setText('Crop XY (on)…' if self.crop_bounds else 'Crop XY…')
         self.crop_button.setToolTip(f'XY bounds (µm): {self.crop_bounds}' if self.crop_bounds else 'Full recorded grid')
         cv = self.statistic.currentText() == "CV at potential"
+        contact = self.statistic.currentText() == 'Contact Z (surface estimate)'
+        for widget in (self.flatten, self.height, self.three_d): widget.setVisible(contact)
+        self.three_d.setEnabled(False)
+        self.channel.setEnabled(not contact)
+        from .analysis_topography import contact_points, transform_points, scan_origin, set_xy_labels
         self.potential.setVisible(cv); self.direction.setVisible(cv); self.cycle.setVisible(cv)
         if self.dataset is None: return
         try:
             if "scan_pixel" not in self.dataset.columns: raise AnalysisError("This recording has no scan_pixel channel.")
-            channel = self.channel.currentData()
-            if cv:
+            channel = 'z_um' if contact else self.channel.currentData()
+            if contact:
+                self.points = contact_points(self.dataset, self.cv_groups, self.hop_groups)
+            elif cv:
                 if channel not in {"current1_na", "current2_na"}: raise AnalysisError("Choose a current channel for CV potential maps.")
                 self.points = prepare_frames(self.dataset, self.cv_groups, channel=channel, cycle=self.cycle.currentData(),
                                              leg=self.direction.currentIndex(), axis=[self.potential.value()]).points(0)
@@ -326,7 +353,7 @@ class MapPanel(QtWidgets.QWidget):
                         self.points.append(dict(scan_pixel=group.pixel, x_um=pixel['x_um'], y_um=pixel['y_um'], value=float(np.mean(values)), samples=len(values)))
             else:
                 self.points = hop_map(self.dataset, channel, self.statistic.currentText(), self.hop_groups)
-            if not self.points: raise AnalysisError("No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
+            if not self.points: raise AnalysisError("No usable surface Z: this view needs recorded contact values or validated CV/I–t surface samples." if contact else "No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
             pixels = self.dataset.metadata["scan_grid"]["pixels"]
             from .analysis_crop import inside, grid_spacing
             self.map.cell_spacing_um = grid_spacing((p['x_um'],p['y_um']) for p in pixels)
@@ -334,18 +361,34 @@ class MapPanel(QtWidgets.QWidget):
             self.points = [p for p in self.points if inside(p['x_um'], p['y_um'], self.crop_bounds)]
             pixels = [p for p in pixels if inside(p['x_um'], p['y_um'], self.crop_bounds)]
             if not self.points: raise AnalysisError('No usable hops inside the XY crop; reset or adjust Crop XY.')
-            xs, ys = sorted({float(p["x_um"]) for p in pixels}), sorted({float(p["y_um"]) for p in pixels})
-            if not np.isfinite(xs + ys).all(): raise AnalysisError("Grid coordinates must be finite.")
+            origin = scan_origin(self.dataset) if self.relative_xy.isChecked() else (0., 0.)
+            self.points, transforms = transform_points(self.points, origin=origin,
+                flatten=contact and self.flatten.isChecked(), height=contact and self.height.isChecked())
+            pixels = [dict(p, x_um=p['x_um']-origin[0], y_um=p['y_um']-origin[1]) for p in pixels]
+            self.map.export_context.update(transforms, xy_coordinates='scan-relative' if self.relative_xy.isChecked() else 'piezo')
+            if contact:
+                self.map.export_context['z_sources'] = sorted({p['source'] for p in self.points})
+            set_xy_labels(self.map, self.relative_xy.isChecked())
+            self.three_d.setEnabled(contact)
+            xs, ys = sorted({float(p['x_um']) for p in pixels}), sorted({float(p['y_um']) for p in pixels})
+            if not np.isfinite(xs + ys).all(): raise AnalysisError('Grid coordinates must be finite.')
             xi, yi = {x: i for i, x in enumerate(xs)}, {y: i for i, y in enumerate(ys)}
-            values = {(yi[p["y_um"]], xi[p["x_um"]]): p["value"] for p in self.points}
-            self.map.base_unit = SIGNALS.get(channel, ("", "native"))[1]
-            self.map.quantity = self.statistic.currentText() + " · " + SIGNALS.get(channel, (channel, ""))[0]
+            values = {(yi[p['y_um']], xi[p['x_um']]): p['value'] for p in self.points}
+            self.map.base_unit = SIGNALS.get(channel, ('', 'native'))[1]
+            self.map.quantity = self.statistic.currentText() + ' · ' + SIGNALS.get(channel, (channel, ''))[0]
+            if contact:
+                self.map.quantity = 'Topography height' if self.height.isChecked() else 'Contact Z estimate'
+                if self.flatten.isChecked(): self.map.quantity += ' · tilt removed'
             self.map.colormap_name = self.palette.currentText()
             self.map.set_data(values, len(ys), len(xs), x_values=xs, y_values=ys)
             self.map.setVisible(True)
             missing = len(pixels) - len(self.points)
             self.notice.setText(f"{len(self.points)}/{len(pixels)} usable hops · {missing} blank (unmeasured, excluded, incomplete, or outside selected waveform). " + ("Validated surface I–t program mean; ambiguous programs remain blank." if self.statistic.currentText() == 'Surface I–t mean' else "Selected chronological segment and cycle; adjacent samples interpolated, never extrapolated. Average mode uses only available complete cycles." if cv else
                 "Whole-hop statistics include approach and retract; these are not isolated surface data or confirmed contact Z.") + " Click a visited cell to inspect its trace.")
+            if contact:
+                self.notice.setText(f'{len(self.points)}/{len(pixels)} usable landings. '+
+                    'Contact Z uses explicit metadata or median measured Z during validated surface programs; the latter is an estimate, not an exact contact timestamp. '+
+                    ('Plane fitted to visible landings; real large-scale shape is also removed. ' if self.flatten.isChecked() else '')+'Click a cell to inspect its trace.')
         except (AnalysisError, KeyError, TypeError, ValueError) as exc:
             self.points = []; self.map.values = {}
             self.map.setVisible(False); self.notice.setText(str(exc))
@@ -364,10 +407,11 @@ class MapPanel(QtWidgets.QWidget):
         columns = ("scan_pixel", "x_um", "y_um", "value", "samples")
         cv = self.statistic.currentText() == "CV at potential"
         export_result(self, self.dataset, ([p[c] for c in columns] for p in self.points), columns,
-            {"scope": "Selected chronological CV segment and cycle" if cv else "Whole hop, all phases",
+            {"scope": "Surface Z estimate" if self.statistic.currentText() == 'Contact Z (surface estimate)' else "Selected chronological CV segment and cycle" if cv else "Whole hop, all phases",
              "channel": self.channel.currentData(), "statistic": self.statistic.currentText(),
              "crop_xy_um": self.crop_bounds,
              "potential_v": self.potential.value() if cv else None,
              "segment": self.direction.currentText() if cv else None,
              "cycle": self.cycle.currentData() if cv else None,
-             "samples_column": "map observations" if cv else "finite samples", "unit": self.map.base_unit}, "_map")
+             "samples_column": "map observations" if cv else "finite samples", "unit": self.map.base_unit,
+             **self.map.export_context}, "_map")

@@ -43,7 +43,7 @@ def snapshot(plot):
             potential_label(plot.y_label.replace('(nA)', f'({unit})') if unit else plot.y_label, _dataset(plot)), series=series)
     if not plot.values: raise ValueError('This map has no data to export.')
     from .analysis_reference import potential_label
-    return FigureData('X position (µm)', 'Y position (µm)',
+    return FigureData(*getattr(plot, 'xy_labels', ('X position (µm)', 'Y position (µm)')),
         cells={key: value*plot.display_scale for key, value in plot.values.items()},
         xs=list(plot.x_values), ys=list(plot.y_values), quantity=potential_label(f'{plot.quantity} ({plot.unit})', _dataset(plot)),
         palette=plot.colormap_name, limits=tuple(v*plot.display_scale for v in plot.fixed_limits) if plot.fixed_limits else None,
@@ -101,7 +101,8 @@ def render_figure(data, options):
                      'pdf.fonttype': 42, 'svg.fonttype': 'none', 'path.simplify': False}):
         figure = Figure(figsize=(options['width']/25.4, options['height']/25.4), dpi=options['dpi'], layout='constrained')
         FigureCanvasAgg(figure)
-        ax = figure.add_subplot()
+        three_d = data.context.get('projection') == '3d' and not data.series
+        ax = figure.add_subplot(projection='3d' if three_d else None)
         if data.series:
             for name, x, y, colour in data.series:
                 ax.plot(np.asarray(x)*sx, np.asarray(y)*sy, color=colour, lw=options['line_width'], label=name)
@@ -113,7 +114,30 @@ def render_figure(data, options):
             limits = options.get('limits')
             kw = dict(cmap=options['palette'])
             if limits: kw.update(vmin=limits[0], vmax=limits[1])
-            if data.circular:
+            if three_d:
+                from matplotlib.colors import Normalize
+                from matplotlib import colormaps
+                from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+                xx, yy = np.meshgrid(np.asarray(data.xs)*sx, np.asarray(data.ys)*sy)
+                finite = matrix[np.isfinite(matrix)]
+                norm = Normalize(*(limits or (float(finite.min()), float(finite.max()))))
+                faces, colours = [], []
+                for r in range(len(data.ys)-1):
+                    for c in range(len(data.xs)-1):
+                        corners = [(r,c), (r,c+1), (r+1,c+1), (r+1,c)]
+                        if all(np.isfinite(matrix[a,b]) for a,b in corners):
+                            faces.append([(xx[a,b], yy[a,b], matrix[a,b]) for a,b in corners])
+                            colours.append(colormaps[options['palette']](norm(np.mean([matrix[a,b] for a,b in corners]))))
+                if faces:
+                    ax.add_collection3d(Poly3DCollection(faces, facecolors=colours, edgecolors='none'))
+                artist = ax.scatter(xx.ravel(), yy.ravel(), matrix.ravel(), c=matrix.ravel(),
+                                    s=12, cmap=options['palette'], norm=norm)
+                ax.set_zlabel(options['quantity'])
+                ax.view_init(elev=data.context.get('elevation', 30), azim=data.context.get('azimuth', -60))
+                spans = (max(np.ptp(data.xs), data.spacing[0]), max(np.ptp(data.ys), data.spacing[1]))
+                ax.set_box_aspect((spans[0], spans[1], max(spans)*.6))
+                figure.colorbar(artist, ax=ax, shrink=.6, pad=.12, label=options['quantity'])
+            elif data.circular:
                 patches = [Ellipse((data.xs[c]*sx, data.ys[r]*sy), data.diameter*sx, data.diameter*sy) for r,c in data.cells]
                 artist = PatchCollection(patches, cmap=kw['cmap'], edgecolor='none')
                 artist.set_array(np.asarray(list(data.cells.values()))*sz)
@@ -121,8 +145,9 @@ def render_figure(data, options):
                 ax.add_collection(artist); ax.autoscale_view()
             else:
                 artist = ax.pcolormesh(_edges(data.xs,data.spacing[0])*sx, _edges(data.ys,data.spacing[1])*sy, np.ma.masked_invalid(matrix), shading='flat', **kw)
-            ax.set_aspect(sx/sy, adjustable='box')
-            figure.colorbar(artist, ax=ax, fraction=.055, pad=.04, label=options['quantity'])
+            if not three_d:
+                ax.set_aspect(sx/sy, adjustable='box')
+                figure.colorbar(artist, ax=ax, fraction=.055, pad=.04, label=options['quantity'])
         ax.set(xlabel=options['xlabel'], ylabel=options['ylabel'], title=options['title'])
         ax.tick_params(direction='out', width=.7)
         return figure
