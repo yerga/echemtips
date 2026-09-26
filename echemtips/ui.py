@@ -2138,6 +2138,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self._apply_display_settings()
         analysis_menu = self.menuBar().addMenu("Analysis")
         open_analysis = analysis_menu.addAction("Open analysis app…")
+        from .seccm_model_dialog import open_model_dialog
+        analysis_menu.addAction("SECCM model calculator…", lambda: open_model_dialog(self))
         open_analysis.setShortcut(QtGui.QKeySequence("F6"))
         open_analysis.triggered.connect(lambda: self.launch_analysis())
         last_recording = analysis_menu.addAction("Analyze last saved recording")
