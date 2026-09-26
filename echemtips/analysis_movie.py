@@ -59,9 +59,9 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     for fraction in (0.,.5,1.):
         p.drawText(QtCore.QPointF(left+fraction*w-14,top+h+23),f"{xmin+fraction*(xmax-xmin):.3g}")
         p.drawText(QtCore.QPointF(left-60,top+(1-fraction)*h+4),f"{ymin+fraction*(ymax-ymin):.3g}")
-    relative = frames.recipe.get('xy_coordinates') == 'scan-relative'
-    p.drawText(QtCore.QPointF(left+w/2-80,top+h+50),"X from scan start (µm)" if relative else "X (µm)")
-    p.drawText(12,100,"Y from scan start (µm)" if relative else "Y (µm)")
+    relative = frames.recipe.get('xy_coordinates') == 'map-corner-relative'
+    p.drawText(QtCore.QPointF(left+w/2-80,top+h+50),"X from map corner (µm)" if relative else "X (µm)")
+    p.drawText(12,100,"Y from map corner (µm)" if relative else "Y (µm)")
     for i in range(256):
         p.fillRect(QtCore.QRectF(790,150+(255-i)*1.5,22,1.6),QtGui.QColor(*[int(v) for v in lut[i][:3]]))
     p.drawText(825,158,f"{high:.4g}"); p.drawText(825,535,f"{low:.4g}"); p.drawText(785,130,"i (nA)")
@@ -191,7 +191,7 @@ class MoviePanel(QtWidgets.QWidget):
         self.map=Heatmap("nA","Current"); self.map.setMinimumHeight(250); layout.addWidget(self.map,1)
         bar=QtWidgets.QHBoxLayout(); layout.addLayout(bar)
         self.play=button("Play",self.toggle); bar.addWidget(self.play)
-        self.relative_xy=QtWidgets.QCheckBox('XY from scan start')
+        self.relative_xy=QtWidgets.QCheckBox('XY from map corner')
         bar.addWidget(self.relative_xy)
         self.relative_xy.toggled.connect(self.show_frame)
         self.crop_button=button('Crop XY…', self.edit_crop); bar.addWidget(self.crop_button)
@@ -292,7 +292,9 @@ class MoviePanel(QtWidgets.QWidget):
         if self.frames is None: return
         index=self.slider.value(); frames=self.frames
         from .analysis_topography import relative_frames, scan_origin, set_xy_labels
-        if self.relative_xy.isChecked(): frames=relative_frames(frames,scan_origin(self.dataset))
+        if self.relative_xy.isChecked():
+            frames=relative_frames(frames,scan_origin(self.dataset, coordinates=frames.coordinates.values(),
+                                   spacing=frames.recipe.get('cell_spacing_um')))
         set_xy_labels(self.map,self.relative_xy.isChecked())
         self.timeline.setVisible(frames.recipe["kind"] == "CV potential" and frames.recipe.get("leg") == 3)
         self.timeline_curve.setData(list(range(1, len(frames.axis) + 1)), frames.axis)
@@ -345,7 +347,8 @@ class MoviePanel(QtWidgets.QWidget):
         path=Path(name).with_suffix(".mp4"); frames=self.frames
         if self.relative_xy.isChecked():
             from .analysis_topography import relative_frames, scan_origin
-            frames=relative_frames(frames,scan_origin(self.dataset))
+            frames=relative_frames(frames,scan_origin(self.dataset, coordinates=frames.coordinates.values(),
+                                   spacing=frames.recipe.get('cell_spacing_um')))
         kwargs=dict(fps=self.fps.value(),hold_ms=self.hold.value(),palette=self.palette.currentText(),mode=self.colour.currentText(),manual=(self.low.value(),self.high.value()))
         self.exporting=True; self.save.setEnabled(False); self.progress.setRange(0,100); self.progress.setValue(0)
         self.notice.setText("Encoding MP4 in the background…")

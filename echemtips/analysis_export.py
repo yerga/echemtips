@@ -133,6 +133,8 @@ def render_figure(data, options):
                 artist = ax.scatter(xx.ravel(), yy.ravel(), matrix.ravel(), c=matrix.ravel(),
                                     s=12, cmap=options['palette'], norm=norm)
                 ax.set_zlabel(options['quantity'])
+                ax.set_xlim(_edges(data.xs,data.spacing[0])[[0,-1]]*sx)
+                ax.set_ylim(_edges(data.ys,data.spacing[1])[[0,-1]]*sy)
                 ax.view_init(elev=data.context.get('elevation', 30), azim=data.context.get('azimuth', -60))
                 spans = (max(np.ptp(data.xs), data.spacing[0]), max(np.ptp(data.ys), data.spacing[1]))
                 ax.set_box_aspect((spans[0], spans[1], max(spans)*.6))

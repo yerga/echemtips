@@ -243,6 +243,7 @@ class MapPanel(QtWidgets.QWidget):
         super().__init__()
         self.dataset, self.points, self.cv_groups = None, [], []
         self.hop_groups = []
+        self._contact_cache = None
         self.crop_bounds = None
         layout = QtWidgets.QVBoxLayout(self)
         controls = QtWidgets.QGridLayout()
@@ -261,8 +262,8 @@ class MapPanel(QtWidgets.QWidget):
         controls.addWidget(button("Export map…", self._export), 2, 2)
         self.crop_button = button("Crop XY…", self.edit_crop)
         controls.addWidget(self.crop_button, 2, 0)
-        self.relative_xy = QtWidgets.QCheckBox('XY from scan start')
-        self.relative_xy.setToolTip('Translate the first planned landing to (0, 0). Crop bounds remain in piezo coordinates; reverse scans retain negative offsets.')
+        self.relative_xy = QtWidgets.QCheckBox('XY from map corner')
+        self.relative_xy.setToolTip('Set the lower-left outer cell edge to (0, 0), including after cropping. Cell centres retain a half-cell offset. Crop bounds remain in piezo coordinates.')
         controls.addWidget(self.relative_xy, 2, 1)
         self.flatten = QtWidgets.QCheckBox('Remove tilt')
         self.flatten.setToolTip('Subtract a least-squares plane fitted to usable visible landings. Real long-range sample shape may also be removed.')
@@ -300,6 +301,7 @@ class MapPanel(QtWidgets.QWidget):
         """Discover numeric channels and use prepared CV subsets if available."""
         if self.dataset is None or self.dataset.path != dataset.path: self.crop_bounds = None
         self.dataset, self.cv_groups = dataset, cv_groups
+        self._contact_cache = None
         self.direction.blockSignals(True); self.direction.clear(); self.direction.addItems(leg_labels(dataset)); self.direction.blockSignals(False)
         self.cycle.blockSignals(True); self.cycle.clear()
         for number in sorted({group.cycle for group in cv_groups}): self.cycle.addItem(f"Cycle {number}", number)
@@ -333,7 +335,9 @@ class MapPanel(QtWidgets.QWidget):
             if "scan_pixel" not in self.dataset.columns: raise AnalysisError("This recording has no scan_pixel channel.")
             channel = 'z_um' if contact else self.channel.currentData()
             if contact:
-                self.points = contact_points(self.dataset, self.cv_groups, self.hop_groups)
+                if self._contact_cache is None:
+                    self._contact_cache = contact_points(self.dataset, self.cv_groups, self.hop_groups)
+                self.points = list(self._contact_cache)
             elif cv:
                 if channel not in {"current1_na", "current2_na"}: raise AnalysisError("Choose a current channel for CV potential maps.")
                 self.points = prepare_frames(self.dataset, self.cv_groups, channel=channel, cycle=self.cycle.currentData(),
@@ -353,7 +357,10 @@ class MapPanel(QtWidgets.QWidget):
                         self.points.append(dict(scan_pixel=group.pixel, x_um=pixel['x_um'], y_um=pixel['y_um'], value=float(np.mean(values)), samples=len(values)))
             else:
                 self.points = hop_map(self.dataset, channel, self.statistic.currentText(), self.hop_groups)
-            if not self.points: raise AnalysisError("No usable surface Z: this view needs recorded contact values or validated CV/I–t surface samples." if contact else "No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
+            if not self.points:
+                from .analysis_surface_z import contact_failure_reason
+                raise AnalysisError(contact_failure_reason(self.dataset, self.cv_groups, self.hop_groups) if contact else
+                                    'No usable hops for this selection. CV maps need complete cycles crossing the selected potential.')
             pixels = self.dataset.metadata["scan_grid"]["pixels"]
             from .analysis_crop import inside, grid_spacing
             self.map.cell_spacing_um = grid_spacing((p['x_um'],p['y_um']) for p in pixels)
@@ -361,11 +368,12 @@ class MapPanel(QtWidgets.QWidget):
             self.points = [p for p in self.points if inside(p['x_um'], p['y_um'], self.crop_bounds)]
             pixels = [p for p in pixels if inside(p['x_um'], p['y_um'], self.crop_bounds)]
             if not self.points: raise AnalysisError('No usable hops inside the XY crop; reset or adjust Crop XY.')
-            origin = scan_origin(self.dataset) if self.relative_xy.isChecked() else (0., 0.)
+            origin = scan_origin(self.dataset, coordinates=[(p['x_um'],p['y_um']) for p in pixels],
+                                 spacing=self.map.cell_spacing_um) if self.relative_xy.isChecked() else (0., 0.)
             self.points, transforms = transform_points(self.points, origin=origin,
                 flatten=contact and self.flatten.isChecked(), height=contact and self.height.isChecked())
             pixels = [dict(p, x_um=p['x_um']-origin[0], y_um=p['y_um']-origin[1]) for p in pixels]
-            self.map.export_context.update(transforms, xy_coordinates='scan-relative' if self.relative_xy.isChecked() else 'piezo')
+            self.map.export_context.update(transforms, xy_coordinates='map-corner-relative' if self.relative_xy.isChecked() else 'piezo')
             if contact:
                 self.map.export_context['z_sources'] = sorted({p['source'] for p in self.points})
             set_xy_labels(self.map, self.relative_xy.isChecked())
@@ -387,7 +395,7 @@ class MapPanel(QtWidgets.QWidget):
                 "Whole-hop statistics include approach and retract; these are not isolated surface data or confirmed contact Z.") + " Click a visited cell to inspect its trace.")
             if contact:
                 self.notice.setText(f'{len(self.points)}/{len(pixels)} usable landings. '+
-                    'Contact Z uses explicit metadata or median measured Z during validated surface programs; the latter is an estimate, not an exact contact timestamp. '+
+                    'Contact Z uses explicit metadata or median stationary surface Z (an estimate, not an exact contact timestamp). Sources: '+ '; '.join(self.map.export_context['z_sources'])+'. '+
                     ('Plane fitted to visible landings; real large-scale shape is also removed. ' if self.flatten.isChecked() else '')+'Click a cell to inspect its trace.')
         except (AnalysisError, KeyError, TypeError, ValueError) as exc:
             self.points = []; self.map.values = {}

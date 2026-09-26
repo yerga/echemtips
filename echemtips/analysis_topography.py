@@ -4,23 +4,23 @@ import numpy as np
 from .analysis_core import AnalysisError
 
 
-def scan_origin(dataset):
-    """Use the first planned landing, independent of crop or missing measurements."""
+def scan_origin(dataset, *, coordinates=None, spacing=None):
+    """Place zero at the visible grid's lower-left outer cell edge, not its centre."""
+    from .analysis_crop import grid_spacing
     pixels = dataset.metadata.get('scan_grid', {}).get('pixels', [])
-    params = dataset.metadata.get('parameters') or {}
-    if 'x_start_um' in params and 'y_start_um' in params:
-        return float(params['x_start_um']), float(params['y_start_um'])
-    if not pixels:
+    full = [(float(p['x_um']), float(p['y_um'])) for p in pixels if p['scan_pixel'] >= 0]
+    selected = list(coordinates) if coordinates is not None else full
+    if not selected:
         return (0., 0.)
-    first = min(pixels, key=lambda p: p['scan_pixel'])
-    return float(first['x_um']), float(first['y_um'])
+    dx, dy = spacing or grid_spacing(full)
+    return min(p[0] for p in selected)-dx/2, min(p[1] for p in selected)-dy/2
 
 
 def relative_frames(frames, origin):
     """Translate an immutable movie snapshot without changing values or hop IDs."""
     result = replace(frames, coordinates={p: (x-origin[0], y-origin[1])
                    for p, (x, y) in frames.coordinates.items()},
-                   recipe={**frames.recipe, 'xy_origin_um': list(origin), 'xy_coordinates': 'scan-relative'})
+                   recipe={**frames.recipe, 'xy_origin_um': list(origin), 'xy_coordinates': 'map-corner-relative'})
     if hasattr(frames, 'auto_limits'):
         result.auto_limits = frames.auto_limits
     return result
@@ -33,16 +33,28 @@ def contact_points(dataset, cv_groups, hop_groups):
     whole-hop extrema, which can include failed approaches and retraction.
     """
     from .analysis_frames import it_surface_rows
+    from .analysis_surface_z import hop_dataset, stationary_sweep_rows, stationary_pulse_rows
     pixels = dataset.metadata.get('scan_grid', {}).get('pixels', [])
-    groups = {}
+    groups, sources = {}, {}
     for group in cv_groups:
         groups.setdefault(group.pixel, []).append(group.rows)
     for group in hop_groups:
         if group.pixel in groups:
             continue
-        found = it_surface_rows(dataset, group)
+        per_hop = hop_dataset(dataset, group)
+        found = it_surface_rows(per_hop, group)
         if found is not None:
             groups[group.pixel] = [found[0]]
+        else:
+            sweep = stationary_sweep_rows(per_hop, group)
+            if sweep is not None:
+                groups[group.pixel] = [sweep]
+                sources[group.pixel] = 'stationary CV/LSV sweep Z (estimate; full cycle not required)'
+            else:
+                pulse = stationary_pulse_rows(per_hop, group)
+                if pulse is not None:
+                    groups[group.pixel] = [pulse]
+                    sources[group.pixel] = 'stationary I–t pulse Z (estimate; actual transition)'
     points = []
     for pixel in pixels:
         if pixel['scan_pixel'] < 0 or pixel.get('contact_detected') is False or pixel.get('status') in ('failed', 'aborted', 'no_contact'):
@@ -59,7 +71,7 @@ def contact_points(dataset, cv_groups, hop_groups):
             if not len(z):
                 continue
             value, count = float(np.median(z)), len(z)
-            source = 'surface-program median Z (estimate)'
+            source = sources.get(pixel['scan_pixel'], 'surface-program median Z (estimate)')
         if np.isfinite([value, pixel['x_um'], pixel['y_um']]).all():
             points.append(dict(scan_pixel=pixel['scan_pixel'], x_um=pixel['x_um'], y_um=pixel['y_um'],
                                value=float(value), samples=count, source=source))
@@ -98,7 +110,7 @@ def transform_points(points, *, origin=(0., 0.), flatten=False, height=False):
 
 def set_xy_labels(plot, relative):
     """Keep on-screen and publication labels explicit about the coordinate origin."""
-    suffix = ' from scan start' if relative else ' position'
+    suffix = ' from map corner' if relative else ' position'
     plot.xy_labels = ('X'+suffix+' (µm)', 'Y'+suffix+' (µm)')
     plot.plot_item.setLabel('bottom', 'X'+suffix, units='µm')
     plot.plot_item.setLabel('left', 'Y'+suffix, units='µm')
