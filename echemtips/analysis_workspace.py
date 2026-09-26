@@ -42,6 +42,7 @@ class AnalysisWorkspace(QtCore.QObject):
         return dict(schema=1, kind='echemtips-analysis-session', source=str(w.source_dataset.path),
                     source_size=stat.st_size, source_mtime_ns=stat.st_mtime_ns,
                     condition=w.condition_selector.currentData(), controls=values, tab=w.tabs.currentIndex(),
+                    map_crop=w.map_panel.crop_bounds, movie_crop=w.movie_panel.crop_bounds,
                     bounds=w.explorer.bounds, baseline=w.explorer.baseline)
 
     def save(self):
@@ -95,6 +96,9 @@ class AnalysisWorkspace(QtCore.QObject):
             if index >= 0: w.condition_selector.setCurrentIndex(index); return
         self.pending = None
         self._restore(payload['controls'])
+        w.map_panel.crop_bounds = payload.get('map_crop')
+        w.movie_panel.crop_bounds = payload.get('movie_crop')
+        w.map_panel.refresh(); w.movie_panel.invalidate()
         w.explorer.bounds = payload.get('bounds'); w.explorer.baseline = float(payload.get('baseline', 0))
         w.explorer.refresh(); w.tabs.setCurrentIndex(int(payload.get('tab', 0)))
         w.processing_pending.clear()

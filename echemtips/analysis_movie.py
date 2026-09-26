@@ -132,6 +132,7 @@ class MoviePanel(QtWidgets.QWidget):
     """Prepare once, scrub/play cheaply, and export without blocking acquisition/UI."""
     def __init__(self):
         super().__init__(); self.dataset=None; self.frames=None; self.tasks={}; self.token=0; self.exporting=False
+        self.crop_bounds = None
         layout=QtWidgets.QVBoxLayout(self); controls=QtWidgets.QGridLayout(); layout.addLayout(controls)
         def combo(items):
             """Create a labelled-choice control with the supplied options."""
@@ -180,6 +181,7 @@ class MoviePanel(QtWidgets.QWidget):
         self.map=Heatmap("nA","Current"); self.map.setMinimumHeight(250); layout.addWidget(self.map,1)
         bar=QtWidgets.QHBoxLayout(); layout.addLayout(bar)
         self.play=button("Play",self.toggle); bar.addWidget(self.play)
+        bar.addWidget(button('Crop XY…', self.edit_crop))
         self.slider=QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal); bar.addWidget(self.slider,1)
         self.loop=QtWidgets.QCheckBox("Loop"); self.loop.setChecked(True); bar.addWidget(self.loop)
         self.save=button("Save MP4…",self.save_movie); bar.addWidget(self.save)
@@ -193,6 +195,14 @@ class MoviePanel(QtWidgets.QWidget):
         for w in (self.low,self.high,self.fps,self.hold): w.valueChanged.connect(self.show_frame)
         self.invalidate()
 
+    def edit_crop(self):
+        """Apply one crop consistently to movie frames, colour limits and exports."""
+        from .analysis_crop import choose_crop
+        accepted,bounds=choose_crop(self,self.dataset,self.crop_bounds)
+        if accepted:
+            self.crop_bounds=bounds
+            self.invalidate()
+
     def cancel_tasks(self):
         """Request cooperative cancellation and stop preview playback."""
         for task in self.tasks.values(): task.cancel.set()
@@ -205,6 +215,7 @@ class MoviePanel(QtWidgets.QWidget):
     def invalidate(self,*args):
         """Discard stale prepared frames after a scientific selection changes."""
         self.cancel_tasks(); self.token+=1; self.frames=None
+        self.map.values = {}; self.map.hide()
         self.progress.setRange(0,100); self.progress.setValue(0)
         self.play.setEnabled(False); self.save.setEnabled(False)
         self.cycle.setEnabled(self.kind.currentText().startswith("CV")); self.leg.setEnabled(self.kind.currentText()=="CV potential")
@@ -212,6 +223,7 @@ class MoviePanel(QtWidgets.QWidget):
 
     def set_dataset(self,dataset,groups):
         """Install new data and rebuild current, cycle and segment choices."""
+        if self.dataset is None or self.dataset.path != dataset.path: self.crop_bounds = None
         self.invalidate(); self.dataset=dataset; self.groups=groups
         for w in (self.channel,self.cycle,self.leg): w.blockSignals(True); w.clear()
         for c in ("current1_na","current2_na"):
@@ -243,7 +255,9 @@ class MoviePanel(QtWidgets.QWidget):
         kwargs=dict(channel=self.channel.currentData(),kind=self.kind.currentText(),cycle=self.cycle.currentData(),
                     leg=self.leg.currentIndex(),count=self.count.value(),stride=self.stride.value(),excluded=excluded)
         self.progress.setRange(0,0); self.notice.setText("Preparing validated surface frames…")
-        self.launch(lambda task:prepare_frames(dataset,groups,**kwargs,cancelled=task.cancel.is_set),self.built)
+        from .analysis_crop import crop_frames
+        bounds=self.crop_bounds
+        self.launch(lambda task:crop_frames(prepare_frames(dataset,groups,**kwargs,cancelled=task.cancel.is_set),bounds),self.built)
 
     def built(self,token,frames,error):
         """Install only the current preparation result, ignoring stale workers."""
@@ -252,6 +266,7 @@ class MoviePanel(QtWidgets.QWidget):
         self.progress.setRange(0,100); self.progress.setValue(0)
         if error: self.notice.setText(error); return
         self.frames=frames; self.slider.setRange(0,len(frames.axis)-1); self.slider.setValue(0)
+        self.map.show()
         self.play.setEnabled(True); self.save.setEnabled(True); self.show_frame()
 
     def show_frame(self,*args):

@@ -240,6 +240,7 @@ class MapPanel(QtWidgets.QWidget):
         super().__init__()
         self.dataset, self.points, self.cv_groups = None, [], []
         self.hop_groups = []
+        self.crop_bounds = None
         layout = QtWidgets.QVBoxLayout(self)
         controls = QtWidgets.QGridLayout()
         self.channel, self.statistic, self.palette = QtWidgets.QComboBox(), QtWidgets.QComboBox(), QtWidgets.QComboBox()
@@ -254,6 +255,7 @@ class MapPanel(QtWidgets.QWidget):
         controls.addWidget(self.potential, 1, 0); controls.addWidget(self.direction, 1, 1)
         controls.addWidget(self.cycle, 1, 2)
         controls.addWidget(button("Export map…", self._export), 2, 2)
+        controls.addWidget(button("Crop XY…", self.edit_crop), 2, 0)
         layout.addLayout(controls)
         self.notice = label("Open a scan recording with physical grid metadata.", "muted", word_wrap=True)
         layout.addWidget(self.notice)
@@ -262,8 +264,17 @@ class MapPanel(QtWidgets.QWidget):
         self.potential.valueChanged.connect(self.refresh)
         self.map.view.scene().sigMouseClicked.connect(self._clicked)
 
+    def edit_crop(self):
+        """Restrict map display and exports to an inclusive physical XY rectangle."""
+        from .analysis_crop import choose_crop
+        accepted, bounds = choose_crop(self, self.dataset, self.crop_bounds)
+        if accepted:
+            self.crop_bounds = bounds
+            self.refresh()
+
     def set_dataset(self, dataset, cv_groups=(), hop_groups=()):
         """Discover numeric channels and use prepared CV subsets if available."""
+        if self.dataset is None or self.dataset.path != dataset.path: self.crop_bounds = None
         self.dataset, self.cv_groups = dataset, cv_groups
         self.direction.blockSignals(True); self.direction.clear(); self.direction.addItems(leg_labels(dataset)); self.direction.blockSignals(False)
         self.cycle.blockSignals(True); self.cycle.clear()
@@ -311,6 +322,10 @@ class MapPanel(QtWidgets.QWidget):
                 self.points = hop_map(self.dataset, channel, self.statistic.currentText(), self.hop_groups)
             if not self.points: raise AnalysisError("No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
             pixels = self.dataset.metadata["scan_grid"]["pixels"]
+            from .analysis_crop import inside
+            self.points = [p for p in self.points if inside(p['x_um'], p['y_um'], self.crop_bounds)]
+            pixels = [p for p in pixels if inside(p['x_um'], p['y_um'], self.crop_bounds)]
+            if not self.points: raise AnalysisError('No usable hops inside the XY crop; reset or adjust Crop XY.')
             xs, ys = sorted({float(p["x_um"]) for p in pixels}), sorted({float(p["y_um"]) for p in pixels})
             if not np.isfinite(xs + ys).all(): raise AnalysisError("Grid coordinates must be finite.")
             xi, yi = {x: i for i, x in enumerate(xs)}, {y: i for i, y in enumerate(ys)}
@@ -324,6 +339,7 @@ class MapPanel(QtWidgets.QWidget):
             self.notice.setText(f"{len(self.points)}/{len(pixels)} usable hops · {missing} blank (unmeasured, excluded, incomplete, or outside selected waveform). " + ("Validated surface I–t program mean; ambiguous programs remain blank." if self.statistic.currentText() == 'Surface I–t mean' else "Selected chronological segment and cycle; adjacent samples interpolated, never extrapolated. Average mode uses only available complete cycles." if cv else
                 "Whole-hop statistics include approach and retract; these are not isolated surface data or confirmed contact Z.") + " Click a visited cell to inspect its trace.")
         except (AnalysisError, KeyError, TypeError, ValueError) as exc:
+            self.points = []; self.map.values = {}
             self.map.setVisible(False); self.notice.setText(str(exc))
 
     def _clicked(self, event):
@@ -342,6 +358,7 @@ class MapPanel(QtWidgets.QWidget):
         export_result(self, self.dataset, ([p[c] for c in columns] for p in self.points), columns,
             {"scope": "Selected chronological CV segment and cycle" if cv else "Whole hop, all phases",
              "channel": self.channel.currentData(), "statistic": self.statistic.currentText(),
+             "crop_xy_um": self.crop_bounds,
              "potential_v": self.potential.value() if cv else None,
              "segment": self.direction.currentText() if cv else None,
              "cycle": self.cycle.currentData() if cv else None,
