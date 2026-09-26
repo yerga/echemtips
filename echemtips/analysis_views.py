@@ -258,7 +258,8 @@ class MapPanel(QtWidgets.QWidget):
         controls.addWidget(self.potential, 1, 0); controls.addWidget(self.direction, 1, 1)
         controls.addWidget(self.cycle, 1, 2)
         controls.addWidget(button("Export map…", self._export), 2, 2)
-        controls.addWidget(button("Crop XY…", self.edit_crop), 2, 0)
+        self.crop_button = button("Crop XY…", self.edit_crop)
+        controls.addWidget(self.crop_button, 2, 0)
         layout.addLayout(controls)
         self.notice = label("Open a scan recording with physical grid metadata.", "muted", word_wrap=True)
         layout.addWidget(self.notice)
@@ -298,6 +299,8 @@ class MapPanel(QtWidgets.QWidget):
     def refresh(self, *_args):
         """Render visited physical cells; never fill missing samples with zero."""
         self.points = []
+        self.crop_button.setText('Crop XY (on)…' if self.crop_bounds else 'Crop XY…')
+        self.crop_button.setToolTip(f'XY bounds (µm): {self.crop_bounds}' if self.crop_bounds else 'Full recorded grid')
         cv = self.statistic.currentText() == "CV at potential"
         self.potential.setVisible(cv); self.direction.setVisible(cv); self.cycle.setVisible(cv)
         if self.dataset is None: return
@@ -325,7 +328,9 @@ class MapPanel(QtWidgets.QWidget):
                 self.points = hop_map(self.dataset, channel, self.statistic.currentText(), self.hop_groups)
             if not self.points: raise AnalysisError("No usable hops for this selection. CV maps need complete cycles crossing the selected potential.")
             pixels = self.dataset.metadata["scan_grid"]["pixels"]
-            from .analysis_crop import inside
+            from .analysis_crop import inside, grid_spacing
+            self.map.cell_spacing_um = grid_spacing((p['x_um'],p['y_um']) for p in pixels)
+            self.map.export_context = dict(crop_xy_um=self.crop_bounds, channel=channel, statistic=self.statistic.currentText(), potential_v=self.potential.value() if cv else None, cycle=self.cycle.currentData() if cv else None, segment=self.direction.currentText() if cv else None)
             self.points = [p for p in self.points if inside(p['x_um'], p['y_um'], self.crop_bounds)]
             pixels = [p for p in pixels if inside(p['x_um'], p['y_um'], self.crop_bounds)]
             if not self.points: raise AnalysisError('No usable hops inside the XY crop; reset or adjust Crop XY.')

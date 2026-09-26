@@ -12,6 +12,15 @@ def inside(x, y, bounds):
     return bounds[0]<=x<=bounds[1] and bounds[2]<=y<=bounds[3]
 
 
+def grid_spacing(coordinates):
+    """Retain original row/column spacing even after a crop leaves a single cell."""
+    points=list(coordinates)
+    def step(axis):
+        """Use smallest positive grid spacing, with 1 µm for genuinely singleton axes."""
+        values=sorted({float(p[axis]) for p in points})
+        return float(min(np.diff(values))) if len(values)>1 else 1.0
+    return step(0),step(1)
+
 def crop_frames(frames, bounds):
     """Crop every frame before estimating colour limits; preserve physical hop IDs."""
     if bounds is None:return frames
@@ -19,7 +28,8 @@ def crop_frames(frames, bounds):
     if not indices:raise ValueError('No measured map locations lie inside these crop limits.')
     coordinates={pixel:xy for pixel,xy in frames.coordinates.items() if inside(*xy,bounds)}
     return replace(frames,values=frames.values[:,indices],pixels=[frames.pixels[i] for i in indices],
-                   coordinates=coordinates,recipe={**frames.recipe,'crop_xy_um':list(bounds)})
+                   coordinates=coordinates,recipe={**frames.recipe,'crop_xy_um':list(bounds),
+                   'cell_spacing_um':grid_spacing(frames.coordinates.values())})
 
 
 def choose_crop(parent, dataset, bounds):

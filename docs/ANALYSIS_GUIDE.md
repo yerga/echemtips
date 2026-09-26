@@ -1,5 +1,9 @@
 # Analysis workbench
 
+For selected-plot CSV export, editable publication figures, XY cropping and
+reference-electrode conversion, see [Analysis exports and reference scales](ANALYSIS_EXPORTS.md).
+The page includes a step-by-step acceptance checklist.
+
 For advisory limiting currents, ideal step transients and steady-state kinetic
 waves, see [SECCM analytical models](SECCM_MODELS.md).
 
@@ -102,8 +106,9 @@ with their source names; the app does not invent their units.
 
 **Compare → Pin this trace as reference** retains a snapshot of the current
 processed trace. Select another hop, cycle or file to overlay it. A reference is
-displayed only when both channel identifiers match. Statistics and exports always
-describe the active trace, not a subtraction or average of the reference. Use
+displayed only when channel identifiers and potential-conversion settings match.
+Statistics and **Export selection** describe the active trace. **Export plotted
+data** also includes visible reference overlays as separate series. Use
 **Clear reference** to release it, or **Reset analysis** to clear the active time
 range and baseline. No automatic smoothing or baseline fitting is applied.
 
@@ -136,9 +141,9 @@ Unvisited cells remain absent; no interpolation across hops or zero-filling is u
   particular, a Z statistic is **not confirmed contact topography**, and a mean
   current is **not a pulse-only/surface current**.
 - **CV at potential:** select a current channel, potential, and increasing or
-  decreasing E direction. The app linearly interpolates the first crossing of
-  that direction in each complete CV, then averages contributing cycles per hop.
-  It never extrapolates outside a cycle's measured potential range. Missing or
+  decreasing E via a chronological segment, and a cycle number (or average).
+  The app interpolates adjacent samples within that segment, never beyond its
+  measured potential range. Missing or
   incomplete cycles do not contribute. Exported `samples` means contributing
   cycles in this mode, and finite samples in whole-hop statistics mode.
 
@@ -155,7 +160,7 @@ measurement results. **Export map** similarly records its statistic, units,
 potential and direction. Source path/size/time are provenance aids, not a
 cryptographic checksum. The reference overlay is not included in these exports.
 
-**Export separated CVs** writes all extracted cycles with pixel/cycle/point IDs
+**Export all separated CVs** writes all extracted cycles with pixel/cycle/point IDs
 and source channel columns. Keep the original recording and JSON alongside this
 export to retain the complete instrument context. Derived XY/map exports are not
 intended to be re-imported as acquisition recordings.

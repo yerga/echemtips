@@ -722,8 +722,9 @@ class Heatmap(QtWidgets.QWidget):
             plot_xs.reverse(); image = np.fliplr(image)
         if plot_ys[-1] < plot_ys[0]:
             plot_ys.reverse(); image = np.flipud(image)
-        dx = abs(plot_xs[1] - plot_xs[0]) if len(plot_xs) > 1 else self.footprint_diameter_um
-        dy = abs(plot_ys[1] - plot_ys[0]) if len(plot_ys) > 1 else self.footprint_diameter_um
+        spacing = getattr(self, 'cell_spacing_um', (self.footprint_diameter_um, self.footprint_diameter_um))
+        dx = abs(plot_xs[1] - plot_xs[0]) if len(plot_xs) > 1 else spacing[0]
+        dy = abs(plot_ys[1] - plot_ys[0]) if len(plot_ys) > 1 else spacing[1]
         dx = dx or self.footprint_diameter_um; dy = dy or self.footprint_diameter_um
         self.image_item.setImage(image, autoLevels=False, levels=levels)
         self.image_item.setRect(QtCore.QRectF(plot_xs[0] - dx / 2, plot_ys[0] - dy / 2,

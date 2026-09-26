@@ -41,7 +41,8 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     if frames.recipe["kind"]=="CV potential":
         p.drawText(40,86,leg_labels_from_recipe(frames,index))
     xs=sorted({v[0] for v in frames.coordinates.values()}); ys=sorted({v[1] for v in frames.coordinates.values()})
-    dx=min(np.diff(xs)) if len(xs)>1 else 1.; dy=min(np.diff(ys)) if len(ys)>1 else 1.
+    spacing=frames.recipe.get('cell_spacing_um',(1.,1.))
+    dx=min(np.diff(xs)) if len(xs)>1 else spacing[0]; dy=min(np.diff(ys)) if len(ys)>1 else spacing[1]
     xmin,xmax=xs[0]-dx/2,xs[-1]+dx/2; ymin,ymax=ys[0]-dy/2,ys[-1]+dy/2
     scale=min(650/(xmax-xmin),480/(ymax-ymin)); w=(xmax-xmin)*scale; h=(ymax-ymin)*scale
     left=85+(650-w)/2; top=115+(480-h)/2
@@ -180,10 +181,16 @@ class MoviePanel(QtWidgets.QWidget):
         self.timeline_cursor = pg.InfiniteLine(angle=90, pen=pg.mkPen('#bb3850', width=2)); self.timeline.addItem(self.timeline_cursor)
         layout.addWidget(self.timeline)
         self.timeline.hide()
+        from .analysis_export import export_figure, export_plot_csv
+        menu=QtWidgets.QMenu(self.timeline)
+        menu.addAction('Export publication figure…',lambda:export_figure(self.timeline))
+        menu.addAction('Export plotted data as CSV…',lambda:export_plot_csv(self.timeline))
+        self.timeline.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.timeline.customContextMenuRequested.connect(lambda pos:menu.exec(self.timeline.mapToGlobal(pos)))
         self.map=Heatmap("nA","Current"); self.map.setMinimumHeight(250); layout.addWidget(self.map,1)
         bar=QtWidgets.QHBoxLayout(); layout.addLayout(bar)
         self.play=button("Play",self.toggle); bar.addWidget(self.play)
-        bar.addWidget(button('Crop XY…', self.edit_crop))
+        self.crop_button=button('Crop XY…', self.edit_crop); bar.addWidget(self.crop_button)
         self.slider=QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal); bar.addWidget(self.slider,1)
         self.loop=QtWidgets.QCheckBox("Loop"); self.loop.setChecked(True); bar.addWidget(self.loop)
         self.save=button("Save MP4…",self.save_movie); bar.addWidget(self.save)
@@ -218,6 +225,8 @@ class MoviePanel(QtWidgets.QWidget):
         """Discard stale prepared frames after a scientific selection changes."""
         self.cancel_tasks(); self.token+=1; self.frames=None
         self.map.values = {}; self.map.hide()
+        self.crop_button.setText('Crop XY (on)…' if self.crop_bounds else 'Crop XY…')
+        self.crop_button.setToolTip(f'XY bounds (µm): {self.crop_bounds}' if self.crop_bounds else 'Full recorded grid')
         self.progress.setRange(0,100); self.progress.setValue(0)
         self.play.setEnabled(False); self.save.setEnabled(False)
         self.cycle.setEnabled(self.kind.currentText().startswith("CV")); self.leg.setEnabled(self.kind.currentText()=="CV potential")
@@ -294,7 +303,10 @@ class MoviePanel(QtWidgets.QWidget):
         xi={x:i for i,x in enumerate(xs)}; yi={y:i for i,y in enumerate(ys)}
         self.map.fixed_limits=limits; self.map.colormap_name=self.palette.currentText()
         self.map.quantity="Current "+frames.recipe["channel"][7]
+        from .analysis_crop import grid_spacing
+        self.map.cell_spacing_um = frames.recipe.get('cell_spacing_um',grid_spacing(frames.coordinates.values()))
         self.map.set_data({(yi[p["y_um"]],xi[p["x_um"]]):p["value"] for p in points},len(ys),len(xs),x_values=xs,y_values=ys)
+        self.map.export_context = {**frames.recipe, 'frame_index':index, 'frame_axis_value':float(frames.axis[index])}
         unit="V" if frames.recipe["kind"]=="CV potential" else "s from surface-program start" if frames.recipe["kind"]=="I–t time" else "s from cycle start"
         reference=frames.recipe.get('potential_reference')
         if reference and unit=='V': unit+=f" vs {reference['target_label']}"

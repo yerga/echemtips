@@ -616,7 +616,7 @@ class QtLayoutTests(unittest.TestCase):
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()
-            self.assertTrue(window.export_button.isVisible())
+            self.assertFalse(window.export_button.isVisible())  # No CV recording selected.
         finally:
             window.close()
 
