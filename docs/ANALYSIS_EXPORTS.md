@@ -46,6 +46,18 @@ The dialog takes a snapshot so formatting does not modify the live analysis:
    or PDF/SVG for vector graphics. PDF embeds TrueType fonts; SVG keeps text
    editable. Export preserves physical size rather than using tight-crop output.
 
+Use **X units**, **Y units** and **Colour-bar units** to change the magnitude
+without editing data: for example V → mV or pA → nA. Available choices depend on
+the original quantity: current (A to fA), potential (V/mV/µV), position
+(m/mm/µm/nm) and time (min/s/ms/µs). Unknown or compound units are not guessed.
+These selectors rescale numerical values, axis ticks and colour values, not just
+the captions. Existing manual colour limits are converted too. Edited labels
+retain their wording and reference-electrode names. Click **Preview** after a
+change. The figure sidecar records original units, chosen units and factors.
+Conversions always start from the original plot snapshot, preserving NaN gaps;
+they do not affect live plots, CSV exports, source recordings or reference offsets.
+Map geometry remains physically proportional even if X and Y use different units.
+
 Maps keep equal physical X/Y scaling, missing cells remain blank, and cropping
 does not alter cell values or hop spacing. Circular views retain their physical
 diameter. No spatial smoothing, interpolation between landings or replacement of

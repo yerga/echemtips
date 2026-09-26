@@ -91,7 +91,11 @@ def render_figure(data, options):
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.collections import PatchCollection
-    from matplotlib.patches import Circle
+    from matplotlib.patches import Ellipse
+    units = options.get('units', {})
+    sx = units.get('xlabel', {}).get('factor', 1.)
+    sy = units.get('ylabel', {}).get('factor', 1.)
+    sz = units.get('quantity', {}).get('factor', 1.)
     from matplotlib import rc_context
     with rc_context({'font.family': options['font'], 'font.size': options['font_size'],
                      'pdf.fonttype': 42, 'svg.fonttype': 'none', 'path.simplify': False}):
@@ -100,24 +104,24 @@ def render_figure(data, options):
         ax = figure.add_subplot()
         if data.series:
             for name, x, y, colour in data.series:
-                ax.plot(x, y, color=colour, lw=options['line_width'], label=name)
+                ax.plot(np.asarray(x)*sx, np.asarray(y)*sy, color=colour, lw=options['line_width'], label=name)
             if options['legend']: ax.legend(frameon=False, fontsize=options['font_size']*.85)
             ax.spines[['top', 'right']].set_visible(False)
         else:
             matrix = np.full((len(data.ys), len(data.xs)), np.nan)
-            for (row, column), value in data.cells.items(): matrix[row, column] = value
+            for (row, column), value in data.cells.items(): matrix[row, column] = value*sz
             limits = options.get('limits')
             kw = dict(cmap=options['palette'])
             if limits: kw.update(vmin=limits[0], vmax=limits[1])
             if data.circular:
-                patches = [Circle((data.xs[c], data.ys[r]), data.diameter/2) for r,c in data.cells]
+                patches = [Ellipse((data.xs[c]*sx, data.ys[r]*sy), data.diameter*sx, data.diameter*sy) for r,c in data.cells]
                 artist = PatchCollection(patches, cmap=kw['cmap'], edgecolor='none')
-                artist.set_array(np.asarray(list(data.cells.values())))
+                artist.set_array(np.asarray(list(data.cells.values()))*sz)
                 if limits: artist.set_clim(*limits)
                 ax.add_collection(artist); ax.autoscale_view()
             else:
-                artist = ax.pcolormesh(_edges(data.xs,data.spacing[0]), _edges(data.ys,data.spacing[1]), np.ma.masked_invalid(matrix), shading='flat', **kw)
-            ax.set_aspect('equal', adjustable='box')
+                artist = ax.pcolormesh(_edges(data.xs,data.spacing[0])*sx, _edges(data.ys,data.spacing[1])*sy, np.ma.masked_invalid(matrix), shading='flat', **kw)
+            ax.set_aspect(sx/sy, adjustable='box')
             figure.colorbar(artist, ax=ax, fraction=.055, pad=.04, label=options['quantity'])
         ax.set(xlabel=options['xlabel'], ylabel=options['ylabel'], title=options['title'])
         ax.tick_params(direction='out', width=.7)
@@ -149,6 +153,8 @@ class FigureExportDialog(Q.QDialog):
         for key, caption, value in [('title','Title',''), ('xlabel','X label',self.data.xlabel),
                                     ('ylabel','Y label',self.data.ylabel), ('quantity','Colour-bar label',self.data.quantity)]:
             control=Q.QLineEdit(value); self.fields[key]=control; form.addRow(caption,control)
+        from .figure_units import FigureUnitControls
+        self.unit_controls = FigureUnitControls(self, form)
         for key, caption, value, low, high in [('width','Width (mm)',150,50,350), ('height','Height (mm)',110,40,350),
                 ('font_size','Font size (pt)',10,6,24), ('line_width','Line width (pt)',1.2,.3,5), ('dpi','Raster DPI',300,100,1200)]:
             control=Q.QDoubleSpinBox(); control.setRange(low,high); control.setValue(value)
@@ -160,7 +166,7 @@ class FigureExportDialog(Q.QDialog):
         self.legend=Q.QCheckBox('Show curve legend'); self.legend.setChecked(len(self.data.series)<=10); form.addRow(self.legend)
         self.manual=Q.QCheckBox('Manual colour limits'); form.addRow(self.manual)
         self.low=_LimitSpin(); self.high=_LimitSpin()
-        for control in (self.low,self.high): control.setRange(-1e12,1e12); control.setDecimals(8)
+        for control in (self.low,self.high): control.setDecimals(18); control.setRange(-1e18,1e18)
         finite=np.asarray(list(self.data.cells.values())); finite=finite[np.isfinite(finite)]
         automatic=(float(finite.min()),float(finite.max())) if len(finite) else (0,1)
         low,high=self.data.limits or automatic
@@ -186,6 +192,7 @@ class FigureExportDialog(Q.QDialog):
     def options(self):
         """Validate settings before rendering or opening an output file."""
         result={key:widget.text() if isinstance(widget,Q.QLineEdit) else widget.value() for key,widget in self.fields.items()}
+        result['units'] = self.unit_controls.options()
         result.update(font=self.font.currentText(), palette=self.palette.currentText(), legend=self.legend.isChecked(),
                       limits=(self.low.value(),self.high.value()) if self.manual.isChecked() and not self.data.series else None)
         if result['limits'] and result['limits'][0]>=result['limits'][1]: raise ValueError('Minimum colour limit must be below maximum.')
