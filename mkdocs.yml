@@ -45,6 +45,7 @@ nav:
   - UX acceptance checklist: UX_TEST_CHECKLIST.md
   - Analysis workbench: ANALYSIS_GUIDE.md
   - Branding and optional integrations: BRANDING.md
+  - SECCM analytical models: SECCM_MODELS.md
   - Settings: SETTINGS_REFERENCE.md
   - Terminology: GLOSSARY.md
   - Data format: DATA_FORMAT.md

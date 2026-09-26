@@ -1,5 +1,8 @@
 # Analysis workbench
 
+For advisory limiting currents, ideal step transients and steady-state kinetic
+waves, see [SECCM analytical models](SECCM_MODELS.md).
+
 For cycle-resolved CV maps, E–t/i–t views and MP4 map animations, see
 [CV views and map movies](MAP_MOVIES.md).
 
