@@ -243,6 +243,8 @@ def prepare_frames(dataset, selections, *, channel="current1_na", kind="CV poten
         dict(channel=channel,kind=kind,cycle=cycle,leg=leg,waveform=(dataset.metadata.get("parameters") or {}).get("waveform", "CV"),excluded_pixels=sorted(excluded),
              source=str(dataset.path),polarity=(dataset.metadata.get("settings") or {}).get("polarity_convention","unspecified"),
              smoothing=dataset.metadata.get("analysis_processing"),
-             potential_reference=dataset.metadata.get('analysis_reference')), len(coordinates)-len(pixels))
+             potential_reference=dataset.metadata.get('analysis_reference'),
+             normalization=dataset.metadata.get('analysis_normalization'),
+             value_unit='mA/cm²' if channel.startswith('current_density') else 'nA'), len(coordinates)-len(pixels))
     result.auto_limits=result.limits("Auto")
     return result

@@ -2144,6 +2144,10 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         open_analysis.triggered.connect(lambda: self.launch_analysis())
         last_recording = analysis_menu.addAction("Analyze last saved recording")
         last_recording.triggered.connect(lambda: self.launch_analysis(last_recording=True))
+        from .analysis_area_ui import open_saved_diagnostic
+        area_diagnostic = analysis_menu.addAction('Experimental landing diameters (last recording)…', lambda: open_saved_diagnostic(self))
+        analysis_menu.aboutToShow.connect(lambda: area_diagnostic.setEnabled(
+            not self.recorder.active and self.recorder.output_path is not None and self.recorder.output_path.exists()))
         analysis_menu.aboutToShow.connect(lambda: last_recording.setEnabled(
             not self.recorder.active and self.recorder.output_path is not None and self.recorder.output_path.exists()))
         from .operator_workspace import OperatorWorkspace

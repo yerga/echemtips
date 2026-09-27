@@ -28,6 +28,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.dataset: AnalysisDataset | None = None
         self.source_dataset: AnalysisDataset | None = None
         self.reference_config = {}
+        self.area_config = {}
+        self._applied_area_config = {}
         self.cycles: list[CVCycle] = []
         self.original_cycles = []
         self.model_cycles = []
@@ -184,6 +186,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         from .analysis_movie import MoviePanel
         self.movie_panel = MoviePanel()
         self.tabs.addTab(self.movie_panel, "Map movie")
+        from .analysis_area_ui import AreaPanel
+        self.area_panel = AreaPanel(self._apply_area)
+        self.tabs.addTab(self.area_panel, 'Area / detachment')
         self._build_table_tab()
         self._build_metadata_tab()
         self.statusBar().showMessage("Open a recording. Source files are never edited by analysis.")
@@ -320,6 +325,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         """Queue a background import; only the newest selection may update views."""
         if source is None and not (hasattr(self, 'workspace') and self.workspace.pending):
             self.reference_config = {}
+            self.area_config = {}
         if (self.smoothing_enabled.isChecked() and self.smoothing_method.currentData() == "savitzky_golay"
                 and self.smoothing_order.value() >= self.smoothing_window.value()):
             QtWidgets.QMessageBox.warning(self, "Smoothing settings", "Use a sample window larger than the polynomial order.")
@@ -339,7 +345,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         task = LoadRecording(self._load_token, path, source=source, smoothing_window=window,
                              smoothing_method=self.smoothing_method.currentData(), polynomial_order=self.smoothing_order.value(),
                              condition=self.condition_selector.currentData() if source is not None else None,
-                             reference_config=self.reference_config)
+                             reference_config=self.reference_config, area_config=self.area_config)
         task.signals.finished.connect(self._loaded)
         self._load_tasks[self._load_token] = task
         self._pool.start(task)
@@ -353,6 +359,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cancel_load.hide(); self.tabs.setEnabled(True)
         self.context_label.setText('Load cancelled; previous recording remains displayed')
         self.reference_config = dict(self.dataset.metadata.get('analysis_reference') or {}) if self.dataset else {}
+        self.area_config = dict(self._applied_area_config)
 
     def _condition_changed(self, *_):
         """Rebuild all views off-thread with one comparable condition."""
@@ -363,6 +370,12 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if self.source_dataset is not None and not self.loading:
             self.load_recording(self.source_dataset.path, source=self.source_dataset)
 
+    def _apply_area(self, config):
+        """Reprocess off-thread, estimating geometry only from original samples."""
+        if self.source_dataset is not None and not self.loading:
+            self.area_config = config
+            self.load_recording(self.source_dataset.path, source=self.source_dataset)
+
     def _loaded(self, token, bundle, error):
         task = self._load_tasks.pop(token, None)
         if token != self._load_token:
@@ -370,6 +383,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.loading = False
         self.cancel_load.hide(); self.tabs.setEnabled(True)
         if error:
+            self.area_config = dict(self._applied_area_config)
             self.reference_config = dict(self.dataset.metadata.get('analysis_reference') or {}) if self.dataset else {}
             if hasattr(self, 'workspace'): self.workspace.pending = None
             self.context_label.setText('Loading failed; displayed data belong to the previous recording')
@@ -379,6 +393,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.dataset, self.cycles, self.groups = bundle
         self.source_dataset = task.source
         self.reference_config = dict(task.reference_config)
+        self.area_config = dict(task.area_config)
+        self._applied_area_config = dict(task.area_config)
+        self.area_panel.set_dataset(task.area_source, task.area_results, task.area_config)
         self.original_cycles = getattr(task, "original_cycles", [])
         self.model_cycles = getattr(task, 'model_cycles', self.original_cycles)
         if not task.reprocessing:
@@ -421,6 +438,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.map_panel.potential.setToolTip(f"Potential vs {reference['target_label']}; converted scale")
         else: self.map_panel.potential.setToolTip('Potential in the recorded reference scale')
         self.processing_pending.clear()
+        if self.area_config.get('mode', 'none') != 'none':
+            self.context_label.setText(self.context_label.text() + ' · Density channels: ' + self.area_config['mode'] + ' area (endpoint normalization)')
         if hasattr(self, "workspace"): self.workspace.loaded()
 
     def _inspect_hop(self, pixel):
@@ -489,6 +508,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.export_button.setEnabled(True)
         self.export_button.show()
         column = CURRENT_COLUMNS[self.cv_current.currentText()]
+        from .analysis_tools import signal_label, SIGNALS
+        unit = SIGNALS[column][1]
+        self.cycle_tree.setHeaderLabels(('Cycle', 'Max / ' + unit, 'Min / ' + unit))
         all_item = QtWidgets.QTreeWidgetItem(("All", "", ""))
         all_item.setData(0, QtCore.Qt.ItemDataRole.UserRole, -1)
         self.cycle_tree.addTopLevelItem(all_item)
@@ -535,23 +557,26 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         column = CURRENT_COLUMNS[self.cv_current.currentText()]
         view = self.cv_view.currentText()
         self.cv_plot.x_label = "Potential E1 (V)" if view == "i vs E" else "Time from cycle start (s)"
-        self.cv_plot.y_label = "Potential E1 (V)" if view == "E vs t" else "Current (nA)"
+        from .analysis_tools import signal_label, SIGNALS
+        unit = SIGNALS[column][1]
+        self.cv_plot.y_label = "Potential E1 (V)" if view == "E vs t" else signal_label(column) if column.startswith('current_density') else "Current (nA)"
         series=[]
         for i, cycle in enumerate(cycles):
             times=[row["elapsed_s"] for row in cycle.rows]
             x=cycle.potential_v if view == "i vs E" else [t-times[0] for t in times]
             y=cycle.potential_v if view == "E vs t" else cycle.current_na(column)
             series.append((cycle.label,x,y,PLOT_COLORS[i % len(PLOT_COLORS)]))
-            if self.overlay_original.isChecked() and self.dataset.metadata.get('analysis_processing') and view != 'E vs t':
+            if self.overlay_original.isChecked() and self.dataset.metadata.get('analysis_processing') and view != 'E vs t' and column in ('current1_na', 'current2_na'):
                 original = next((c for c in self.original_cycles if (c.pixel, c.number, c.rate_index) == (cycle.pixel, cycle.number, cycle.rate_index)), None)
                 if original is not None:
                     ts = [row['elapsed_s'] for row in original.rows]
                     series.append((cycle.label + ' · original', original.potential_v if view == 'i vs E' else [t-ts[0] for t in ts], original.current_na(column), '#a0a8b2'))
         self.cv_plot.set_data(series)
+        self.cv_plot.export_context = {'normalization': self.dataset.metadata.get('analysis_normalization')}
         if len(cycles) == 1:
             maximum, max_v, minimum, min_v = cycles[0].peak_summary(column)
             kind = "Smoothed" if self.dataset.metadata.get("analysis_processing") else "Raw"
-            self.cv_detail.setText(f"Maximum current\n{maximum:+.4g} nA at {max_v:+.4g} V\n\nMinimum current\n{minimum:+.4g} nA at {min_v:+.4g} V\n\n{kind} extrema; no peak fitting or baseline correction.")
+            self.cv_detail.setText(f"Maximum\n{maximum:+.4g} {unit} at {max_v:+.4g} V\n\nMinimum\n{minimum:+.4g} {unit} at {min_v:+.4g} V\n\n{kind} extrema; no peak fitting or baseline correction.")
         else:
             self.cv_detail.setText(f"Overlaying {len(cycles)} of {total} selected cycles (up to 50 evenly spaced selections; exports retain all).\nCtrl/Cmd-click to select cycles. Exports retain all cycles.")
 

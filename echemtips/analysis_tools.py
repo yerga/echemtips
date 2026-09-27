@@ -70,6 +70,11 @@ SIGNALS = {
     "elapsed_s": ("Elapsed time", "s"),
     "voltage1_v": ("Potential E1", "V"), "voltage2_v": ("Potential E2", "V"),
     "current1_na": ("Current 1", "nA"), "current2_na": ("Current 2", "nA"),
+    "current_density1_ma_cm2": ("Current density 1", "mA/cm²"),
+    "current_density2_ma_cm2": ("Current density 2", "mA/cm²"),
+    "estimated_diameter_um": ("Experimental landing diameter", "µm"),
+    "estimated_area_um2": ("Experimental wetted area", "µm²"),
+    "normalization_area_um2": ("Normalization area", "µm²"),
     "x_um": ("Measured X", "µm"), "y_um": ("Measured Y", "µm"), "z_um": ("Measured Z", "µm"),
 }
 

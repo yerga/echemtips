@@ -14,7 +14,7 @@ class LoadRecording(QtCore.QRunnable):
     """Load outside the event loop; the receiver alone updates UI widgets."""
 
     def __init__(self, token, path, *, source=None, smoothing_window=1,
-                 smoothing_method="savitzky_golay", polynomial_order=2, condition=None, reference_config=None):
+                 smoothing_method="savitzky_golay", polynomial_order=2, condition=None, reference_config=None, area_config=None):
         super().__init__()
         self.token, self.path = token, path
         self.signals = LoadSignals()
@@ -23,6 +23,8 @@ class LoadRecording(QtCore.QRunnable):
         self.source = source
         self.reprocessing = source is not None
         self.reference_config = dict(reference_config or {})
+        self.area_config = dict(area_config or {})
+        self.area_results = []
         self.smoothing_window = smoothing_window
         self.smoothing_method, self.polynomial_order = smoothing_method, polynomial_order
 
@@ -36,6 +38,11 @@ class LoadRecording(QtCore.QRunnable):
             self.source = dataset
             from .analysis_conditions import condition_dataset
             dataset = condition_dataset(dataset, self.condition)
+            self.area_source = dataset
+            from .analysis_area import RetractionConfig, estimate_landings, normalize_dataset, attach_diameters
+            if self.area_config.get('diagnostics_enabled'):
+                self.area_results = estimate_landings(dataset, RetractionConfig(**self.area_config.get('detector', {})),
+                                                     cancelled=lambda: self.cancelled)
             from .analysis_reference import convert_dataset
             source_cycles = extract_cv_cycles(dataset) if self.reference_config.get('enabled') else None
             dataset = convert_dataset(dataset, self.reference_config)
@@ -53,6 +60,12 @@ class LoadRecording(QtCore.QRunnable):
             if self.smoothing_window > 1:
                 dataset = smooth_currents(dataset, self.smoothing_window, cycles,
                                           method=self.smoothing_method, polynomial_order=self.polynomial_order)
+                cycles = extract_cv_cycles(dataset)
+            dataset = attach_diameters(dataset, self.area_results)
+            if self.area_results:
+                dataset.metadata = {**dataset.metadata, 'analysis_retraction_config': self.area_config.get('detector')}
+            dataset = normalize_dataset(dataset, self.area_config, self.area_results)
+            if self.area_results or self.area_config.get('mode', 'none') != 'none':
                 cycles = extract_cv_cycles(dataset)
             groups = {key: (cv_selections(dataset, cycles) if key == "cv" else provider.extract(dataset))
                       for key, provider in PROVIDERS.items() if provider.supports(dataset)}

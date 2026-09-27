@@ -35,6 +35,7 @@ class AnalysisWorkspace(QtCore.QObject):
         w = self.window
         if w.source_dataset is None or w.loading: raise ValueError('Finish loading a recording first.')
         if 'not applied' in w.processing_pending.text(): raise ValueError('Apply processing edits before saving the analysis session.')
+        if w.area_panel.dirty: raise ValueError('Apply area/detachment edits before saving the analysis session.')
         values = {}
         for key, widget in self.controls().items():
             values[key] = widget.currentText() if isinstance(widget, Q.QComboBox) else widget.isChecked() if isinstance(widget, Q.QCheckBox) else widget.text() if isinstance(widget, Q.QLineEdit) else widget.value()
@@ -44,6 +45,7 @@ class AnalysisWorkspace(QtCore.QObject):
                     condition=w.condition_selector.currentData(), controls=values, tab=w.tabs.currentIndex(),
                     map_crop=w.map_panel.crop_bounds, movie_crop=w.movie_panel.crop_bounds,
                     reference_config=w.reference_config,
+                    area_config=w.area_config,
                     bounds=w.explorer.bounds, baseline=w.explorer.baseline)
 
     def save(self):
@@ -83,6 +85,7 @@ class AnalysisWorkspace(QtCore.QObject):
                 raise ValueError('The source recording has changed. Open it normally and review the analysis instead.')
             self._restore(payload['controls'], smoothing_only=True)
             self.window.reference_config = payload.get('reference_config', {})
+            self.window.area_config = payload.get('area_config', {})
             self.pending = payload; self.window.load_recording(source)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.pending = None; Q.QMessageBox.warning(self.window, 'Session not opened', str(exc))

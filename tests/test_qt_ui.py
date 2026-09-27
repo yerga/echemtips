@@ -612,7 +612,7 @@ class QtLayoutTests(unittest.TestCase):
         self.qt_app.processEvents()
         try:
             labels = [window.tabs.tabText(index) for index in range(window.tabs.count())]
-            self.assertEqual(labels, ["Explore and measure", "CV / LSV", "Hop maps", "Map movie", "Data table", "Metadata"])
+            self.assertEqual(labels, ["Explore and measure", "CV / LSV", "Hop maps", "Map movie", "Area / detachment", "Data table", "Metadata"])
             self.assertIsNot(window.raw_current_plot, window.cv_plot)
             window.tabs.setCurrentIndex(1)
             self.qt_app.processEvents()

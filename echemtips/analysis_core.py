@@ -16,6 +16,8 @@ from .legacy_data import LegacyDataError, load_legacy
 CURRENT_COLUMNS = {
     "Current 1": "current1_na",
     "Current 2": "current2_na",
+    "Current density 1": "current_density1_ma_cm2",
+    "Current density 2": "current_density2_ma_cm2",
 }
 
 RAW_SIGNALS = dict(CURRENT_COLUMNS)

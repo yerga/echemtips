@@ -3,7 +3,7 @@
 No hardware access. A current break is evidence of detachment, not proof of a
 particular wetted geometry. The d=h model needs independent validation.
 """
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from copy import deepcopy
 import numpy as np
 from scipy.ndimage import median_filter
@@ -134,6 +134,8 @@ def estimate_landings(dataset, config=RetractionConfig(), *, cancelled=lambda: F
     from .analysis_frames import it_surface_rows
     from .analysis_core import extract_cv_cycles
     config.validate()
+    if 'scan_pixel' not in dataset.columns:
+        return []
     groups = hop_selections(dataset)
     info = {int(p['scan_pixel']): p for p in dataset.metadata.get('scan_grid', {}).get('pixels', [])}
     results = []
@@ -181,7 +183,10 @@ def normalize_dataset(dataset, config, results=()):
     elif mode == 'retraction':
         areas = {int(r['scan_pixel']): r['area_um2'] for r in results if r['status'] == 'estimated'}
     else:
-        areas = {int(k): float(v) for k,v in config.get('areas_um2', {}).items()}
+        for k, v in config.get('areas_um2', {}).items():
+            if str(int(k)) != str(k):
+                raise AnalysisError('Per-landing pixel IDs must be nonnegative integers')
+            areas[int(k)] = float(v)
     if any(k < 0 or not np.isfinite(v) or v <= 0 for k,v in areas.items()):
         raise AnalysisError('Per-landing areas must have nonnegative pixel IDs and finite positive values')
     if mode != 'nominal' and 'scan_pixel' not in dataset.columns:
@@ -209,3 +214,23 @@ def normalize_dataset(dataset, config, results=()):
         missing='NaN; never replaced by nominal area', detector=config.get('detector'),
         results=list(results) if mode == 'retraction' else [])
     return AnalysisDataset(dataset.path, tuple(columns), NumericRows(columns, np.column_stack(arrays)), metadata)
+
+
+def attach_diameters(dataset, results):
+    """Expose diagnostic diameter/area maps as derived columns, preserving gaps."""
+    if not results or 'scan_pixel' not in dataset.columns:
+        return dataset
+    good = {r['scan_pixel']:r for r in results if r['status']=='estimated'}
+    pixels=dataset.column('scan_pixel')
+    keys=np.array(sorted(good),dtype=float)
+    columns=list(dataset.columns); arrays=[dataset.rows.matrix]
+    for column,key in [('estimated_diameter_um','diameter_um'),('estimated_area_um2','area_um2')]:
+        values=np.full(len(pixels),np.nan)
+        if len(keys):
+            idx=np.searchsorted(keys,pixels)
+            match=(idx<len(keys)) & np.isfinite(pixels)
+            match &= keys[np.minimum(idx,len(keys)-1)]==pixels
+            values[match]=np.array([good[int(k)][key] for k in keys])[idx[match]]
+        columns.append(column); arrays.append(values[:,None])
+    return AnalysisDataset(dataset.path,tuple(columns),NumericRows(columns,np.column_stack(arrays)),
+                           {**dataset.metadata,'analysis_retraction':list(results)})

@@ -3,12 +3,13 @@ import re
 from PySide6 import QtCore, QtWidgets as Q
 
 UNIT_FAMILIES = (
+    {'A/cm²': 1., 'mA/cm²': 1e-3, 'µA/cm²': 1e-6, 'nA/cm²': 1e-9},
     {'A': 1., 'mA': 1e-3, 'µA': 1e-6, 'nA': 1e-9, 'pA': 1e-12, 'fA': 1e-15},
     {'V': 1., 'mV': 1e-3, 'µV': 1e-6},
     {'m': 1., 'mm': 1e-3, 'µm': 1e-6, 'nm': 1e-9},
     {'min': 60., 's': 1., 'ms': 1e-3, 'µs': 1e-6},
 )
-_PATTERN = re.compile(r'\((A|mA|µA|nA|pA|fA|V|mV|µV|m|mm|µm|nm|min|s|ms|µs)(?=\s|\))')
+_PATTERN = re.compile(r'\((A/cm²|mA/cm²|µA/cm²|nA/cm²|A|mA|µA|nA|pA|fA|V|mV|µV|m|mm|µm|nm|min|s|ms|µs)(?=\s|\))')
 
 
 def label_unit(text):

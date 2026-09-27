@@ -40,7 +40,8 @@ def snapshot(plot):
         if not series: raise ValueError('This plot has no data to export.')
         from .analysis_reference import potential_label
         return FigureData(potential_label(plot.x_label, _dataset(plot)),
-            potential_label(plot.y_label.replace('(nA)', f'({unit})') if unit else plot.y_label, _dataset(plot)), series=series)
+            potential_label(plot.y_label.replace('(nA)', f'({unit})') if unit else plot.y_label, _dataset(plot)), series=series,
+            context=dict(getattr(plot,'export_context',{})))
     if not plot.values: raise ValueError('This map has no data to export.')
     from .analysis_reference import potential_label
     return FigureData(*getattr(plot, 'xy_labels', ('X position (µm)', 'Y position (µm)')),

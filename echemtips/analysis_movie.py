@@ -37,7 +37,8 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     cycle=frames.recipe["cycle"]
     p.drawText(40,38,f'eChemTips · {frames.recipe["kind"]} · {frames.axis[index]:.4g} {unit}')
     p.setFont(QtGui.QFont("Arial",11))
-    p.drawText(40,64,f'Current {frames.recipe["channel"][7]} (nA) · cycle {cycle if cycle is not None else "average"} · {frames.recipe["polarity"]}')
+    from .analysis_tools import signal_label
+    p.drawText(40,64,f'{signal_label(frames.recipe["channel"])} · cycle {cycle if cycle is not None else "average"} · {frames.recipe["polarity"]}')
     if frames.recipe["kind"]=="CV potential":
         p.drawText(40,86,leg_labels_from_recipe(frames,index))
     xs=sorted({v[0] for v in frames.coordinates.values()}); ys=sorted({v[1] for v in frames.coordinates.values()})
@@ -64,7 +65,7 @@ def render_frame(frames, index, palette, limits, width=960, height=720):
     p.drawText(12,100,"Y from map corner (µm)" if relative else "Y (µm)")
     for i in range(256):
         p.fillRect(QtCore.QRectF(790,150+(255-i)*1.5,22,1.6),QtGui.QColor(*[int(v) for v in lut[i][:3]]))
-    p.drawText(825,158,f"{high:.4g}"); p.drawText(825,535,f"{low:.4g}"); p.drawText(785,130,"i (nA)")
+    p.drawText(825,158,f"{high:.4g}"); p.drawText(825,535,f"{low:.4g}"); p.drawText(785,130,frames.recipe.get('value_unit','nA'))
     p.drawText(40,height-38,f"Frame {index+1}/{len(frames.axis)} · grey = missing/excluded · omitted hops: {frames.omitted}")
     p.end()
     return np.frombuffer(image.constBits(),dtype=np.uint8).reshape(height,image.bytesPerLine())[:,:width*3].copy().tobytes()
@@ -108,7 +109,7 @@ def export_movie(frames, path, *, fps=20, hold_ms=100, palette="viridis", mode="
         if cancelled(): raise AnalysisError("Movie export cancelled")
         os.replace(name,path)
         recipe={**frames.recipe,"axis":frames.axis.tolist(),"fps":fps,"hold_ms":repeats/fps*1000,
-                "palette":palette,"colour_mode":mode,"fixed_limits_na":fixed,"robust_auto":"8 scaled MAD; 1st–99th percentiles"}
+                "palette":palette,"colour_mode":mode,"fixed_limits":fixed,"value_unit":frames.recipe.get('value_unit','nA'),"robust_auto":"8 scaled MAD; 1st–99th percentiles"}
         # Use a movie-specific sidecar, never a recording's existing JSON.
         path.with_suffix(".mp4.json").write_text(json.dumps(recipe,indent=2)+"\n",encoding="utf-8")
     finally:
@@ -157,7 +158,7 @@ class MoviePanel(QtWidgets.QWidget):
         self.options=QtWidgets.QDialog(self); self.options.setWindowTitle("Movie playback and colour options")
         advanced=QtWidgets.QGridLayout(self.options)
         self.excluded.setToolTip("Exclude known failed landings using the displayed one-based hop numbers. Exclusions affect frames and automatic colour limits, never source data.")
-        self.colour.setToolTip("Auto: fixed robust limits across all prepared frames. Dynamic: each frame's finite minimum/maximum. Manual: entered nA limits. Outlier clipping changes only colour limits, not values.")
+        self.colour.setToolTip("Auto: fixed robust limits across all prepared frames. Dynamic: each frame's finite minimum/maximum. Manual: entered limits in the selected channel's units. Outlier clipping changes only colour limits, not values.")
         self.stride.setToolTip("Use every Nth frame from the requested frame grid.")
         items=(("Frame axis",self.kind),("Current",self.channel),("Cycle per hop",self.cycle),("CV segment",self.leg),
                ("Frames",self.count),("Every Nth frame",self.stride),("Encoding FPS",self.fps),("Playback time per frame",self.hold),
@@ -227,6 +228,9 @@ class MoviePanel(QtWidgets.QWidget):
 
     def invalidate(self,*args):
         """Discard stale prepared frames after a scientific selection changes."""
+        from .analysis_tools import SIGNALS
+        unit = SIGNALS.get(self.channel.currentData(), ('Current', 'nA'))[1]
+        for control in (self.low, self.high): control.setSuffix(f' {unit}')
         self.cancel_tasks(); self.token+=1; self.frames=None
         self.map.values = {}; self.map.hide()
         self.crop_button.setText('Crop XY (on)…' if self.crop_bounds else 'Crop XY…')
@@ -241,8 +245,9 @@ class MoviePanel(QtWidgets.QWidget):
         if self.dataset is None or self.dataset.path != dataset.path: self.crop_bounds = None
         self.invalidate(); self.dataset=dataset; self.groups=groups
         for w in (self.channel,self.cycle,self.leg): w.blockSignals(True); w.clear()
-        for c in ("current1_na","current2_na"):
-            if c in dataset.columns: self.channel.addItem("Current "+c[7],c)
+        from .analysis_core import CURRENT_COLUMNS
+        for name,c in CURRENT_COLUMNS.items():
+            if c in dataset.columns: self.channel.addItem(name,c)
         for number in sorted({s.cycle for s in groups.get("cv",[])}): self.cycle.addItem(f"Cycle {number}",number)
         self.cycle.addItem("Average complete cycles",None); self.leg.addItems(leg_labels(dataset))
         if (dataset.metadata.get("parameters") or {}).get("waveform") != "LSV":
@@ -311,7 +316,9 @@ class MoviePanel(QtWidgets.QWidget):
         points=frames.points(index); xs=sorted({v[0] for v in frames.coordinates.values()}); ys=sorted({v[1] for v in frames.coordinates.values()})
         xi={x:i for i,x in enumerate(xs)}; yi={y:i for i,y in enumerate(ys)}
         self.map.fixed_limits=limits; self.map.colormap_name=self.palette.currentText()
-        self.map.quantity="Current "+frames.recipe["channel"][7]
+        from .analysis_tools import SIGNALS
+        self.map.quantity,self.map.base_unit=SIGNALS[frames.recipe['channel']]
+        for widget in (self.low,self.high): widget.setSuffix(' '+self.map.base_unit)
         from .analysis_crop import grid_spacing
         self.map.cell_spacing_um = frames.recipe.get('cell_spacing_um',grid_spacing(frames.coordinates.values()))
         self.map.set_data({(yi[p["y_um"]],xi[p["x_um"]]):p["value"] for p in points},len(ys),len(xs),x_values=xs,y_values=ys)

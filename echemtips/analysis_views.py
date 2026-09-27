@@ -55,6 +55,9 @@ def export_result(parent, dataset, rows, columns, recipe, suffix):
             "source_status": dataset.metadata.get("status", "unknown"),
             "processing": dataset.metadata.get("analysis_processing", {"method": "none"}),
             "potential_reference": dataset.metadata.get('analysis_reference'),
+            "normalization": dataset.metadata.get('analysis_normalization'),
+            "retraction": dataset.metadata.get('analysis_retraction'),
+            "retraction_config": dataset.metadata.get('analysis_retraction_config'),
             "analysis": recipe}, indent=2, allow_nan=False)
         with target.open("w", newline="", encoding="utf-8") as stream:
             writer = csv.writer(stream); writer.writerow(columns); writer.writerows(rows)
@@ -171,6 +174,7 @@ class ExplorerPanel(QtWidgets.QWidget):
             _xcol, _ycol, ref_x, ref_y, ref_name = self.reference
             series.append((ref_name, ref_x, ref_y, COLORS["warning"]))
         self.plot.set_data(series)
+        self.plot.export_context = {'normalization': self.dataset.metadata.get('analysis_normalization')}
         self.scope.setText(subset.scope + (f" · {self.bounds[0]:g}–{self.bounds[1]:g} s" if self.bounds else " · all times") +
                            f" · baseline: {self.baseline:g} in native Y units")
         unit = SIGNALS.get(ycol, ("", ""))[1]
@@ -339,7 +343,7 @@ class MapPanel(QtWidgets.QWidget):
                     self._contact_cache = contact_points(self.dataset, self.cv_groups, self.hop_groups)
                 self.points = list(self._contact_cache)
             elif cv:
-                if channel not in {"current1_na", "current2_na"}: raise AnalysisError("Choose a current channel for CV potential maps.")
+                if channel not in {"current1_na", "current2_na", "current_density1_ma_cm2", "current_density2_ma_cm2"}: raise AnalysisError("Choose a current or current-density channel for CV potential maps.")
                 self.points = prepare_frames(self.dataset, self.cv_groups, channel=channel, cycle=self.cycle.currentData(),
                                              leg=self.direction.currentIndex(), axis=[self.potential.value()]).points(0)
             elif self.statistic.currentText() == 'Surface I–t mean':
@@ -374,6 +378,9 @@ class MapPanel(QtWidgets.QWidget):
                 flatten=contact and self.flatten.isChecked(), height=contact and self.height.isChecked())
             pixels = [dict(p, x_um=p['x_um']-origin[0], y_um=p['y_um']-origin[1]) for p in pixels]
             self.map.export_context.update(transforms, xy_coordinates='map-corner-relative' if self.relative_xy.isChecked() else 'piezo')
+            self.map.export_context.update(normalization=self.dataset.metadata.get('analysis_normalization'),
+                                           retraction=self.dataset.metadata.get('analysis_retraction'),
+                                           retraction_config=self.dataset.metadata.get('analysis_retraction_config'))
             if contact:
                 self.map.export_context['z_sources'] = sorted({p['source'] for p in self.points})
             set_xy_labels(self.map, self.relative_xy.isChecked())
