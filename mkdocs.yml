@@ -45,6 +45,7 @@ nav:
   - UX acceptance checklist: UX_TEST_CHECKLIST.md
   - Analysis workbench: ANALYSIS_GUIDE.md
   - Analysis figures and reference scales: ANALYSIS_EXPORTS.md
+  - Experimental landing areas: AREA_NORMALIZATION.md
   - Branding and optional integrations: BRANDING.md
   - SECCM analytical models: SECCM_MODELS.md
   - Settings: SETTINGS_REFERENCE.md

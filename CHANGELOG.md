@@ -5,6 +5,15 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Added
+
+- Experimental post-recording detachment diagnostics with signed-current break
+  detection, d=h or calibrated diameter estimates, inspectable rejection reasons,
+  and a read-only control-app viewer for the last closed recording.
+- Non-destructive current-density channels from nominal, retraction-estimated or
+  imported per-landing areas, including maps, movies, unit-aware figure exports
+  and saved analysis provenance. No acquisition or FPGA behavior is changed.
+
 ### Fixed
 
 - Adaptive simulation now places its synthetic surface within the configured
