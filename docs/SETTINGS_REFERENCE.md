@@ -5,6 +5,29 @@ validates the complete configuration, writes it to the per-user settings file,
 disconnects any active backend, and rebuilds the experiment services. Reconnect
 after changing settings.
 
+## Desktop integration
+
+In **Settings → Display**, desktop completion/error notifications are **off by
+default**. Enable them and save defaults if desired. Notifications never replace
+in-app errors, never operate hardware, and can be suppressed by OS permissions or
+Do Not Disturb. Clicking one brings instrument control forward.
+
+**Taskbar / Dock percentage badge** is on by default. It uses the current
+experiment's progress (not an elapsed-time prediction), updates at most once per
+second, and clears when the run ends. The same percentage appears in the window
+title as a fallback. Qt's native numeric badge depends on desktop support; a
+platform may ignore it. Both preferences can change without reconnecting hardware.
+
+The analysis **File → Recent recordings** menu and control **Analysis → Recent
+recordings** share the last 12 successfully loaded/saved paths. Missing files are
+disabled. **Clear history** forgets paths, not recordings. History is stored
+locally in `recent-recordings.ini` beside `settings.json`.
+
+Drop one CSV, TSV, TDMS or SET recording onto analysis to open it, or onto control
+to launch analysis independently. A CSV's matching JSON file (or CSV+JSON pair)
+is also accepted. Remote URLs and unrelated multiple-file drops are not opened.
+The control app refuses to open its currently active recording; finish it first.
+
 ## Persistence and precedence
 
 The normal settings file is:

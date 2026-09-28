@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Opt-in desktop completion/error notifications and an optional native numeric
+  experiment-progress badge, with window-title fallback on unsupported desktops.
+- Shared recent-recordings menus with bounded local history, and recording/JSON
+  companion drag-and-drop in analysis and control (opens a separate analysis app).
 - Adaptive CV with explicit objective cycle and chronological sweep segment,
   plus a separate adaptive I–t experiment with cycle-relative objective windows.
   Both share the conservative travel planner, maps, audit files and simulator.
