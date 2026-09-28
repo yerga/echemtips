@@ -1958,6 +1958,12 @@ class SettingsPage(BasePage):
         units_layout.addWidget(self.current_units); dg.addWidget(units_row, 1, 1)
         self.font_size = add_field(dg, Field("Font size", str(app.settings.font_size_pt), "pt"), 2, 0)
         self.trace_width = add_field(dg, Field("Trace thickness", str(app.settings.trace_width_px), "px"), 2, 1)
+        self.desktop_notifications = Check('Desktop completion and error notifications', app.settings.desktop_notifications)
+        self.desktop_progress = Check('Taskbar / Dock percentage badge', app.settings.desktop_progress)
+        self.desktop_progress.setToolTip('Shows experiment percentage where supported by the desktop; also updates the window title. This is progress, not a time estimate.')
+        self.desktop_notifications.setToolTip('Optional OS messages; system notification permissions and Do Not Disturb apply. In-app errors remain visible.')
+        dg.addWidget(self.desktop_notifications, 3, 0, 1, 2)
+        dg.addWidget(self.desktop_progress, 4, 0, 1, 2)
 
         maps = Card("Scan maps"); mg = _grid(maps.body)
         shape_row = QtWidgets.QWidget(); shape_layout = _vbox(shape_row)
@@ -2075,6 +2081,7 @@ class SettingsPage(BasePage):
             map_current_auto_limits=self.map_current_auto.get(), map_current_min_na=self.map_current_min.float(), map_current_max_na=self.map_current_max.float(),
             monitor_window_s=self.monitor_window.float(), experiment_window_s=self.experiment_window.float(),
             current_display_unit=self.current_units.get(), font_size_pt=self.font_size.float(), trace_width_px=self.trace_width.float(),
+            desktop_notifications=self.desktop_notifications.get(), desktop_progress=self.desktop_progress.get(),
         )
 
     def revert_edits(self):
@@ -2138,6 +2145,10 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self._make_experiments(); self._build_shell(); self._build_pages(); self.show_page("Watch current"); self._set_connection_ui(False)
         self._apply_display_settings()
         analysis_menu = self.menuBar().addMenu("Analysis")
+        from .recent_recordings import RecentRecordings
+        self.recent_recordings = RecentRecordings(self, analysis_menu, lambda path: self.launch_analysis(path=path))
+        from .desktop import DesktopStatus
+        self.desktop_status = DesktopStatus(self)
         open_analysis = analysis_menu.addAction("Open analysis app…")
         from .seccm_model_dialog import open_model_dialog
         analysis_menu.addAction("SECCM model calculator…", lambda: open_model_dialog(self))
@@ -2159,7 +2170,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         install_help_menu(self)
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
 
-    def launch_analysis(self, *, last_recording: bool = False) -> None:
+    def launch_analysis(self, *, last_recording: bool = False, path: Path | None = None) -> None:
         """Launch an independent analysis process without touching instrument state."""
         arguments = ["-m", "echemtips.analysis", "--data-folder", str(Path(self.settings.save_directory).expanduser().resolve())]
         if last_recording:
@@ -2167,7 +2178,15 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if self.recorder.active or path is None or not path.exists():
                 self.show_error("Finish the recording before opening its saved data in analysis.")
                 return
-            arguments.append(str(path.resolve()))
+        if path is not None:
+            path = Path(path).expanduser().resolve()
+            if self.recorder.active and self.recorder.output_path is not None and path == self.recorder.output_path.resolve():
+                self.show_error('Finish the recording before opening it in analysis.')
+                return
+            if not path.is_file():
+                self.show_error('The recording no longer exists at this location.')
+                return
+            arguments.append(str(path))
         executable = Path(sys.executable)
         if sys.platform == "win32" and executable.with_name("pythonw.exe").exists():
             executable = executable.with_name("pythonw.exe")
@@ -2434,7 +2453,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                         "map_z_colormap", "map_current_colormap",
                         "map_z_auto_limits", "map_z_min_um", "map_z_max_um", "map_current_auto_limits",
                         "map_current_min_na", "map_current_max_na", "monitor_window_s", "experiment_window_s",
-                        "current_display_unit", "font_size_pt", "trace_width_px"}
+                        "current_display_unit", "font_size_pt", "trace_width_px", "desktop_notifications", "desktop_progress"}
         changed = {key for key, value in asdict(settings).items() if value != getattr(self.settings, key)}
         if Path(settings.save_directory).expanduser().resolve() == Path(self.settings.save_directory).expanduser().resolve():
             changed.discard("save_directory")
@@ -2526,8 +2545,13 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         """Finalize the shared recorder and synchronize action availability."""
         adaptive_key = {'Adaptive hopping + CV / LSV': 'adaptive', 'Adaptive hopping + I-t': 'adaptive_it'}.get(self.recorder.name)
         adaptive = self.experiments.get(adaptive_key)
+        was_active, name = self.recorder.active, self.recorder.name
         path = self.recorder.finish(self.settings, parameters, status=status)
         if path is not None and adaptive is not None: adaptive.finish_report(path,status)
+        if was_active and path is not None:
+            self.recent_recordings.remember(path)
+        if was_active and status == 'complete':
+            self.desktop_status.notify('Recording complete', name + (' · ' + path.name if path else ''))
         self._sync_action_states()
         return path
 
@@ -2722,6 +2746,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         """Display a modal operator error without changing hardware state."""
         workspace = getattr(self, "operator_workspace", None)
         if workspace: workspace.record(message, "error")
+        if hasattr(self, 'desktop_status'):
+            self.desktop_status.notify('eChemTips needs attention', 'An operation failed. Open instrument control for details.', error=True)
         box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Icon.Critical, "Operation could not be completed", str(message), parent=self)
         box.setInformativeText("Check instrument state before retrying. Recording files may be partial; inspect their metadata status. Technical details can be copied from Instrument → Event history.")
         box.setDetailedText(str(message))
@@ -2743,6 +2769,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             self._stop_acquisition()
             if self.backend.connected: self.backend.disconnect()
         self.poll_timer.stop()
+        if hasattr(self, 'desktop_status'): self.desktop_status.clear()
         if hasattr(self, "operator_workspace"): self.operator_workspace.timer.stop()
         if hasattr(self, "layout_workspace"): self.layout_workspace.save()
         event.accept()

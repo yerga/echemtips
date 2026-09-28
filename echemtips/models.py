@@ -105,6 +105,8 @@ class AppSettings:
     experiment_window_s: float = 60.0
     current_display_unit: str = "nA"
     font_size_pt: float = 10.0
+    desktop_notifications: bool = False
+    desktop_progress: bool = True
     trace_width_px: float = 2.0
 
     @property
