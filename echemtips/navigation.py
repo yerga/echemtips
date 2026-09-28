@@ -17,7 +17,8 @@ class ExperimentEntry:
 
 
 EXPERIMENTS = (
-    ExperimentEntry("Adaptive hopping + LSV", "Scanning", "Bayesian spatial search with conservative tilt survey, contact-gated LSV and an auditable decision log.", "AdaptivePage", "adaptive"),
+    ExperimentEntry("Adaptive hopping + CV / LSV", "Scanning", "Adaptive spatial search with a tilt survey and a current objective at a selected potential, cycle and sweep segment.", "AdaptivePage", "adaptive"),
+    ExperimentEntry("Adaptive hopping + I-t", "Scanning", "Adaptive spatial search with potential steps and a current objective in a selected cycle and time window.", "AdaptiveITPage", "adaptive_it"),
     ExperimentEntry("Watch current", "Monitoring", "Monitor both current channels over time.", "WatchPage"),
     ExperimentEntry("Watch position", "Monitoring", "Monitor measured X, Y and Z positions.", "WatchPositionPage"),
     ExperimentEntry("Preflight", "Setup and diagnostics", "Guided checks before an experiment.", "PreflightPage"),
@@ -51,6 +52,7 @@ class FavoriteStore:
             if not isinstance(values, list):
                 raise ValueError("Invalid favorites")
             known = {entry.name for entry in EXPERIMENTS} - ANCHORED
+            values = ['Adaptive hopping + CV / LSV' if value == 'Adaptive hopping + LSV' else value for value in values]
             return list(dict.fromkeys(value for value in values if isinstance(value, str) and value in known))
         except (OSError, ValueError, KeyError, TypeError):
             return list(DEFAULT_FAVORITES)

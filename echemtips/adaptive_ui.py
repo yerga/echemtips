@@ -1,4 +1,4 @@
-"""Adaptive LSV controls and bounded-cost physical-coordinate maps."""
+"""Adaptive CV/LSV and I–t controls with physical-coordinate maps."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -7,7 +7,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
-from .adaptive import AdaptiveParameters
+from .adaptive import AdaptiveParameters, AdaptiveITParameters
 from .qt_common import Card, Field, Choice, Check, Plot, PlotPanel, COLORS, button, label, scroll_area
 
 
@@ -54,18 +54,19 @@ class AdaptiveMap(QtWidgets.QWidget):
         self.plot.setRange(xRange=(params.x_min_um,params.x_max_um),yRange=(params.y_min_um,params.y_max_um),padding=.08)
 
 
-def create_adaptive_page(app):
+def create_adaptive_page(app, *, it=False):
     """Construct a managed page lazily, avoiding a UI/module import cycle."""
     from .ui import ManagedExperimentPage, _left_scroll, _vbox, _plot_card
 
     class AdaptivePage(ManagedExperimentPage):
         """Guided configuration, explicit approvals and uncluttered plot tabs."""
-        experiment_key = "adaptive"
-        recording_name = "Adaptive hopping + LSV"
+        experiment_key = 'adaptive_it' if it else 'adaptive'
+        recording_name = 'Adaptive hopping + I-t' if it else 'Adaptive hopping + CV / LSV'
 
         def __init__(self, app):
             super().__init__(app,self.recording_name,"")
             self.fields = {}
+            self.experiment.params = AdaptiveITParameters() if it else AdaptiveParameters()
             root = QtWidgets.QHBoxLayout(self.body)
             root.setContentsMargins(0,0,0,0)
             left = QtWidgets.QWidget(); setup = _vbox(left)
@@ -81,10 +82,19 @@ def create_adaptive_page(app):
                     ("plane_tolerance_um","Maximum plane deviation","3","µm"),("feedback_threshold_na","Contact threshold magnitude","5","pA"),
                     ("approach_voltage_v","Approach potential E1","0.1","V"),("settling_time_s","Settling after contact","0.5","s"),
                     ("pre_approach_settling_s","Settling before approach","0.25","s")]),
-                ("3 · LSV and objective", [
-                    ("cv_start_v","Start potential","-0.2","V"),("cv_vertex1_v","End potential","0.6","V"),
+                ("3 · Measurement and objective", ([
+                    ('initial_potential_v','Initial potential','-0.1','V'),('initial_hold_s','Initial hold','0.25','s'),
+                    ('step_potential_v','Pulse potential','0.4','V'),('step_hold_s','Pulse hold','1','s'),
+                    ('return_potential_v','Return potential','-0.1','V'),('return_hold_s','Return hold','0.25','s'),
+                    ('cycles','Cycles','1',''),('objective_cycle','Objective cycle','1',''),
+                    ('objective_start_s','Objective window start','0.75','s'),('objective_end_s','Objective window end','1','s'),
+                    ('retract_rate_um_s','Retract speed','10','µm/s')
+                ] if it else [
+                    ("cv_start_v","Start potential","-0.2","V"),("cv_vertex1_v","End potential / Vertex 1","0.6","V"),
                     ("cv_scan_rate_v_s","Scan rate","0.25","V/s"),("objective_potential_v","Objective potential","0.2","V"),
-                    ("objective_window_v","Objective window width","0.02","V")]),
+                    ("objective_window_v","Objective window width","0.02","V"),('cv_vertex2_v','Vertex 2','-0.4','V'),
+                    ('cycles','Cycles','1',''),('objective_cycle','Objective cycle','1','')
+                ])),
                 ("4 · Search and limits", [
                     ("max_landings","Maximum landings (including survey)","30",""),
                     ("max_duration_s","Maximum elapsed time","3600","s")]),
@@ -104,9 +114,18 @@ def create_adaptive_page(app):
                     grid.addWidget(self.feedback,6,1)
                     grid.addWidget(label('Decreasing Z retracts. Initial Z must clear the entire region and entry path. A sparse survey cannot detect hidden obstacles.','muted',word_wrap=True),7,0,1,2)
                 if title.startswith('3'):
+                    row=(len(entries)+1)//2
+                    if not it:
+                        self.waveform=Choice(['LSV','CV'],'LSV')
+                        self.segment=Choice(['Start → Vertex 1','Vertex 1 → Vertex 2','Vertex 2 → Start'],'Start → Vertex 1')
+                        grid.addWidget(label('Waveform','muted'),row,0); grid.addWidget(self.waveform,row,1)
+                        grid.addWidget(label('Objective sweep segment','muted'),row+1,0); grid.addWidget(self.segment,row+1,1)
+                        row+=2
+                        self.waveform.currentIndexChanged.connect(self._waveform_changed)
                     self.objective_channel = Choice(['Current 1','Current 2'],'Current 1')
-                    grid.addWidget(self.objective_channel,3,0,1,2)
-                    grid.addWidget(label('Objective = |median signed current| in this potential window. Both current signs contribute; individual noise spikes do not define the objective.','muted',word_wrap=True),4,0,1,2)
+                    grid.addWidget(label('Objective current','muted'),row,0); grid.addWidget(self.objective_channel,row,1)
+                    text=('Time is measured from the selected cycle start (initial → pulse → return). The objective window must stay within one hold. ' if it else 'Only the selected cycle and sweep segment contribute. ')
+                    grid.addWidget(label(text+'Objective = |median signed current| within the window; individual spikes do not define it.','muted',word_wrap=True),row+1,0,1,2)
                 if title.startswith('4'):
                     self.strategy = Choice(['Balanced','Hotspots','Mapping'],'Balanced')
                     self.strategy.setToolTip('Hotspots: mean + 2σ. Mapping: largest model uncertainty. Balanced: alternate these objectives.')
@@ -131,12 +150,14 @@ def create_adaptive_page(app):
             self.maps = {}
             for key,title,unit in [('measured','Measured objective','nA'),('predicted','Predicted objective','nA'),('uncertainty','Model uncertainty','nA'),('z','Contact Z (commanded)','µm')]:
                 plot = AdaptiveMap(title,unit); self.maps[key]=plot; tabs.addTab(plot,title)
-            self.lsv = Plot('Latest LSV','Current (nA)',(COLORS['accent'],),app.settings.display_max_points,'Potential E1 (V)')
-            tabs.addTab(_plot_card('Latest LSV',self.lsv),'LSV')
+            self.lsv = Plot('Latest measurement','Current (nA)',(COLORS['accent'],),app.settings.display_max_points,'Time from program start (s)' if it else 'Potential E1 (V)')
+            tabs.addTab(_plot_card('Latest measurement',self.lsv),'I–t' if it else 'CV / LSV')
             self.z_trace = Plot('Z vs time','Z (µm)',(COLORS['blue'],),app.settings.display_max_points)
             self.i_trace = Plot('Current vs time','Current (nA)',(COLORS['accent'],),app.settings.display_max_points)
+            self.e_trace = Plot('Potential vs time','Potential E1 (V)',(COLORS['blue'],),app.settings.display_max_points)
             traces = QtWidgets.QWidget(); traces_layout = QtWidgets.QVBoxLayout(traces)
             traces_layout.addWidget(_plot_card('Measured Z',self.z_trace)); traces_layout.addWidget(_plot_card('Current',self.i_trace))
+            traces_layout.addWidget(_plot_card('Potential E1',self.e_trace))
             tabs.addTab(PlotPanel(traces),'Traces')
             self.decisions = QtWidgets.QTableWidget(0,5)
             self.decisions.setHorizontalHeaderLabels(['Landing','X / µm','Y / µm','Objective / nA','Result / reason'])
@@ -151,6 +172,14 @@ def create_adaptive_page(app):
             for name in ('x_min_um','x_max_um','y_min_um','y_max_um'):
                 self.fields[name].entry.editingFinished.connect(self._preview)
             self.survey.currentIndexChanged.connect(self._preview)
+            if not it: self._waveform_changed()
+
+        def _waveform_changed(self,*_):
+            cv=self.waveform.get()=='CV'
+            for key in ('cv_vertex2_v','cycles','objective_cycle'): self.fields[key].setEnabled(cv)
+            self.segment.setEnabled(cv)
+            if not cv:
+                self.fields['cycles'].entry.setText('1'); self.fields['objective_cycle'].entry.setText('1'); self.segment.setCurrentIndex(0)
 
         def _preview(self):
             if self.experiment.active or self.experiment.params.attempts: return
@@ -167,13 +196,16 @@ def create_adaptive_page(app):
             try:
                 values = {key:field.float() for key,field in self.fields.items()}
                 values['max_landings'] = self.fields['max_landings'].integer()
+                for key in ('cycles','objective_cycle'): values[key]=self.fields[key].integer()
                 values['feedback_threshold_na'] /= 1000
+                if it: values['feedback_threshold']=values.pop('feedback_threshold_na')
+                else: values.update(waveform=self.waveform.get(),objective_segment=self.segment.currentIndex())
                 values.update(survey=self.survey.get(),strategy=self.strategy.get(),feedback_channel=self.feedback.get(),
                               objective_channel=self.objective_channel.get(),approve_each=self.approval.get(),region_confirmed=self.confirm.get())
-                params = AdaptiveParameters(**values)
+                params = (AdaptiveITParameters if it else AdaptiveParameters)(**values)
                 errors = params.validate(self.app.settings)
                 if errors: raise ValueError('\n'.join(errors))
-                for plot in (self.lsv,self.z_trace,self.i_trace): plot.clear()
+                for plot in (self.lsv,self.z_trace,self.i_trace,self.e_trace): plot.clear()
                 self._lsv_count = 0; self._last_pixel=-1; self._map_key=None
                 self._begin(params)
             except (ValueError,RuntimeError,OSError) as exc: self.app.show_error(str(exc))
@@ -224,16 +256,23 @@ def create_adaptive_page(app):
                 pixel=e.params.attempts[-1]['scan_pixel']
                 if pixel!=self._last_pixel:
                     self.lsv.clear(); self._lsv_count=0; self._last_pixel=pixel
-                for x,y in zip(e._e[self._lsv_count:],e._i[self._lsv_count:]): self.lsv.append(x,y,redraw=False)
+                axis=[t-e._t[0] for t in e._t] if it and e._t else e._e
+                for x,y in zip(axis[self._lsv_count:],e._i[self._lsv_count:]): self.lsv.append(x,y,redraw=False)
                 self._lsv_count=len(e._e)
                 self.lsv.request_redraw()
             for sample in samples:
                 t=self.elapsed_from_start(sample)
                 self.z_trace.append(t,sample.z_um,redraw=False)
                 self.i_trace.append(t,sample.current1_na if e.params.objective_channel=='Current 1' else sample.current2_na,redraw=False)
-            for plot in (self.z_trace,self.i_trace):
+                self.e_trace.append(t,sample.voltage1_v,redraw=False)
+            for plot in (self.z_trace,self.i_trace,self.e_trace):
                 plot.rolling_window_s=self.app.settings.experiment_window_s
                 plot.request_redraw()
             self._refresh_maps()
 
     return AdaptivePage(app)
+
+
+def create_adaptive_it_page(app):
+    """Expose potential-step adaptive scans separately in the experiment library."""
+    return create_adaptive_page(app,it=True)

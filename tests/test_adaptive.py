@@ -72,7 +72,7 @@ class AdaptiveTests(unittest.TestCase):
         p = AdaptiveParameters(region_confirmed=True)
         self.assertEqual(p.validate(AppSettings()),[])
         for changes in ({'region_confirmed':False},{'minimum_spacing_um':50},{'max_landings':4},
-                        {'x_max_um':101},{'objective_window_v':2},{'waveform':'CV'}, {'clearance_um':0}):
+                        {'x_max_um':101},{'objective_window_v':2},{'waveform':'invalid'}, {'clearance_um':0}):
             self.assertTrue(replace(p,**changes).validate(AppSettings()))
 
     def test_plane_path_and_no_clamping(self):

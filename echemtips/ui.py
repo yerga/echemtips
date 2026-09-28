@@ -18,6 +18,7 @@ from PySide6 import QtCore, QtGui, QtWidgets, QtSvgWidgets
 from .scan_orientation import orientation_svg
 from .adaptive import AdaptiveExperiment
 from .adaptive_ui import create_adaptive_page as AdaptivePage
+from .adaptive_ui import create_adaptive_it_page as AdaptiveITPage
 
 from .acquisition import AcquisitionDrain, AcquisitionWorker
 from .branding import application_icon, configure_application_identity, logo_label
@@ -2177,7 +2178,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     def _make_experiments(self) -> None:
         self.experiment = ApproachCVExperiment(self.backend, self.settings); self.scan_experiment = ScanHoppingCVExperiment(self.backend, self.settings); self.cv_experiment = CVExperiment(self.backend, self.settings)
         self.approach_experiment = ApproachExperiment(self.backend, self.settings); self.approach_it_experiment = ApproachITExperiment(self.backend, self.settings); self.scan_it_experiment = ScanHoppingITExperiment(self.backend, self.settings)
-        self.experiments = {"combinatorial_cv": ScanHoppingCVExperiment(self.backend, self.settings), "combinatorial_it": ScanHoppingITExperiment(self.backend, self.settings), "adaptive": AdaptiveExperiment(self.backend, self.settings), "approach_cv_series": ApproachCVExperiment(self.backend, self.settings), "approach_cv": self.experiment, "scan_cv": self.scan_experiment, "cv": self.cv_experiment, "approach": self.approach_experiment, "approach_it": self.approach_it_experiment, "scan_it": self.scan_it_experiment}
+        self.experiments = {"combinatorial_cv": ScanHoppingCVExperiment(self.backend, self.settings), "combinatorial_it": ScanHoppingITExperiment(self.backend, self.settings), "adaptive": AdaptiveExperiment(self.backend, self.settings), "adaptive_it": AdaptiveExperiment(self.backend, self.settings), "approach_cv_series": ApproachCVExperiment(self.backend, self.settings), "approach_cv": self.experiment, "scan_cv": self.scan_experiment, "cv": self.cv_experiment, "approach": self.approach_experiment, "approach_it": self.approach_it_experiment, "scan_it": self.scan_it_experiment}
 
     def _build_shell(self) -> None:
         root = QtWidgets.QWidget(); root.setObjectName("window"); self.setCentralWidget(root); layout = QtWidgets.QHBoxLayout(root); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(0)
@@ -2330,8 +2331,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     def end_current_waypoint(self) -> None:
         """Request low-level waypoint completion, never contact acceptance."""
-        adaptive = self.experiments.get("adaptive")
-        if adaptive is not None and adaptive.active:
+        if any(self.experiments[key].active for key in ('adaptive', 'adaptive_it')):
             self.toast("End waypoint is unavailable during adaptive acquisition; use Stop experiment", "warning")
             return
         try: self.require_connection(); self.backend.end_current_waypoint(); self.toast("Requested the next FPGA waypoint", "warning")
@@ -2358,7 +2358,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     @property
     def active_parameters(self) -> object | None:
         """Return parameters associated with the recorder's active method."""
-        key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
+        key = {"Adaptive hopping + CV / LSV": "adaptive", "Adaptive hopping + I-t": "adaptive_it", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
         return self.experiments[key].params if key is not None else None
 
     def toggle_connection(self) -> None:
@@ -2413,15 +2413,15 @@ class EChemTipsApp(QtWidgets.QMainWindow):
     def _sync_action_states(self) -> None:
         if not hasattr(self, "pages"): return
         connected = self.backend.connected
-        adaptive = self.experiments.get("adaptive")
-        self.next_waypoint_button.setEnabled(connected and self.backend.capabilities.end_current_waypoint and not (adaptive and adaptive.active))
+        adaptive_active = any(self.experiments[key].active for key in ('adaptive', 'adaptive_it'))
+        self.next_waypoint_button.setEnabled(connected and self.backend.capabilities.end_current_waypoint and not adaptive_active)
         for page_name, recording_name in (("Watch current", "Watch Current"), ("Watch position", "Watch Position")):
             watch = self.pages[page_name]
             watch_owned = self.recorder.active and self.recorder.name == recording_name
             watch.start_recording_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active)
             watch.stop_recording_button.setEnabled(watch_owned)
             watch.live_button.setEnabled(connected and not self.any_experiment_active)
-        for page_name, key in {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it", "Combinatorial scan + CV / LSV": "combinatorial_cv", "Combinatorial scan + I-t": "combinatorial_it"}.items():
+        for page_name, key in {"Adaptive hopping + CV / LSV": "adaptive", "Adaptive hopping + I-t": "adaptive_it", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach + I-t": "approach_it", "Scan hopping + CV": "scan_cv", "Scan hopping + I-t": "scan_it", "Combinatorial scan + CV / LSV": "combinatorial_cv", "Combinatorial scan + I-t": "combinatorial_it"}.items():
             page = self.pages[page_name]; page.start_button.setEnabled(connected and not self.any_experiment_active and not self.recorder.active); page.stop_button.setEnabled(self.experiments[key].active)
         diagnostic_busy = any(getattr(self.pages.get(name), "is_busy", False) for name in ("Preflight", "Characterize pipette"))
         for name in ("Preflight", "Characterize pipette"):
@@ -2524,7 +2524,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
 
     def finish_recording(self, parameters: object = None, status: str = "complete") -> Path | None:
         """Finalize the shared recorder and synchronize action availability."""
-        adaptive = self.experiments.get("adaptive") if self.recorder.name == "Adaptive hopping + LSV" else None
+        adaptive_key = {'Adaptive hopping + CV / LSV': 'adaptive', 'Adaptive hopping + I-t': 'adaptive_it'}.get(self.recorder.name)
+        adaptive = self.experiments.get(adaptive_key)
         path = self.recorder.finish(self.settings, parameters, status=status)
         if path is not None and adaptive is not None: adaptive.finish_report(path,status)
         self._sync_action_states()
@@ -2610,7 +2611,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         except (BackendError, OSError, ValueError, RuntimeError) as exc: self.show_error(str(exc))
 
     def _consume_acquired(self, samples: list[Sample], *, finalize: bool = True) -> None:
-        for name in ("Adaptive hopping + LSV", "Scan hopping + CV", "Scan hopping + I-t", "Combinatorial scan + CV / LSV", "Combinatorial scan + I-t"):
+        for name in ("Adaptive hopping + CV / LSV", "Adaptive hopping + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Combinatorial scan + CV / LSV", "Combinatorial scan + I-t"):
             page = self.pages.get(name)
             if page is not None: page.on_samples(samples)
         if samples:
@@ -2619,7 +2620,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
             if readout is not None:
                 readout.set_sample(self._sample)
             for name, page in self.pages.items():
-                if name in {"Adaptive hopping + LSV", "Scan hopping + CV", "Scan hopping + I-t", "Combinatorial scan + CV / LSV", "Combinatorial scan + I-t"}: continue
+                if name in {"Adaptive hopping + CV / LSV", "Adaptive hopping + I-t", "Scan hopping + CV", "Scan hopping + I-t", "Combinatorial scan + CV / LSV", "Combinatorial scan + I-t"}: continue
                 if name in {"Watch current", "Watch position"} and not page.live_enabled: continue
                 page.on_samples(samples)
         else:
@@ -2660,7 +2661,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         if not self.recorder.active:
             if callable(sync): sync()
             return
-        key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
+        key = {"Adaptive hopping + CV / LSV": "adaptive", "Adaptive hopping + I-t": "adaptive_it", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
         if key is None:
             if callable(sync): sync()
             return
@@ -2685,7 +2686,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
                 if worker is None: samples, acquisition_error = self.backend.read_samples(), None
                 else: drained = worker.drain(); samples, acquisition_error = drained.samples, drained.error
                 EChemTipsApp._consume_acquired(self, samples, finalize=False)
-                key = {"Adaptive hopping + LSV": "adaptive", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
+                key = {"Adaptive hopping + CV / LSV": "adaptive", "Adaptive hopping + I-t": "adaptive_it", "CV": "cv", "Approach": "approach", "Approach + CV": "approach_cv", "Approach + CV scan-rate series": "approach_cv_series", "Approach then IT": "approach_it", "Scan Hopping CV": "scan_cv", "Scan Hopping IT": "scan_it", "Combinatorial Scan Hopping CV": "combinatorial_cv", "Combinatorial Scan Hopping IT": "combinatorial_it"}.get(self.recorder.name)
                 terminal = bool(self.recorder.active and key is not None and EChemTipsApp._experiments_for(self)[key].state in (ExperimentState.COMPLETE, ExperimentState.ABORTED))
                 if terminal and worker is not None:
                     final = worker.pause_and_snapshot(); EChemTipsApp._consume_acquired(self, final.samples, finalize=False); samples += final.samples; acquisition_error = acquisition_error or final.error; worker.resume()

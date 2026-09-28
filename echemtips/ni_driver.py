@@ -62,6 +62,7 @@ class WECSPMDriver:
     supports_cv_rate_series = True
     supports_lsv = True
     supports_contact_snapshot = True
+    supports_method_contact_snapshot = True
 
     BASELINE_HOLD_US = 25_000
     BASELINE_SAMPLE_COUNT = 16
@@ -1505,6 +1506,7 @@ class WECSPMDriver:
 
     def start_method(self, name: str, parameters: object) -> None:
         """Start one of the reusable, device-resident experimental methods."""
+        self.method_contact_z_um = None
         if name not in {"cv", "approach", "approach_it", "scan_hopping_it"}:
             raise ValueError(f"Unknown shared FPGA method: {name}")
         errors = parameters.validate(self.settings)  # type: ignore[attr-defined]
@@ -1707,6 +1709,7 @@ class WECSPMDriver:
         params = self._method_params
         point = self._method_point
         if contact:
+            self.method_contact_z_um = raw_to_position(self._current_targets()['Z'],self.settings.z_range_um,self.settings.z_bipolar)
             if self._method_name == "approach":
                 assert isinstance(params, ApproachParameters)
                 plan = timed_hold_plan(params.settling_time_s)

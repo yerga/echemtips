@@ -17,15 +17,13 @@ import time
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 
-from .experiments import ApproachCVExperiment, ExperimentState, ExperimentUpdate
-from .models import ApproachCVParameters
+from .experiments import ApproachCVExperiment, ApproachITExperiment, ExperimentState, ExperimentUpdate
+from .models import ApproachCVParameters, ApproachITParameters
 
 
 @dataclass
-class AdaptiveParameters(ApproachCVParameters):
-    """LSV settings plus a bounded rectangular spatial search and travel policy."""
-    waveform: str = "LSV"
-    cycles: int = 1
+class AdaptiveSearchParameters:
+    """Shared spatial search and safety policy, independent of surface waveform."""
     feedback_mode: str = "magnitude"
     x_min_um: float = 20.0
     x_max_um: float = 80.0
@@ -34,8 +32,6 @@ class AdaptiveParameters(ApproachCVParameters):
     minimum_spacing_um: float = 5.0
     survey: str = "Corners + center"
     strategy: str = "Balanced"
-    objective_potential_v: float = 0.2
-    objective_window_v: float = 0.02
     objective_channel: str = "Current 1"
     max_landings: int = 30
     max_duration_s: float = 3600.0
@@ -48,11 +44,11 @@ class AdaptiveParameters(ApproachCVParameters):
     pre_approach_settling_s: float = 0.25
     attempts: list = field(default_factory=list)
 
-    def validate(self, settings):
+    def validate_search(self, settings):
         """Reject unsafe/ambiguous configurations before any output is changed."""
-        errors = super().validate(settings)
+        errors = []
         names = ("x_min_um", "x_max_um", "y_min_um", "y_max_um", "minimum_spacing_um",
-                 "objective_potential_v", "objective_window_v", "max_duration_s", "xy_speed_um_s",
+                 "max_duration_s", "xy_speed_um_s",
                  "clearance_um", "relief_allowance_um", "plane_tolerance_um", "pre_approach_settling_s")
         if not all(math.isfinite(getattr(self, n)) for n in names):
             return errors + ["Adaptive settings must be finite."]
@@ -60,13 +56,13 @@ class AdaptiveParameters(ApproachCVParameters):
             low, high = getattr(self, axis + "_min_um"), getattr(self, axis + "_max_um")
             if not 0 <= low < high <= getattr(settings, axis + "_range_um"):
                 errors.append(f"{axis.upper()} region must lie within the calibrated piezo range.")
-        if self.waveform != "LSV" or self.scan_rates_v_s is not None or not self.retract_after:
-            errors.append("Adaptive acquisition requires one LSV and retraction after every landing.")
+        if not self.retract_after:
+            errors.append("Adaptive acquisition requires retraction after every landing.")
         if self.x_um is not None or self.y_um is not None:
             errors.append("Adaptive XY is controlled by the travel planner, not the child approach.")
         if self.end_z_um <= self.start_z_um:
             errors.append("This workflow requires increasing Z toward the surface.")
-        for n in ("minimum_spacing_um", "objective_window_v", "max_duration_s", "xy_speed_um_s", "clearance_um", "plane_tolerance_um"):
+        for n in ("minimum_spacing_um", "max_duration_s", "xy_speed_um_s", "clearance_um", "plane_tolerance_um"):
             if getattr(self, n) <= 0:
                 errors.append(f"{n} must be positive.")
         if self.relief_allowance_um < 0:
@@ -79,10 +75,6 @@ class AdaptiveParameters(ApproachCVParameters):
             errors.append("Unknown strategy or survey.")
         if self.objective_channel not in {"Current 1", "Current 2"}:
             errors.append("Select Current 1 or Current 2 for the objective.")
-        lo, hi = sorted((self.cv_start_v, self.cv_vertex1_v))
-        half = self.objective_window_v / 2
-        if not lo <= self.objective_potential_v - half < self.objective_potential_v + half <= hi:
-            errors.append("The entire objective window must lie within the LSV sweep.")
         if not isinstance(self.max_landings, int) or not len(self.survey_points()) <= self.max_landings <= 500:
             errors.append("Landing budget must cover the survey and cannot exceed 500 in this version.")
         pts = self.survey_points()
@@ -105,6 +97,56 @@ class AdaptiveParameters(ApproachCVParameters):
         """Bound model cost with a 31-by-31 grid in physical coordinates."""
         return np.array([(x,y) for y in np.linspace(self.y_min_um,self.y_max_um,31)
                          for x in np.linspace(self.x_min_um,self.x_max_um,31)])
+
+
+@dataclass
+class AdaptiveParameters(AdaptiveSearchParameters, ApproachCVParameters):
+    """CV/LSV at each landing, with a cycle- and branch-specific objective."""
+    waveform: str = 'LSV'
+    cycles: int = 1
+    objective_potential_v: float = .2
+    objective_window_v: float = .02
+    objective_cycle: int = 1
+    objective_segment: int = 0
+
+    def validate(self, settings):
+        """Validate both spatial policy and the exact objective sweep window."""
+        errors=ApproachCVParameters.validate(self,settings)+self.validate_search(settings)
+        if self.scan_rates_v_s is not None: errors.append('Adaptive scans use one scan rate per landing.')
+        if not isinstance(self.objective_cycle,int) or not 1<=self.objective_cycle<=self.cycles:
+            errors.append('Select an objective cycle within the recorded cycles.')
+        if self.objective_segment not in (0,1,2) or (self.waveform=='LSV' and self.objective_segment!=0):
+            errors.append('Select an existing CV segment (LSV has only Start → End).')
+        else:
+            limits=[(self.cv_start_v,self.cv_vertex1_v),(self.cv_vertex1_v,self.cv_vertex2_v),(self.cv_vertex2_v,self.cv_start_v)]
+            lo,hi=sorted(limits[self.objective_segment]); half=self.objective_window_v/2
+            if not all(math.isfinite(v) for v in (self.objective_potential_v,half)) or not half>0 or not lo<=self.objective_potential_v-half<self.objective_potential_v+half<=hi:
+                errors.append('The entire objective window must lie within the selected sweep segment.')
+        return errors
+
+
+@dataclass
+class AdaptiveITParameters(AdaptiveSearchParameters, ApproachITParameters):
+    """Potential-step landings, scored in a cycle-relative time window."""
+    objective_cycle: int = 1
+    objective_start_s: float = .75
+    objective_end_s: float = 1.0
+
+    @property
+    def feedback_threshold_na(self):
+        """Expose the shared contact-magnitude unit without duplicating a setting."""
+        return self.feedback_threshold
+
+    def validate(self, settings):
+        """Require the time window to stay within one hold of a recorded cycle."""
+        errors=ApproachITParameters.validate(self,settings)+self.validate_search(settings)
+        if not isinstance(self.objective_cycle,int) or not 1<=self.objective_cycle<=self.cycles:
+            errors.append('Select an objective cycle within the recorded cycles.')
+        bounds=np.cumsum([0,self.initial_hold_s,self.step_hold_s,self.return_hold_s])
+        a,b=self.objective_start_s,self.objective_end_s
+        if not all(math.isfinite(v) for v in (a,b)) or not a<b or not any(lo<=a<b<=hi for lo,hi in zip(bounds[:-1],bounds[1:])):
+            errors.append('Objective start/end times must lie within one potential hold, measured from cycle start.')
+        return errors
 
 
 @dataclass
@@ -252,6 +294,8 @@ class AdaptiveExperiment:
             raise ValueError("Backend cannot verify commanded travel position.")
         if self.backend.hardware_approach_cv_required and not getattr(self.backend,"adaptive_contact_available",False):
             raise ValueError("This driver cannot expose verified commanded contact Z for adaptive travel.")
+        if isinstance(params,AdaptiveITParameters) and self.backend.hardware_approach_cv_required and not getattr(self.backend,'adaptive_it_contact_available',False):
+            raise ValueError('This driver cannot expose verified I–t contact coordinates for adaptive travel.')
         self.close()
         if not self.backend.hardware_approach_cv_required:
             self.backend.configure_adaptive_scene(params)
@@ -323,7 +367,7 @@ class AdaptiveExperiment:
         self._return_success = success
         self.detail = reason+" · returning to initial Z"
         self._log("finishing",reason=reason)
-        self._move("Z",self.params.start_z_um,max(10,self.params.approach_rate_um_s))
+        self._move("Z",self.params.start_z_um,self._retract_speed())
         self.phase = "return"
         self.state = ExperimentState.RETRACTING
 
@@ -337,10 +381,10 @@ class AdaptiveExperiment:
         position = self.backend.commanded_position()
         source = [position["X"],position["Y"]]
         self._travel_z = p.start_z_um if self.plane is None else self.plane.travel_z(source,xy,p)
-        estimate = (sum(abs(xy-np.array(source)))/p.xy_speed_um_s + abs(position["Z"]-self._travel_z)/max(10,p.approach_rate_um_s)
+        estimate = (sum(abs(xy-np.array(source)))/p.xy_speed_um_s + abs(position["Z"]-self._travel_z)/self._retract_speed()
                     + (p.end_z_um-self._travel_z)/p.approach_rate_um_s
-                    + abs(p.cv_vertex1_v-p.cv_start_v)/p.cv_scan_rate_v_s + p.settling_time_s
-                    + 2*p.end_z_um/max(10,p.approach_rate_um_s)+5)
+                    + self._measurement_duration() + p.settling_time_s + p.pre_approach_settling_s
+                    + 2*p.end_z_um/self._retract_speed()+5)
         if len(p.attempts)>=p.max_landings or time.monotonic()-self._started+estimate>p.max_duration_s:
             self._finish("Landing/time budget reached; no new approach started")
             return
@@ -348,19 +392,20 @@ class AdaptiveExperiment:
                          "travel_z_um":self._travel_z,"selection_reason":self.proposal["reason"]}
         self._log("landing_reserved",**self._attempt)
         p.attempts.append(self._attempt)
-        self._e,self._i = [],[]
+        self._e,self._i,self._t,self._stages = [],[],[],[]
         self._baseline = []
         self.child = None
         if not self.backend.hardware_approach_cv_required:
             self.backend.adaptive_pixel = -1
-        self._move("Z",self._travel_z,max(10,p.approach_rate_um_s))
+        self._move("Z",self._travel_z,self._retract_speed())
         self.phase = "travel_z"
         self.state = ExperimentState.PREPOSITION
         self.detail = f"Landing {len(p.attempts)}/{p.max_landings} · retract before XY travel"
 
     def _landing_done(self):
         p = self.params
-        contact = self.backend.confirmed_contact_z() if self.backend.hardware_approach_cv_required else self._attempt.get("contact_z_um")
+        contact = ((self.backend.confirmed_method_contact_z() if isinstance(p,AdaptiveITParameters) else self.backend.confirmed_contact_z())
+                   if self.backend.hardware_approach_cv_required else self._attempt.get("contact_z_um"))
         if contact is not None and not math.isfinite(contact): contact = None
         if contact is not None and math.isfinite(contact): self._attempt["contact_z_um"] = contact
         if self.child.state == ExperimentState.ABORTED:
@@ -372,7 +417,12 @@ class AdaptiveExperiment:
             self.close()
             return
         channel = 1 if p.objective_channel == "Current 1" else 2
-        self._attempt.update(score_lsv(self._e,self._i,p,getattr(self.settings,f"current{channel}_v_per_na")))
+        from .adaptive_waveforms import score_cv,score_it
+        sensitivity=getattr(self.settings,f'current{channel}_v_per_na')
+        result=(score_it(self._t,self._e,self._i,self._stages,p,sensitivity) if isinstance(p,AdaptiveITParameters)
+                else score_cv(self._t,self._e,self._i,p,sensitivity) if p.waveform=='CV'
+                else score_lsv(self._e,self._i,p,sensitivity))
+        self._attempt.update(result)
         if self._baseline:
             baseline = float(np.median(self._baseline))
             self._attempt['baseline_na'] = baseline
@@ -411,11 +461,14 @@ class AdaptiveExperiment:
         for sample in samples:
             if self.child is not None and self.phase == "landing":
                 if self.backend.hardware_approach_cv_required:
-                    context = self.backend.hardware_approach_context(sample.line_number)
+                    context = (self.backend.hardware_program_context(sample.line_number)[1] if isinstance(p,AdaptiveITParameters)
+                               else self.backend.hardware_approach_context(sample.line_number))
                     sample.scan_pixel = self._attempt["scan_pixel"] if context else self._line_attempt.get(sample.line_number,-1)
-                    is_lsv = context.startswith("cv")
+                    is_lsv = context.startswith('it:') if isinstance(p,AdaptiveITParameters) else context.startswith("cv")
                     if context: self._line_attempt[sample.line_number] = sample.scan_pixel
-                else: is_lsv = sample.cv_rate_index == 0 and sample.scan_pixel == self._attempt["scan_pixel"]
+                else:
+                    context = 'it:'+self.child.it_label if isinstance(p,AdaptiveITParameters) and self.child.state==ExperimentState.IT else ''
+                    is_lsv = (bool(context) if isinstance(p,AdaptiveITParameters) else self.child.state == ExperimentState.CV) and sample.scan_pixel == self._attempt["scan_pixel"]
                 precontact = (context in {"preposition","baseline"} if self.backend.hardware_approach_cv_required
                               else self.child.state == ExperimentState.PREPOSITION and sample.scan_pixel == self._attempt['scan_pixel'])
                 if precontact and len(self._baseline)<128:
@@ -424,6 +477,8 @@ class AdaptiveExperiment:
                 if is_lsv:
                     self._e.append(sample.voltage1_v)
                     self._i.append(sample.current1_na if p.objective_channel == "Current 1" else sample.current2_na)
+                    self._t.append(sample.elapsed_s)
+                    self._stages.append(context)
             elif self.backend.hardware_approach_cv_required:
                 sample.scan_pixel = self._line_attempt.get(sample.line_number,-1)
         if not self.active or self._stopping: return self._update()
@@ -487,8 +542,8 @@ class AdaptiveExperiment:
                 self._finish(self._attempt['reason'],success=False)
         elif self.phase == "landing" and (samples or (self.backend.hardware_approach_cv_required and self._last_sample is not None)):
             before = self.child.state
-            update = self.child.tick(self._last_sample)
-            if not self.backend.hardware_approach_cv_required and before == ExperimentState.APPROACHING and self.child.state in {ExperimentState.SETTLING,ExperimentState.CV}:
+            update = self.child.tick_samples(samples[-1:]) if isinstance(p,AdaptiveITParameters) else self.child.tick(self._last_sample)
+            if not self.backend.hardware_approach_cv_required and before == ExperimentState.APPROACHING and self.child.state in {ExperimentState.SETTLING,ExperimentState.CV,ExperimentState.IT}:
                 self._attempt["contact_z_um"] = samples[-1].commanded_z_um
             self.state = update.state if self.child.active else ExperimentState.PREPOSITION
             self.detail = f"Landing {len(p.attempts)}/{p.max_landings} · {update.detail}"
@@ -499,15 +554,28 @@ class AdaptiveExperiment:
     def _start_child(self):
         """Arm contact only after stationary potential conditioning succeeds."""
         p=self.params
-        child_params = ApproachCVParameters(**{f.name:getattr(p,f.name) for f in fields(ApproachCVParameters)})
+        model=ApproachITParameters if isinstance(p,AdaptiveITParameters) else ApproachCVParameters
+        child_params = model(**{f.name:getattr(p,f.name) for f in fields(model)})
         child_params.start_z_um = self._travel_z
-        self.child = ApproachCVExperiment(self.backend,self.settings)
+        self.child = (ApproachITExperiment if isinstance(p,AdaptiveITParameters) else ApproachCVExperiment)(self.backend,self.settings)
         with self.backend.io_lock:
             self.child.start(child_params)
             if not self.backend.hardware_approach_cv_required:
                 self.backend.adaptive_pixel = self._attempt['scan_pixel']
         self._conditioning_samples = []
         self.phase = 'landing'
+
+    def _measurement_duration(self):
+        """Include the entire waveform when deciding whether another landing fits."""
+        p=self.params
+        if isinstance(p,AdaptiveITParameters): return sum(t for _,t,_ in p.it_steps())
+        span=abs(p.cv_vertex1_v-p.cv_start_v)
+        if p.waveform=='CV': span+=abs(p.cv_vertex2_v-p.cv_vertex1_v)+abs(p.cv_start_v-p.cv_vertex2_v)
+        return span*p.cycles/p.cv_scan_rate_v_s
+
+    def _retract_speed(self):
+        """Match the child program's retraction speed for travel and budgets."""
+        return self.params.retract_rate_um_s if isinstance(self.params,AdaptiveITParameters) else max(10,self.params.approach_rate_um_s)
 
     def _update(self):
         return ExperimentUpdate(self.state,self.detail,self.progress)
@@ -517,8 +585,9 @@ class AdaptiveExperiment:
         if self.journal_path is None: return
         self._log("finished",status=status,detail=self.detail)
         path = Path(csv_path).with_suffix(".report.md")
-        lines = ["# Adaptive hopping + LSV", "",f"Status: {status}",f"Outcome: {self.detail}",
-                 "", "Objective: absolute value of the median signed current in the configured potential window.",
+        kind='I–t' if isinstance(self.params,AdaptiveITParameters) else self.params.waveform
+        lines = ["# Adaptive hopping + "+kind, "",f"Status: {status}",f"Outcome: {self.detail}",
+                 "", "Objective: absolute value of the median signed current in the configured cycle/segment potential or time window. See saved parameters for its definition.",
                  "Coordinates and tilt use commanded AO positions, not measured sensor positions.",
                  "The plane and relief allowance do not certify unmeasured terrain safe.",
                  "", "| Landing | X / µm | Y / µm | Contact Z / µm | Objective / nA | Result / reason |", "|---|---|---|---|---|---|"]

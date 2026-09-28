@@ -762,6 +762,16 @@ class NIFPGABackend(InstrumentBackend):
         """Return the native driver's frozen approach contact, never a live AO value."""
         return getattr(self._driver, "approach_contact_z_um", None)
 
+    @property
+    def adaptive_it_contact_available(self) -> bool:
+        """Require the shared-method frozen contact snapshot, not a live AO read."""
+        return bool(getattr(self._driver,'supports_method_contact_snapshot',False)) and self.hardware_program_available('approach_it')
+
+    @_synchronized_io
+    def confirmed_method_contact_z(self) -> float | None:
+        """Return the commanded contact coordinate frozen by the shared runner."""
+        return getattr(self._driver,'method_contact_z_um',None)
+
     @_synchronized_io
     def read_sample(self) -> Sample:
         """Read a low-rate calibrated snapshot from applied/register values."""

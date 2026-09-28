@@ -25,9 +25,9 @@ class AdaptiveUITests(unittest.TestCase):
         app=create_application([])
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ,{'ECHEMTIPS_SETTINGS_PATH':str(Path(folder)/'settings.json')}):
             window=EChemTipsApp(); window.resize(1280,800); window.show()
-            window.show_page('Adaptive hopping + LSV')
+            window.show_page('Adaptive hopping + CV / LSV')
             app.processEvents()
-            page=window.pages['Adaptive hopping + LSV']
+            page=window.pages['Adaptive hopping + CV / LSV']
             self.assertIn('adaptive',window.experiments)
             self.assertGreater(page.maps['measured'].height(),300)
             page.experiment.params.attempts=[{'scan_pixel':0,'xy':[20,20],'valid':True,'objective_na':.01,
@@ -45,6 +45,17 @@ class AdaptiveUITests(unittest.TestCase):
             self.assertFalse(window.next_waypoint_button.isEnabled())
             output=window.recorder.output_path
             window.stop_experiment('adaptive')
+            self.assertFalse(window.recorder.active)
+            self.assertTrue(output.with_suffix('.report.md').exists())
+            it=window.pages['Adaptive hopping + I-t']
+            window.show_page(it.recording_name)
+            it.confirm.set(True)
+            with patch.object(window,'show_error',side_effect=AssertionError): it.start()
+            self.assertTrue(window.experiments['adaptive_it'].active)
+            self.assertFalse(window.next_waypoint_button.isEnabled())
+            self.assertEqual(window.recorder.name,it.recording_name)
+            output=window.recorder.output_path
+            window.stop_experiment('adaptive_it')
             self.assertFalse(window.recorder.active)
             self.assertTrue(output.with_suffix('.report.md').exists())
             window.close()
