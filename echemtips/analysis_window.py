@@ -53,6 +53,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             plot.redraw()
         from .analysis_workspace import AnalysisWorkspace
         self.workspace = AnalysisWorkspace(self)
+        from .recent_recordings import RecentRecordings
+        file_menu = self.menuBar().addMenu('File')
+        file_menu.addAction('Open recording…', self.open_file).setShortcut(QtGui.QKeySequence.StandardKey.Open)
+        self.recent_recordings = RecentRecordings(self, file_menu, self.load_recording)
         self.refresh_files()
         from .seccm_model_dialog import open_model_dialog
         self.menuBar().addMenu("Models").addAction("SECCM analytical models…",
@@ -392,6 +396,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             return
         self.dataset, self.cycles, self.groups = bundle
         self.source_dataset = task.source
+        self.recent_recordings.remember(self.source_dataset.path)
         self.reference_config = dict(task.reference_config)
         self.area_config = dict(task.area_config)
         self._applied_area_config = dict(task.area_config)

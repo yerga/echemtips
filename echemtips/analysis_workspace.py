@@ -11,7 +11,6 @@ class AnalysisWorkspace(QtCore.QObject):
         menu = window.menuBar().addMenu('Workspace')
         menu.addAction('Save analysis session…', self.save)
         menu.addAction('Open analysis session…', self.open)
-        window.setAcceptDrops(True); window.installEventFilter(self)
         from .models import SettingsStore
         self.preferences = QtCore.QSettings(str(SettingsStore().path.with_name('analysis-workspace.ini')), QtCore.QSettings.Format.IniFormat)
         geometry = self.preferences.value('geometry')
@@ -107,18 +106,6 @@ class AnalysisWorkspace(QtCore.QObject):
         w.explorer.bounds = payload.get('bounds'); w.explorer.baseline = float(payload.get('baseline', 0))
         w.explorer.refresh(); w.tabs.setCurrentIndex(int(payload.get('tab', 0)))
         w.processing_pending.clear()
-
-    def eventFilter(self, watched, event):
-        """Accept one supported recording dropped on the analysis window."""
-        if event.type() in (QtCore.QEvent.Type.DragEnter, QtCore.QEvent.Type.Drop):
-            urls = event.mimeData().urls()
-            if len(urls) == 1 and urls[0].isLocalFile():
-                path = Path(urls[0].toLocalFile())
-                if path.suffix.lower() in ('.csv', '.tsv', '.tdms', '.set'):
-                    event.acceptProposedAction()
-                    if event.type() == QtCore.QEvent.Type.Drop: self.window.load_recording(path)
-                    return True
-        return super().eventFilter(watched, event)
 
     def close(self):
         """Save harmless window geometry separately from analysis sessions."""
