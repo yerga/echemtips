@@ -127,8 +127,10 @@ class ExperimentLibrary(QtWidgets.QDialog):
             if not all(word in f"{entry.name} {entry.category} {entry.description}".casefold() for word in query.split()):
                 continue
             pinned = "Always visible" if entry.name in ANCHORED else (
-                f"★ {self.app.favorites.index(entry.name) + 1}" if entry.name in self.app.favorites else "")
+                f"Pinned · {self.app.favorites.index(entry.name) + 1}" if entry.name in self.app.favorites else "")
             item = QtWidgets.QTreeWidgetItem([entry.name.replace("I-t", "I–t"), entry.category, pinned])
+            from .navigation_icons import navigation_icon
+            item.setIcon(0, navigation_icon(entry.name))
             item.setData(0, QtCore.Qt.ItemDataRole.UserRole, entry.name)
             self.results.addTopLevelItem(item)
             if entry.name == selected:

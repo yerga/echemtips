@@ -37,6 +37,8 @@ class NavigationTests(unittest.TestCase):
             window.resize(1080, 680); window.show(); window.open_library()
             library = window.library
             self.assertEqual(library.results.topLevelItemCount(), len(EXPERIMENTS))
+            self.assertTrue(all(not window.nav_buttons[e.name].icon().isNull() for e in EXPERIMENTS))
+            self.assertTrue(all(not library.results.topLevelItem(i).icon(0).isNull() for i in range(len(EXPERIMENTS))))
             library.search.setText("standalone cyclic")
             self.assertEqual(library.results.topLevelItemCount(), 1)
             self.assertEqual(library._name(), "CV")

@@ -2208,6 +2208,8 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.nav_group = QtWidgets.QButtonGroup(self); self.nav_group.setExclusive(True)
         for name in self.PAGE_NAMES:
             nav = button(name.replace('I-t', 'I–t'), lambda checked=False, page=name: self.show_page(page))
+            from .navigation_icons import navigation_icon
+            nav.setIcon(navigation_icon(name, sidebar=True)); nav.setIconSize(QtCore.QSize(20, 20))
             nav.setParent(sidebar); nav.setProperty("role", "nav"); nav.setCheckable(True)
             self.nav_group.addButton(nav); self.nav_buttons[name] = nav
         side.addWidget(self.nav_buttons["Move piezo"])
@@ -2219,6 +2221,7 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         self.favorite_scroll.setStyleSheet(f"QScrollArea {{ background: {COLORS['sidebar']}; border: none; }}")
         side.addWidget(self.favorite_scroll, 1)
         self.library_button = button("All experiments…", self.open_library)
+        self.library_button.setIcon(navigation_icon('All experiments'))
         side.addWidget(self.library_button)
         side.addWidget(self.nav_buttons["Settings"])
         self._refresh_favorites()
