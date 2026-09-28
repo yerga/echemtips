@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from echemtips.navigation import EXPERIMENTS, DEFAULT_FAVORITES, FavoriteStore
 from echemtips.ui import create_application, EChemTipsApp
 from echemtips.experiments import ExperimentState
+from echemtips.navigation_icons import ICON_FAMILIES, navigation_icon
 
 
 class NavigationTests(unittest.TestCase):
@@ -30,6 +31,19 @@ class NavigationTests(unittest.TestCase):
         self.assertEqual(store.load(), ["CV"])
         store.path.write_text("not JSON")
         self.assertEqual(store.load(), DEFAULT_FAVORITES)
+
+    def test_icon_families_match_experiment_semantics(self):
+        for entry in EXPERIMENTS:
+            self.assertIn(entry.name, ICON_FAMILIES)
+            family = ICON_FAMILIES[entry.name]
+            spatial = entry.category in {'Scanning', 'Combinatorial'}
+            self.assertEqual(family in {'scan', 'adaptive', 'combinatorial'}, spatial)
+        series = 'Approach + CV scan-rate series'
+        self.assertEqual(ICON_FAMILIES[series], 'cv_series')
+        for sidebar in (False, True):
+            rendered = navigation_icon(series, sidebar).pixmap(48, 48).toImage()
+            for other in ('Approach + CV', 'Scan hopping + CV'):
+                self.assertNotEqual(rendered, navigation_icon(other, sidebar).pixmap(48, 48).toImage())
 
     def test_library_contains_every_page_and_favorites_persist_in_order(self):
         window = EChemTipsApp(); window.poll_timer.stop()

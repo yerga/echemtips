@@ -5,6 +5,12 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ## Unreleased
 
+### Fixed
+
+- Navigation icons use explicit experiment assignments, so CV scan-rate series
+  show nested voltammograms rather than a spatial scanning grid. Pipette
+  characterization has its own pipette symbol.
+
 ### Added
 
 - Consistent scalable navigation icons in the sidebar and searchable experiment
