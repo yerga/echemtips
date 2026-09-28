@@ -39,7 +39,7 @@ plugins:
 nav:
   - Start here: index.md
   - Operator guide: OPERATOR_GUIDE.md
-  - Adaptive hopping + LSV: ADAPTIVE_LSV.md
+  - Adaptive hopping (CV, LSV and I–t): ADAPTIVE_LSV.md
   - Combinatorial scans: COMBINATORIAL_SCANS.md
   - Interface tour: USER_INTERFACE.md
   - UX acceptance checklist: UX_TEST_CHECKLIST.md

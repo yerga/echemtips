@@ -1,4 +1,4 @@
-# Adaptive hopping + LSV — first version
+# Adaptive hopping — CV, LSV and I–t
 
 ## Potential conditioning before approach
 
@@ -10,15 +10,15 @@ stops the run without advancing toward the surface. This is separate from
 settling after contact and requires no FPGA bitfile change. Clearance-rejected
 landings are marked invalid in the decision log and metadata.
 
-Open **All experiments → Adaptive hopping + LSV**. Pin it to the sidebar if
+Open **All experiments → Adaptive hopping + CV / LSV** or **Adaptive hopping + I–t**. Pin either to the sidebar if
 needed. This is an experimental spatial-selection workflow, not a certified
-collision-avoidance system. It uses the existing contact-gated LSV FPGA program;
+collision-avoidance system. It uses the existing contact-gated CV/LSV or I–t FPGA programs;
 no bitfile changes are required. Hardware operation still needs staged testing.
 
 ## What it does
 
 1. Survey four corners and the center, or a 3 × 3 grid, at a conservative initial
-   travel Z. Every survey landing includes the same LSV as later landings.
+   travel Z. Every survey landing includes the same measurement as later landings.
 2. Fit a plane to **commanded contact Z**, captured by the native driver after
    confirmed contact and before the follow-up sweep. Sensor Z remains a separate
    measured trace; sensor offsets must not enter commanded clearance calculations.
@@ -27,7 +27,7 @@ no bitfile changes are required. Hardware operation still needs staged testing.
 4. Fit a Gaussian process to usable electrochemical objectives off the GUI
    thread, then propose the next unvisited XY location.
 5. Retract Z, wait for verified movement completion, move X then Y, then execute
-   the existing approach → settling → LSV → retract sequence.
+   potential conditioning → approach → settling → measurement → retract.
 6. Stop proposing when the count/time budget is reached or no legal grid
    candidates remain. Return to the configured initial Z on normal completion.
 
@@ -38,8 +38,22 @@ particles, steps, protrusions, unexpected topography, tilt changes or drift.
 
 ## Settings and choices
 
+- **CV / LSV:** select the waveform. LSV is a single start-to-end sweep; CV records
+  start → vertex 1 → vertex 2 → start for the requested number of cycles. Select
+  the **objective cycle** (one-based) and chronological **sweep segment**. For a
+  −0.2 → +0.6 → −0.4 → −0.2 V CV, a +0.2 V objective on segment 1 is distinct
+  from +0.2 V on segment 2. Only the selected branch contributes. The full
+  objective window must fit inside that branch. All recorded cycles remain in
+  the raw data and can be extracted in analysis.
+- **I–t:** configure initial, pulse and return potentials and hold times, and
+  cycle count. Select the objective cycle and a time window **from that cycle's
+  start**, not from contact or the pulse start. With 0.25 / 1 / 0.25 s holds,
+  0.75–1.00 s samples the pulse. A window cannot straddle a potential transition.
+  The objective is the absolute median signed current, not charge or peak current.
+  Acquired phase tags distinguish holds even when their potentials are equal.
+
 - **Objective:** absolute value of the median *signed* selected current in a
-  potential window. Thus a negative current can be optimal. This is not the
+  potential window (CV/LSV) or time window (I–t). Thus a negative current can be optimal. This is not the
   median of absolute samples, which would bias a zero-mean noisy signal upward.
   At least three samples must fall inside the window; widen it or increase
   sampling rate if needed. No extrapolation is performed.
@@ -64,7 +78,7 @@ particles, steps, protrusions, unexpected topography, tilt changes or drift.
 - **Budgets:** survey attempts count toward the landing budget (maximum 500).
   Wall time includes planning, approval waits and pauses. Before starting a new
   landing the supervisor reserves an estimate for lateral motion, a full approach
-  to the Z limit, LSV, settling and retraction. A running landing is not cut short
+  to the Z limit, every measurement cycle, settling and retraction. A running landing is not cut short
   by the time budget; pauses and hardware delays can extend actual elapsed time.
 
 This version uses a bounded **31 × 31 candidate grid** and an isotropic squared
@@ -74,7 +88,7 @@ small and auditable, not a general materials-discovery framework.
 
 ## Quality and safety behavior
 
-Only confirmed, complete, finite, non-clipped sweeps with enough objective-window
+Only confirmed, complete, finite, non-clipped programs with enough objective-window
 samples train the model. Low current alone does not mean a failed landing.
 Baseline median/MAD are recorded when pre-contact samples are available; the
 objective-window MAD flags very noisy results. These tests cannot establish
@@ -91,14 +105,14 @@ action is disabled during adaptive acquisition to prevent bypassing motion gates
 ## Displays and files
 
 The page has separate tabs for measured objective, predicted objective, model
-uncertainty, commanded contact height, latest LSV, measured time traces and the
+uncertainty, commanded contact height, latest CV/LSV or I–t, Z/current/potential time traces and the
 decision log. The red cross is the next proposal; grey lines show landing order.
 Before starting, the dashed survey path previews the selected region.
 
-- CSV: full-rate measurements, including `scan_pixel` for each approach/LSV/
+- CSV: full-rate measurements, including `scan_pixel` for each approach/measurement/
   retract landing. Between-landing travel and planning have no landing ID.
 - JSON: parameters and an adaptive `scan_grid` mapping IDs to commanded XY,
-  contact status and validity. Existing LSV analysis can group individual
+  contact status and validity. Existing analysis can group individual
   landings; invalid adaptive landings are excluded from derived hop/CV selections,
   but remain in the raw table/CSV.
 - `*.decisions.jsonl`: incremental, flushed decision journal beside the CSV.
@@ -156,9 +170,32 @@ metadata for quantitative spatial analysis of adaptive data.
 
 ## Deliberately deferred
 
-Other waveforms/objectives, drift/reference scheduling, contact-area estimation
+Other waveforms and objective types, drift/reference scheduling, contact-area estimation
 or normalization, polygons/obstacle maps, non-planar navigation, automatic retry,
 crash resume, orientation-marker landings, picomotors and microscopy registration
 are not implemented here.
-The existing callbacks (`score_lsv`, `propose`, and the separate travel envelope)
+The objective functions (`score_lsv`, `score_cv`, `score_it`), `propose`, and the separate travel envelope
 provide extension points without giving a model direct access to hardware.
+
+## Testing the adaptive waveform extensions
+
+1. Start in **Simulation**, with the default 5 pA threshold and 0.25 s settling
+   before approach. Select a seven-landing budget: five survey points plus two
+   adaptive proposals. Confirm the safe region, then approve landings and the
+   tilt fit when requested.
+2. In **Adaptive hopping + CV / LSV**, select CV, two cycles, objective cycle 2,
+   and segment 2. Watch the full CV in the measurement tab and verify seven
+   valid results in the decision log. Repeat in LSV mode.
+3. In **Adaptive hopping + I–t**, use the default holds, two cycles and objective
+   cycle 2, window 0.75–1.00 s. Check the potential and current traces, objective
+   maps and return to initial Z.
+4. Inspect CSV, JSON, decision journal and report. Invalid results must not train
+   the model. Confirm cycle selection in CV analysis and individual I–t landings.
+5. On hardware, first use an inspected region with ample clearance and approval
+   for every landing. Confirm the approach potential settles while Z is stationary.
+   If the baseline remains above threshold, stop and investigate or increase
+   pre-approach settling; do not mask it by arbitrarily increasing the threshold.
+
+These extensions reuse the existing bitfile. Simulated and fake-session tests
+do not replace verification on the NI instrument, including real phase timing,
+electrical transients and safe motion.

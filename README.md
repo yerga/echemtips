@@ -59,7 +59,7 @@ Select **Simulation**, connect, and choose an experiment. The simulated surface 
 
 For control meanings, experiment sequences, plot interpretation, contact behavior, scan paths, and safe stopping, see the [Operator guide](docs/OPERATOR_GUIDE.md).
 
-The experimental [Adaptive hopping + LSV](docs/ADAPTIVE_LSV.md) workflow adds a
+The experimental [Adaptive hopping (CV, LSV and I–t)](docs/ADAPTIVE_LSV.md) workflow adds a
 coarse tilt survey and Bayesian spatial selection, with explicit approvals,
 clearance checks and a decision report. Start in simulation and retain approval
 mode for initial hardware tests.

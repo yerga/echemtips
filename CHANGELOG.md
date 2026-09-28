@@ -7,6 +7,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Adaptive CV with explicit objective cycle and chronological sweep segment,
+  plus a separate adaptive I–t experiment with cycle-relative objective windows.
+  Both share the conservative travel planner, maps, audit files and simulator.
+- Adaptive Z/current/potential time traces and a staged verification guide.
 - Experimental post-recording detachment diagnostics with signed-current break
   detection, d=h or calibrated diameter estimates, inspectable rejection reasons,
   and a read-only control-app viewer for the last closed recording.
@@ -16,6 +20,10 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Fixed
 
+- Adaptive approaches now condition the approach potential at stationary Z
+  before arming feedback, avoiding immediate false contacts from potential-step
+  charging transients. Persistent above-threshold current blocks approach;
+  clearance-rejected landings are recorded as invalid. No bitfile change needed.
 - Adaptive simulation now places its synthetic surface within the configured
   approach span, including with 200 µm piezo calibration. Added a repeatable
   contact transient and latched wetting response for both current channels;

@@ -27,12 +27,15 @@ evolving persisted settings or metadata.
 ## Adaptive spatial acquisition
 
 The planner returns XY proposals only. The supervisor validates travel separately
-and uses the existing contact-gated approach/LSV implementation.
+and uses the existing contact-gated CV/LSV and I–t implementations. CV objectives
+select a cycle and chronological branch; I–t objectives select a cycle-relative
+window within one potential hold.
 
 ::: echemtips.adaptive
     options:
       members:
         - AdaptiveParameters
+        - AdaptiveITParameters
         - TiltEnvelope
         - AdaptiveExperiment
         - propose
