@@ -121,6 +121,7 @@ class AdaptiveTests(unittest.TestCase):
             for _ in range(20000):
                 # Advance physical simulation and its LSV clock without sleeping.
                 backend._last_tick -= .01
+                backend._started -= .01
                 sample = backend.read_sample()
                 if experiment.child: experiment.child._last_tick -= .01
                 experiment.tick_samples([sample])
@@ -193,6 +194,7 @@ class AdaptiveTests(unittest.TestCase):
             e.start(AdaptiveParameters(region_confirmed=True,approve_each=False,approach_rate_um_s=60,xy_speed_um_s=100))
             for _ in range(5000):
                 backend._last_tick-=.05
+                backend._started-=.05
                 sample=backend.read_sample()
                 if e.child: e.child._last_tick-=.05
                 e.tick_samples([sample])

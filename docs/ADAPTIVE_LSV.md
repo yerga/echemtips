@@ -1,5 +1,15 @@
 # Adaptive hopping + LSV — first version
 
+## Potential conditioning before approach
+
+After positioning, the approach potential is applied and acknowledged while Z
+stays at its safe travel height. **Settling before approach** (default 0.25 s,
+minimum 0.05 s) precedes feedback arming. Three fresh final current samples must
+be below the contact-magnitude threshold. An unsettled or above-threshold signal
+stops the run without advancing toward the surface. This is separate from
+settling after contact and requires no FPGA bitfile change. Clearance-rejected
+landings are marked invalid in the decision log and metadata.
+
 Open **All experiments → Adaptive hopping + LSV**. Pin it to the sidebar if
 needed. This is an experimental spatial-selection workflow, not a certified
 collision-avoidance system. It uses the existing contact-gated LSV FPGA program;

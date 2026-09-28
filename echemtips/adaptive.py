@@ -45,6 +45,7 @@ class AdaptiveParameters(ApproachCVParameters):
     plane_tolerance_um: float = 3.0
     approve_each: bool = True
     region_confirmed: bool = False
+    pre_approach_settling_s: float = 0.25
     attempts: list = field(default_factory=list)
 
     def validate(self, settings):
@@ -52,7 +53,7 @@ class AdaptiveParameters(ApproachCVParameters):
         errors = super().validate(settings)
         names = ("x_min_um", "x_max_um", "y_min_um", "y_max_um", "minimum_spacing_um",
                  "objective_potential_v", "objective_window_v", "max_duration_s", "xy_speed_um_s",
-                 "clearance_um", "relief_allowance_um", "plane_tolerance_um")
+                 "clearance_um", "relief_allowance_um", "plane_tolerance_um", "pre_approach_settling_s")
         if not all(math.isfinite(getattr(self, n)) for n in names):
             return errors + ["Adaptive settings must be finite."]
         for axis in "xy":
@@ -70,6 +71,10 @@ class AdaptiveParameters(ApproachCVParameters):
                 errors.append(f"{n} must be positive.")
         if self.relief_allowance_um < 0:
             errors.append("Unresolved relief allowance cannot be negative.")
+        if self.pre_approach_settling_s < 0.05:
+            errors.append("Pre-approach settling must be at least 0.05 s; Z stays stationary during this interval.")
+        if self.feedback_mode != 'magnitude':
+            errors.append('Adaptive acquisition requires current-magnitude contact detection.')
         if self.strategy not in {"Balanced", "Hotspots", "Mapping"} or self.survey not in {"Corners + center", "3 × 3"}:
             errors.append("Unknown strategy or survey.")
         if self.objective_channel not in {"Current 1", "Current 2"}:
@@ -375,18 +380,16 @@ class AdaptiveExperiment:
         if contact is None: self._attempt.update(valid=False,reason="Missing commanded contact coordinate")
         if self._attempt.get("quality_warning"):
             self._attempt.update(valid=False,reason=self._attempt["quality_warning"])
+        if self._attempt['valid'] and contact - p.start_z_um < p.clearance_um+p.relief_allowance_um:
+            self._attempt.update(valid=False, reason='Initial Z does not provide the requested clearance; inspect the sample')
+        if self._attempt['valid'] and self.plane is not None and abs(contact-float(self.plane.height(self._attempt['xy'])))>p.plane_tolerance_um:
+            self._attempt.update(valid=False, reason='New contact lies outside the approved plane tolerance; survey must be revised')
         self._log("landing_result",**self._attempt)
         self.child = None
         if not self.backend.hardware_approach_cv_required:
             self.backend.adaptive_pixel = -1
         if not self._attempt["valid"] or self._attempt.get("quality_warning"):
             self._finish("Quality check requires operator review: "+(self._attempt.get("quality_warning") or self._attempt["reason"]),success=False)
-            return
-        if contact - p.start_z_um < p.clearance_um+p.relief_allowance_um:
-            self._finish("Initial Z does not provide the requested clearance; inspect the sample",success=False)
-            return
-        if self.plane is not None and abs(contact-float(self.plane.height(self._attempt["xy"])))>p.plane_tolerance_um:
-            self._finish("New contact lies outside the approved plane tolerance; survey must be revised",success=False)
             return
         if len(p.attempts)>=p.max_landings:
             self._finish("Landing budget reached")
@@ -448,14 +451,40 @@ class AdaptiveExperiment:
             elif self.phase == "travel_x":
                 self._move("Y",self._attempt["xy"][1],p.xy_speed_um_s); self.phase = "travel_y"
             else:
-                child_params = ApproachCVParameters(**{f.name:getattr(p,f.name) for f in fields(ApproachCVParameters)})
-                child_params.start_z_um = self._travel_z
-                self.child = ApproachCVExperiment(self.backend,self.settings)
-                with self.backend.io_lock:
-                    self.child.start(child_params)
-                    if not self.backend.hardware_approach_cv_required:
-                        self.backend.adaptive_pixel = self._attempt["scan_pixel"]
-                self.phase = "landing"
+                # Do not arm feedback in the same waypoint as a potential jump.
+                # Idle potential commands are acknowledged, and Z remains at travel height.
+                self.backend.set_voltage(1,p.approach_voltage_v)
+                self._conditioning_origin = self._last_sample.elapsed_s if self._last_sample else -math.inf
+                self._conditioning_samples = []
+                self._conditioning_start = None
+                self._conditioning_deadline = self.backend.experiment_time()+p.pre_approach_settling_s+5
+                self.phase = 'conditioning'
+                self.detail = 'Settling approach potential at stationary Z before enabling contact feedback'
+                self._log('pre_approach_settling',potential_v=p.approach_voltage_v,duration_s=p.pre_approach_settling_s)
+        elif self.phase == 'conditioning':
+            fresh = [s for s in samples if s.elapsed_s>self._conditioning_origin]
+            for sample in fresh:
+                self._conditioning_origin = sample.elapsed_s
+                if not math.isfinite(sample.voltage1_v) or abs(sample.voltage1_v-p.approach_voltage_v)>.002:
+                    self._conditioning_samples.clear()
+                    self._conditioning_start = None
+                else:
+                    if self._conditioning_start is None: self._conditioning_start = sample.elapsed_s
+                    self._conditioning_samples.append(sample)
+                    self._conditioning_samples = self._conditioning_samples[-3:]
+            ready = self._conditioning_samples
+            if len(ready)>=3 and ready[-1].elapsed_s-self._conditioning_start>=p.pre_approach_settling_s:
+                currents = [s.current1_na if p.feedback_channel=='Current 1' else s.current2_na for s in ready[-3:]]
+                if not all(math.isfinite(i) and abs(i)<abs(p.feedback_threshold_na) for i in currents):
+                    self._attempt.update(valid=False,reason='Current already exceeds contact threshold before approach; inspect baseline or increase pre-approach settling')
+                    self._log('landing_result',**self._attempt)
+                    self._finish(self._attempt['reason'],success=False)
+                else:
+                    self._start_child()
+            elif self.backend.experiment_time()>self._conditioning_deadline:
+                self._attempt.update(valid=False,reason='No fresh settled-potential samples before approach')
+                self._log('landing_result',**self._attempt)
+                self._finish(self._attempt['reason'],success=False)
         elif self.phase == "landing" and (samples or (self.backend.hardware_approach_cv_required and self._last_sample is not None)):
             before = self.child.state
             update = self.child.tick(self._last_sample)
@@ -466,6 +495,19 @@ class AdaptiveExperiment:
             if not self.child.active: self._landing_done()
         self.progress = len(p.attempts)/p.max_landings if self.active else self.progress
         return self._update()
+
+    def _start_child(self):
+        """Arm contact only after stationary potential conditioning succeeds."""
+        p=self.params
+        child_params = ApproachCVParameters(**{f.name:getattr(p,f.name) for f in fields(ApproachCVParameters)})
+        child_params.start_z_um = self._travel_z
+        self.child = ApproachCVExperiment(self.backend,self.settings)
+        with self.backend.io_lock:
+            self.child.start(child_params)
+            if not self.backend.hardware_approach_cv_required:
+                self.backend.adaptive_pixel = self._attempt['scan_pixel']
+        self._conditioning_samples = []
+        self.phase = 'landing'
 
     def _update(self):
         return ExperimentUpdate(self.state,self.detail,self.progress)

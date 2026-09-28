@@ -79,7 +79,8 @@ def create_adaptive_page(app):
                     ("approach_rate_um_s","Approach speed","3","µm/s"),("xy_speed_um_s","XY travel speed","20","µm/s"),
                     ("clearance_um","Travel clearance","10","µm"),("relief_allowance_um","Unresolved relief allowance","5","µm"),
                     ("plane_tolerance_um","Maximum plane deviation","3","µm"),("feedback_threshold_na","Contact threshold magnitude","5","pA"),
-                    ("approach_voltage_v","Approach potential E1","0.1","V"),("settling_time_s","Settling after contact","0.5","s")]),
+                    ("approach_voltage_v","Approach potential E1","0.1","V"),("settling_time_s","Settling after contact","0.5","s"),
+                    ("pre_approach_settling_s","Settling before approach","0.25","s")]),
                 ("3 · LSV and objective", [
                     ("cv_start_v","Start potential","-0.2","V"),("cv_vertex1_v","End potential","0.6","V"),
                     ("cv_scan_rate_v_s","Scan rate","0.25","V/s"),("objective_potential_v","Objective potential","0.2","V"),
@@ -98,9 +99,10 @@ def create_adaptive_page(app):
                     grid.addWidget(self.survey,3,0,1,2)
                 if title.startswith('2'):
                     self.feedback = Choice(['Current 1','Current 2'],'Current 1')
-                    grid.addWidget(label('Contact feedback current','muted'),5,0)
-                    grid.addWidget(self.feedback,5,1)
-                    grid.addWidget(label('Decreasing Z retracts. Initial Z must clear the entire region and entry path. A sparse survey cannot detect hidden obstacles.','muted',word_wrap=True),6,0,1,2)
+                    self.fields['pre_approach_settling_s'].setToolTip('Z remains stationary after applying the approach potential. Feedback is enabled only after this interval and fresh below-threshold current samples.')
+                    grid.addWidget(label('Contact feedback current','muted'),6,0)
+                    grid.addWidget(self.feedback,6,1)
+                    grid.addWidget(label('Decreasing Z retracts. Initial Z must clear the entire region and entry path. A sparse survey cannot detect hidden obstacles.','muted',word_wrap=True),7,0,1,2)
                 if title.startswith('3'):
                     self.objective_channel = Choice(['Current 1','Current 2'],'Current 1')
                     grid.addWidget(self.objective_channel,3,0,1,2)
