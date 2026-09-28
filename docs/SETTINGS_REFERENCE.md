@@ -7,7 +7,7 @@ after changing settings.
 
 ## Desktop integration
 
-In **Settings → Display**, desktop completion/error notifications are **off by
+In **Settings → Plots**, desktop completion/error notifications are **off by
 default**. Enable them and save defaults if desired. Notifications never replace
 in-app errors, never operate hardware, and can be suppressed by OS permissions or
 Do Not Disturb. Clicking one brings instrument control forward.
