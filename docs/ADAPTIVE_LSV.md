@@ -135,7 +135,7 @@ metadata for quantitative spatial analysis of adaptive data.
    to approach-limit interval (58–72% of that span), independently of the full
    calibrated piezo range. Thus the default 10–90 µm approach works with either
    a 100 or 200 µm piezo range. It provides a spatial hotspot, approximately
-   0.15 pA current noise, and a 40 pA charging transient with a 0.15 s decay time
+   0.15 pA current noise, and an 80 pA charging transient with a 0.12 s decay time
    on Current 1 (Current 2 follows at approximately 80%). A sustained contact
    response remains until retraction. These are synthetic demonstration signals,
    not a quantitative meniscus model. Thresholds are never adjusted automatically;

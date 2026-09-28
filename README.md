@@ -55,7 +55,13 @@ python -m pip install -e .
 echemtips
 ```
 
-Select **Simulation**, connect, and choose an experiment. The simulated surface is around 68% of the configured Z range, allowing approach-based methods and hopping scans to complete without hardware.
+Select **Simulation**, connect, and choose an experiment. Approach and hopping
+workflows place a synthetic surface inside the configured approach span. The
+simulator shows a contact charging spike, low dry-current noise (about 0.15 pA
+RMS), forward/reverse redox peaks for CV, and decaying potential-step transients
+for I–t. Retraction breaks contact. Adaptive maps retain spatially varying
+activity. These are illustrative responses for workflow testing, not predictions
+of your electrolyte, electrode kinetics, contact area or instrument noise.
 
 For control meanings, experiment sequences, plot interpretation, contact behavior, scan paths, and safe stopping, see the [Operator guide](docs/OPERATOR_GUIDE.md).
 

@@ -7,6 +7,12 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Consistent scalable navigation icons in the sidebar and searchable experiment
+  library, retaining text labels and using explicit pinned-item wording.
+- Shared illustrative simulation signals: low-noise dry baseline, repeatable
+  contact charging, scan-direction-dependent redox peaks and decaying I–t steps.
+  Regular and combinatorial scans now use the same contact model; simulated
+  surfaces are inside their approach intervals. Hardware acquisition is unchanged.
 - Opt-in desktop completion/error notifications and an optional native numeric
   experiment-progress badge, with window-title fallback on unsupported desktops.
 - Shared recent-recordings menus with bounded local history, and recording/JSON
