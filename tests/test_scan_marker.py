@@ -51,9 +51,9 @@ class MarkerTests(unittest.TestCase):
                                retract_rate_um_s=100, cycles=2)
                 if isinstance(p, ScanHoppingCVParameters):
                     p.cv_scan_rate_v_s = 10
-                    p.feedback_threshold_na = 2
+                    p.feedback_threshold_na = .005
                 else:
-                    p.feedback_threshold = 2
+                    p.feedback_threshold = .005
                     p.initial_hold_s = p.step_hold_s = p.return_hold_s = .01
                 experiment = experiment_cls(backend, settings)
                 experiment.start(p)

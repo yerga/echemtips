@@ -279,6 +279,25 @@ class SimulationBackend(InstrumentBackend):
         self._last_sample_voltage = 0.0
         self._last_sample_elapsed = 0.0
         self._cv_rate_index = -1
+        from .simulated_cell import SimulatedCell
+        self._cell = SimulatedCell()
+        self._standalone_cell = False
+        self._sim_wet = False
+
+    @_synchronized_io
+    def simulated_waveform(self, mode: str, rate: float = .25, *, standalone: bool = False) -> None:
+        """Select illustrative cell behavior without altering any hardware backend."""
+        self._cell.mode, self._cell.rate = mode, rate
+        self._standalone_cell = standalone
+
+    @_synchronized_io
+    def configure_approach_scene(self, params) -> None:
+        """Put a single-point surface within its approach span unless adaptive owns it."""
+        if getattr(self, 'adaptive_scene', False): return
+        from types import SimpleNamespace
+        self.configure_hopping_scene(SimpleNamespace(start_z_um=params.start_z_um,end_z_um=params.end_z_um,
+            x_start_um=0.,x_end_um=self.settings.x_range_um,y_start_um=0.,y_end_um=self.settings.y_range_um))
+        self.begin_hopping_point(0)
 
     def surface_z_at(self, x_um: float, y_um: float) -> float:
         """Return deterministic simulated surface height at physical XY."""
@@ -309,7 +328,7 @@ class SimulationBackend(InstrumentBackend):
 
     @_synchronized_io
     def configure_hopping_scene(self, params) -> None:
-        """Reuse the low-noise contact model for combinatorial scans only.
+        """Use the same low-noise contact model for every hopping scan.
 
         Place the surface within the approach interval, independent of the
         instrument's full piezo range. Single-row/column scans remain valid.
@@ -331,10 +350,15 @@ class SimulationBackend(InstrumentBackend):
         if getattr(self, "_hopping_scene", False):
             self.adaptive_pixel = point
             self._adaptive_wet_pixel = None
+            self._cell.wet = False
+            self._cell.mode = 'contact'
 
     @_synchronized_io
     def clear_hopping_scene(self) -> None:
         """Prevent a combinatorial scene leaking into another experiment."""
+        self._standalone_cell = False
+        self._cell.mode = 'contact'
+        self._cell.wet = False
         if getattr(self, "_hopping_scene", False):
             self.adaptive_scene = False
             self.adaptive_pixel = -1
@@ -360,6 +384,11 @@ class SimulationBackend(InstrumentBackend):
         """Reset simulator timing and mark it connected without physical output."""
         self.connected = True
         self._started = self._last_tick = time.monotonic()
+        self._cell = type(self._cell)()
+        self._standalone_cell = self._sim_wet = False
+        self._adaptive_wet_pixel = None
+        self._last_sample_elapsed = 0.
+        self._last_sample_voltage = self.settings.polarity_factor * self._voltage[1]
         self._paused = False
         self._paused_at = None
         self._paused_duration_s = 0.0
@@ -401,17 +430,13 @@ class SimulationBackend(InstrumentBackend):
         z = self._positions["Z"]
         v = self.settings.polarity_factor * self._voltage[1]
         surface_z = self.surface_z_at(self._positions["X"], self._positions["Y"])
-        contact = 1.0 / (1.0 + math.exp(-(z - surface_z) / 0.38))
-        faradaic = 1.8 * math.tanh((v - 0.08) * 3.2)
-        capacitive = 0.12 * math.sin(elapsed * 8.0)
-        drift = 0.12 * math.sin(elapsed / 9.0)
-        noise = self._rng.gauss(0.0, 0.035)
-        current1 = 0.22 + drift + contact * (2.7 + faradaic) + capacitive + noise
-        current2 = -0.15 + contact * 0.7 + self._rng.gauss(0.0, 0.025)
+        if z < surface_z-.2: self._sim_wet = False
+        elif z >= surface_z: self._sim_wet = True
+        wet, activity = self._sim_wet or self._standalone_cell, 1.
         if getattr(self, "adaptive_scene", False):
             start,end,x0,x1,y0,y1 = self._adaptive_bounds
             x,y = (self._positions['X']-x0)/(x1-x0),(self._positions['Y']-y0)/(y1-y0)
-            activity = .025 + .15*math.exp(-((x-.7)**2+(y-.65)**2)/.025)
+            activity = .7 + 2.5*math.exp(-((x-.7)**2+(y-.65)**2)/.025)
             pixel = getattr(self, "adaptive_pixel", -1)
             failed = getattr(self, "adaptive_failure_pixel", -99) == pixel
             direction = 1 if end > start else -1
@@ -426,23 +451,26 @@ class SimulationBackend(InstrumentBackend):
                 self._adaptive_wet_pixel = pixel
                 self._adaptive_contact_time = elapsed
             wet = self._adaptive_wet_pixel is not None
-            transient = .04*math.exp(-max(0,elapsed-self._adaptive_contact_time)/.15) if wet else 0.0
-            # 40 pA charging transient + 15 pA sustained contact baseline;
-            # 0.15 pA noise cannot normally trigger the default 5 pA criterion.
-            current1 = .00015 + wet*(.015 + activity*(v+.25)) + transient + self._rng.gauss(0,.00015)
-            current2 = current1*.8 + self._rng.gauss(0,.0001)
+            # Keep the acquired contact clock visible to deterministic fixtures.
+            if wet: self._cell.contact_t = self._adaptive_contact_time
+        physical_e = -v
+        response = self._cell.current(elapsed,physical_e,wet,activity)
+        # Outer conversion below maps native current to the selected convention.
+        # Internal cell equations use IUPAC (positive E/current = anodic).
+        current1 = -(response + self._rng.gauss(0,.00015))
+        current2 = -(response*.8 + self._rng.gauss(0,.00012))
         dt = elapsed - self._last_sample_elapsed
         scan_rate = (v - self._last_sample_voltage) / dt if dt > 0 else 0.0
         self._last_sample_voltage = v
         self._last_sample_elapsed = elapsed
         if self._diagnostic_mode == "open":
-            current1 = 0.018 + 0.075 * scan_rate + self._rng.gauss(0.0, 0.004)
-            current2 = -0.012 + 0.050 * scan_rate + self._rng.gauss(0.0, 0.004)
+            current1 = 0.00015 + 0.002 * scan_rate + self._rng.gauss(0.0, 0.00015)
+            current2 = -0.00012 + 0.002 * scan_rate + self._rng.gauss(0.0, 0.00015)
         elif self._diagnostic_mode in {"resistor", "pipette"}:
             resistance = self._diagnostic_resistance_mohm
             capacitance_nf = 0.025 if self._diagnostic_mode == "resistor" else 0.12
-            current1 = 1000.0 * v / resistance + capacitance_nf * scan_rate + self._rng.gauss(0.0, 0.01)
-            current2 = 0.5 * current1 + self._rng.gauss(0.0, 0.01)
+            current1 = 1000.0 * v / resistance + capacitance_nf * scan_rate + self._rng.gauss(0.0, 0.00015)
+            current2 = 0.5 * current1 + self._rng.gauss(0.0, 0.00012)
         return Sample(
             elapsed_s=elapsed,
             x_um=self._positions["X"],

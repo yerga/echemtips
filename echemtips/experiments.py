@@ -118,6 +118,7 @@ class ApproachCVExperiment:
             self.detail = "FPGA waypoint sequence started"
             self.progress = 0.0
             return
+        if hasattr(self.backend, 'configure_approach_scene'): self.backend.configure_approach_scene(params)
         self.backend.set_voltage(1, params.approach_voltage_v)
         xy_rate = max(10.0, params.approach_rate_um_s)
         if params.x_um is not None:
@@ -148,6 +149,7 @@ class ApproachCVExperiment:
 
     def _begin_cv(self) -> None:
         p = self.params
+        if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('sweep', p.cv_rates[0])
         self.backend.stop_motion()
         if p.scan_rates_v_s is not None or p.waveform == "LSV":
             self.backend.set_cv_voltage(p.cv_start_v, 0)
@@ -259,6 +261,7 @@ class ApproachCVExperiment:
             target = self._segments[self._segment_index]
             delta = target - self._cv_voltage
             rate_index = self._segment_index // ((1 if p.waveform == "LSV" else 3) * p.cycles)
+            if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('sweep', p.cv_rates[rate_index])
             step = p.cv_rates[rate_index] * dt
             if abs(delta) <= step:
                 if (p.scan_rates_v_s is not None or p.waveform == "LSV") and not (
@@ -389,7 +392,7 @@ class ScanHoppingCVExperiment:
             self.state = ExperimentState.PREPOSITION
             self.detail = f"FPGA scan started · {params.execution_point_count} points"
         else:
-            if params.recipes: self.backend.configure_hopping_scene(params)
+            self.backend.configure_hopping_scene(params)
             self._start_simulated_point()
 
     def abort(self) -> None:
@@ -424,7 +427,7 @@ class ScanHoppingCVExperiment:
         sample.scan_column = column
 
     def _start_simulated_point(self) -> None:
-        if self.params.recipes: self.backend.begin_hopping_point(self.point_index)
+        self.backend.begin_hopping_point(self.point_index)
         row, column, x, y = self._grid[self.point_index]
         p = self.params
         self._z_position_target = p.start_z_um if self.point_index == 0 else self._retract_target_z
@@ -441,6 +444,7 @@ class ScanHoppingCVExperiment:
 
     def _begin_simulated_cv(self) -> None:
         p = self.params.for_point(self.point_index)
+        if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('sweep', p.cv_scan_rate_v_s)
         self.backend.stop_motion()
         self.backend.set_voltage(1, p.cv_start_v)
         self._cv_voltage = p.cv_start_v
@@ -687,6 +691,7 @@ class CVExperiment:
             self._targets = []
         else:
             self._targets = []
+            if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('sweep', params.scan_rate_v_s, standalone=True)
             for _ in range(params.cycles):
                 self._targets.extend((params.vertex1_v,) if params.waveform == "LSV" else (params.vertex1_v, params.vertex2_v, params.start_v))
             if params.jump_at_start:
@@ -784,6 +789,7 @@ class ApproachExperiment:
             self.backend.start_hardware_program("approach", params)
             self.state = ExperimentState.APPROACHING
         else:
+            if hasattr(self.backend, 'configure_approach_scene'): self.backend.configure_approach_scene(params)
             self.backend.set_voltage(1, params.approach_voltage_v)
             if params.x_um is not None:
                 self.backend.move("X", params.x_um, max(10.0, params.approach_rate_um_s))
@@ -917,6 +923,7 @@ class ApproachITExperiment:
             self.backend.start_hardware_program("approach_it", params)
             self.state = ExperimentState.APPROACHING
         else:
+            if hasattr(self.backend, 'configure_approach_scene'): self.backend.configure_approach_scene(params)
             self.backend.set_voltage(1, params.approach_voltage_v)
             if params.x_um is not None:
                 self.backend.move("X", params.x_um, max(10.0, params.approach_rate_um_s))
@@ -951,6 +958,7 @@ class ApproachITExperiment:
         self.state, self.detail = ExperimentState.SETTLING, f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
 
     def _start_it(self) -> None:
+        if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('step')
         potential, duration, label = self._steps[0]
         self.backend.set_voltage(1, potential)
         self._step_index, self.it_label = 0, label
@@ -1076,7 +1084,7 @@ class ScanHoppingITExperiment:
             self.backend.start_hardware_program("scan_hopping_it", params)
             self.state, self.detail = ExperimentState.PREPOSITION, f"FPGA hopping I-t scan · {params.execution_point_count} points"
         else:
-            if params.recipes: self.backend.configure_hopping_scene(params)
+            self.backend.configure_hopping_scene(params)
             self._start_point()
 
     def abort(self) -> None:
@@ -1103,7 +1111,7 @@ class ScanHoppingITExperiment:
         sample.scan_pixel, sample.scan_row, sample.scan_column = self.params.recorded_pixel(point), row, column
 
     def _start_point(self) -> None:
-        if self.params.recipes: self.backend.begin_hopping_point(self.point_index)
+        self.backend.begin_hopping_point(self.point_index)
         p = self.params
         self._z_position_target = p.start_z_um if self.point_index == 0 else self._retract_target_z
         p.update_marker(self.point_index, 'running')
@@ -1115,6 +1123,7 @@ class ScanHoppingITExperiment:
 
     def _start_it(self) -> None:
         self._steps = self.params.for_point(self.point_index).it_steps()
+        if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('step')
         potential, duration, label = self._steps[0]
         self.backend.stop_motion(); self.backend.set_voltage(1, potential)
         self._step_index, self.it_label = 0, label

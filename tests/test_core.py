@@ -163,7 +163,8 @@ class SimulationTests(unittest.TestCase):
         far = self.backend.read_sample().current1_na
         self.backend._positions["Z"] = 90.0
         near = self.backend.read_sample().current1_na
-        self.assertGreater(near, far + 1.0)
+        self.assertLess(abs(far), .001)
+        self.assertGreater(abs(near), .04)
 
     def test_pause_freezes_host_side_cv_and_it_timers(self) -> None:
         cv = CVExperiment(self.backend, self.settings)
@@ -669,7 +670,7 @@ class ExperimentTests(unittest.TestCase):
             start_z_um=55, end_z_um=80,
             lateral_rate_um_s=100, approach_rate_um_s=20, retract_rate_um_s=100,
             cv_scan_rate_v_s=10, cycles=1, map_potential_v=0.2,
-            feedback_threshold_na=2.0,  # Synthetic noise exceeds the real-instrument 5 pA default.
+            feedback_threshold_na=.005, feedback_mode='magnitude',
         )
         experiment.start(params)
         for _ in range(300):
