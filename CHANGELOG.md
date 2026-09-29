@@ -13,6 +13,9 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Atmosphere selector in experiment details: Air (default), Ar, N2, O2, CO2,
+  and Other with optional custom text; previous custom values are preserved.
+
 - Optional, remembered experiment details before every experiment/Watch recording,
   integrated hardware review and explicit defaults in Settings. JSON snapshots
   include operator annotations and software identity, retaining start-time

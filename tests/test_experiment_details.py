@@ -51,6 +51,21 @@ class DetailsTests(unittest.TestCase):
             self.assertEqual(after['settings'], before['settings'])
             self.assertEqual(after['operator_metadata'], before['operator_metadata'])
 
+    def test_atmosphere_choices_default_and_legacy_custom_values(self):
+        for previous, expected in [('', 'Air'), ('air', 'Air'), ('Ar', 'Ar'),
+                                   ('N2', 'N2'), ('O2', 'O2'), ('CO2', 'CO2'),
+                                   ('Other', 'Other'), ('humidified nitrogen', 'humidified nitrogen')]:
+            with self.subTest(previous=previous):
+                dialog = DetailsDialog(None, {'atmosphere': previous})
+                self.assertEqual(dialog.values()['atmosphere'], expected)
+                self.assertEqual(dialog.atmosphere.count(), 6)
+                dialog.atmosphere.setCurrentText('Other')
+                dialog.other_atmosphere.setText('Ar + 5% H2')
+                self.assertEqual(dialog.values()['atmosphere'], 'Ar + 5% H2')
+                dialog.atmosphere.setCurrentText('N2')
+                self.assertEqual(dialog.values()['atmosphere'], 'N2')
+                dialog.close()
+
     def test_cancel_prevents_recording_and_motion_for_experiments_and_watch(self):
         with TemporaryDirectory() as folder, patch.dict(os.environ, {'ECHEMTIPS_SETTINGS_PATH': str(Path(folder)/'settings.json')}):
             window = EChemTipsApp(); window.poll_timer.stop(); window.backend.connect()

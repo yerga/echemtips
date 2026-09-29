@@ -61,8 +61,28 @@ class DetailsDialog(Q.QDialog):
         form.addRow('Pipette', self.barrel)
         self.entries = {}
         for key, caption in FIELDS.items():
+            if key == 'atmosphere':
+                continue
             entry = Q.QLineEdit(); self.entries[key] = entry
             form.addRow(caption, entry)
+        self.atmosphere = Q.QComboBox()
+        self.atmosphere.addItems(['Air', 'Ar', 'N2', 'O2', 'CO2', 'Other'])
+        self.other_atmosphere = Q.QLineEdit()
+        self.other_atmosphere.setPlaceholderText('Specify atmosphere (optional)')
+        atmosphere_row = Q.QWidget(); atmosphere_layout = Q.QVBoxLayout(atmosphere_row)
+        atmosphere_layout.setContentsMargins(0, 0, 0, 0)
+        atmosphere_layout.addWidget(self.atmosphere); atmosphere_layout.addWidget(self.other_atmosphere)
+        form.addRow('Atmosphere', atmosphere_row)
+        self.atmosphere.currentTextChanged.connect(
+            lambda text: self.other_atmosphere.setVisible(text == 'Other'))
+        previous = str(values.get('atmosphere', '')).strip()
+        choices = {self.atmosphere.itemText(i).casefold(): self.atmosphere.itemText(i)
+                   for i in range(self.atmosphere.count())}
+        selected = choices.get(previous.casefold(), 'Other') if previous else 'Air'
+        self.atmosphere.setCurrentText(selected)
+        if selected == 'Other' and previous.casefold() != 'other':
+            self.other_atmosphere.setText(previous)
+        self.other_atmosphere.setVisible(selected == 'Other')
         self.entries['electrolyte'].setPlaceholderText('Redox species, supporting electrolyte, solvent, pH…')
         self.entries['amplifier_filter'].setPlaceholderText('e.g. i1: 1 kHz filtered; i2: 100 Hz')
         self.entries['pipette_diameter_um'].setToolTip('Opening diameter, not the droplet footprint. Descriptive only; does not change normalization.')
@@ -92,6 +112,8 @@ class DetailsDialog(Q.QDialog):
         """Return plain descriptive strings; no annotation changes instrument behavior."""
         return {'pipette': self.barrel.currentText(),
                 **{key: entry.text().strip() for key, entry in self.entries.items()},
+                'atmosphere': (self.other_atmosphere.text().strip() or 'Other')
+                    if self.atmosphere.currentText() == 'Other' else self.atmosphere.currentText(),
                 'notes': self.notes.toPlainText().strip()}
 
 
