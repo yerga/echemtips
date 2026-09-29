@@ -13,6 +13,11 @@ All notable changes to eChemTips are recorded here. The project follows
 
 ### Added
 
+- Optional, remembered experiment details before every experiment/Watch recording,
+  integrated hardware review and explicit defaults in Settings. JSON snapshots
+  include operator annotations and software identity, retaining start-time
+  acquisition settings without display preferences.
+
 - Consistent scalable navigation icons in the sidebar and searchable experiment
   library, retaining text labels and using explicit pinned-item wording.
 - Shared illustrative simulation signals: low-noise dry baseline, repeatable

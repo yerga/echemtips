@@ -76,6 +76,16 @@ See the [Settings reference](docs/SETTINGS_REFERENCE.md) for defaults, units, va
 
 Recordings are streamed to uniquely named CSV and JSON metadata files in `data/`, or in the directory selected in Settings. The complete data rate is written to disk while plots retain a bounded, decimated display buffer. Standard CSV rows contain measured time, X/Y/Z, E1/E2, i1/i2, and the FPGA line number. Scan recordings additionally contain `scan_pixel`; their ordered pixel-to-row/column/XY mapping is stored once in the JSON sidecar. Per-sample feedback type, redundant row/column values, and non-time-aligned commanded-position snapshots are intentionally omitted to keep long recordings smaller.
 
+Before each experiment or Watch recording, an optional-details form appears,
+prefilled with the last accepted values. All fields may remain blank: pipette
+barrels/opening diameter, electrolyte, electrodes, amplifier filter, temperature,
+humidity, atmosphere and notes. Hardware run review is integrated into this
+dialog. Reusable defaults can be saved there or via Settings → Saving →
+Experiment details defaults. Each JSON keeps its own operator-entered snapshot;
+opening diameter does not imply droplet footprint or change normalization.
+Acquisition/calibration settings and software version are captured automatically;
+plot styling is excluded. These settings remain those captured at recording start.
+
 The versioned column definitions, units, recording states, partial-file behavior, scan-grid structure, and line-number limitations are specified in [Recording data format](docs/DATA_FORMAT.md).
 
 Approach thresholds are entered in pA in the operator UI. The operator selects Current 1 or Current 2, an absolute threshold, and whether contact occurs above or below it. Once the FPGA detects contact, Python safely ends the approach and automatically continues to settling, CV, I–t, or retract. A selectable post-contact settling hold (including zero) runs on the FPGA. Every approach-based page includes a dedicated **Accept current Z as contact and continue** action for intentional manual acceptance; the global **End waypoint** control only advances the active FPGA waypoint and is not contact confirmation. Each approach page shows both the latest approach curve and a rolling 60-second current-versus-Z history. Long scan traces use the same 60-second display window while the recorder continues to preserve the complete acquisition.

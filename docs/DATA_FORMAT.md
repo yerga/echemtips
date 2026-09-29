@@ -103,7 +103,10 @@ The sidecar contains at least:
 | `status` | Recording lifecycle value defined above. |
 | `recording_schema_version` | Integer schema identifier; currently `2`. |
 | `csv_columns` | Exact column list written to the paired CSV. Consumers should inspect this rather than assume scan columns. |
-| `settings` | Snapshot of application settings used for the run. |
+| `settings` | Start-of-run acquisition/calibration settings; excludes display preferences. |
+| `operator_metadata` | Optional pipette, electrolyte, electrodes, amplifier filter, temperature, humidity, atmosphere and notes. Descriptive strings, not verified sensor values. |
+| `operator_metadata_source` | Identifies annotations as operator-entered. |
+| `software` | eChemTips version, Python version and operating-system family. |
 | `parameters` | Snapshot of experiment-specific parameters. |
 | `source_elapsed_origin_s` | Original backend time of the first accepted sample. `elapsed_s` has this value subtracted. |
 | `error` | Optional detected error text for an `error` recording. |
