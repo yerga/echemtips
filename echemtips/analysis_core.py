@@ -284,6 +284,11 @@ def _legacy_series_end(dataset: AnalysisDataset, end: int, index: int,
 
 def extract_cv_cycles(dataset: AnalysisDataset) -> list[CVCycle]:
     """Extract completed CV cycles using the voltage program saved in metadata."""
+    if 'measurement_phase' in dataset.columns:
+        mask=dataset.column('measurement_phase')==2
+        if not mask.any(): return []
+        if not mask.all():
+            dataset=AnalysisDataset(dataset.path,dataset.columns,NumericRows(dataset.columns,dataset.rows.matrix[mask]),dataset.metadata)
     if "voltage1_v" not in dataset.columns:
         return []
     parameters = dataset.metadata.get("parameters")

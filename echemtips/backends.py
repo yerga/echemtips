@@ -283,9 +283,15 @@ class SimulationBackend(InstrumentBackend):
         self._cell = SimulatedCell()
         self._standalone_cell = False
         self._sim_wet = False
+        self._measurement_phase = 0
         # Illustrative meniscus extension, not a prediction of real geometry.
         # At 5 µm/s this gives ample attached/detached samples for diagnostics.
         self.simulated_detachment_distance_um = 5.0
+
+    @_synchronized_io
+    def set_measurement_phase(self, phase: int) -> None:
+        """Attach the currently commanded phase to subsequently acquired samples."""
+        self._measurement_phase = phase
 
     @_synchronized_io
     def simulated_waveform(self, mode: str, rate: float = .25, *, standalone: bool = False) -> None:
@@ -296,6 +302,7 @@ class SimulationBackend(InstrumentBackend):
     @_synchronized_io
     def configure_approach_scene(self, params) -> None:
         """Put a single-point surface within its approach span unless adaptive owns it."""
+        self._measurement_phase = 0
         if getattr(self, 'adaptive_scene', False): return
         from types import SimpleNamespace
         self.configure_hopping_scene(SimpleNamespace(start_z_um=params.start_z_um,end_z_um=params.end_z_um,
@@ -350,6 +357,7 @@ class SimulationBackend(InstrumentBackend):
     @_synchronized_io
     def begin_hopping_point(self, point: int) -> None:
         """Reset contact memory before moving to a fresh simulated landing."""
+        self._measurement_phase = 0
         if getattr(self, "_hopping_scene", False):
             self.adaptive_pixel = point
             self._adaptive_wet_pixel = None
@@ -485,6 +493,7 @@ class SimulationBackend(InstrumentBackend):
             current2_na=self.settings.polarity_factor * current2,
             line_number=self._line_number,
             cv_rate_index=self._cv_rate_index,
+            measurement_phase=self._measurement_phase,
             commanded_x_um=self._positions["X"],
             commanded_y_um=self._positions["Y"],
             commanded_z_um=self._positions["Z"],
@@ -579,6 +588,11 @@ class NIFPGABackend(InstrumentBackend):
         self._started = 0.0
         self._startup_verified = False
         self.driver_module = driver_module
+
+    def _check_conditioning_support(self, params):
+        """Fail before motion if a site driver could silently omit enabled holds."""
+        if (getattr(params,'pre_hold_enabled',False) or getattr(params,'post_hold_enabled',False)) and getattr(self._driver,'supports_conditioning',False) is not True:
+            raise BackendError('The selected FPGA driver does not support pre/post holds. Use the native driver.')
 
     @property
     def label(self) -> str:
@@ -928,6 +942,7 @@ class NIFPGABackend(InstrumentBackend):
     @_synchronized_io
     def start_hardware_approach_cv(self, params: ApproachCVParameters) -> None:
         """Claim the idle NI driver and start contact-gated Approach + CV."""
+        self._check_conditioning_support(params)
         if not self.approach_cv_available:
             raise BackendError(
                 "Approach + CV requires a site driver with FPGA waypoint sequence support "
@@ -989,6 +1004,7 @@ class NIFPGABackend(InstrumentBackend):
     @_synchronized_io
     def start_hardware_scan_hopping_cv(self, params: ScanHoppingCVParameters) -> None:
         """Claim the idle NI driver and start hopping CV."""
+        self._check_conditioning_support(params)
         if not self.scan_hopping_cv_available:
             raise BackendError("Scan Hopping + CV requires the native eChemTips scan waypoint interface.")
         if getattr(params, "waveform", "CV") == "LSV" and getattr(self._driver, "supports_lsv", False) is not True:
@@ -1033,6 +1049,7 @@ class NIFPGABackend(InstrumentBackend):
     @_synchronized_io
     def start_hardware_program(self, name: str, parameters: object) -> None:
         """Start CV, Approach, Approach + I–t, or hopping I–t on the driver."""
+        self._check_conditioning_support(parameters)
         if not self.hardware_program_available(name):
             raise BackendError(f"The FPGA driver does not expose the {name!r} shared method.")
         if getattr(parameters, "waveform", "CV") == "LSV" and getattr(self._driver, "supports_lsv", False) is not True:

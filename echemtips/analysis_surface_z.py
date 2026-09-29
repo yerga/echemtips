@@ -31,6 +31,8 @@ def stationary_sweep_rows(dataset, selection):
     if not np.isfinite(targets).all() or span < 1e-6:
         return None
     rows = selection.rows
+    if 'measurement_phase' in rows.columns:
+        rows=NumericRows(rows.columns,rows.matrix[rows.matrix[:,rows.columns.index('measurement_phase')]==2])
     if not {'elapsed_s', 'voltage1_v', 'z_um'}.issubset(rows.columns):
         return None
     t, e, z = (rows.matrix[:, rows.columns.index(k)] for k in ('elapsed_s','voltage1_v','z_um'))
@@ -85,6 +87,8 @@ def stationary_pulse_rows(dataset, selection):
     if not np.isfinite([initial,pulse,ih,ph]).all() or abs(initial-pulse) < .01 or min(ih,ph) <= 0:
         return None
     rows = selection.rows
+    if 'measurement_phase' in rows.columns:
+        rows=NumericRows(rows.columns,rows.matrix[rows.matrix[:,rows.columns.index('measurement_phase')]==2])
     if not {'elapsed_s','voltage1_v','z_um'}.issubset(rows.columns):
         return None
     t,e,z = (rows.matrix[:,rows.columns.index(k)] for k in ('elapsed_s','voltage1_v','z_um'))

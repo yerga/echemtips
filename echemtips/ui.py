@@ -5,6 +5,7 @@ independent of Qt. This module owns only operator interaction and rendering.
 """
 
 from __future__ import annotations
+from .conditioning_ui import ConditioningControl
 
 import math
 import os
@@ -1353,6 +1354,7 @@ class ApproachCVPage(ManagedExperimentPage):
         self.retract = Check("Retract to start Z after CV", True); cg.addWidget(self.retract, 2, 1)
         cg.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         controls_layout.addWidget(cv)
+        self.conditioning=ConditioningControl(self); controls_layout.addWidget(self.conditioning)
         if self.rate_series:
             cg.removeWidget(self.scan_rate)
             self.scan_rate.hide()
@@ -1375,12 +1377,15 @@ class ApproachCVPage(ManagedExperimentPage):
                     span = abs(v1-start) + abs(v2-v1) + abs(start-v2)
                     if self.waveform.get() == "LSV": span = abs(v1-start)
                     seconds = span * cycles * sum(1 / rate for rate in rates)
+                    from .conditioning import ConditioningParameters
+                    seconds += ConditioningParameters(**self.conditioning.values).conditioning_duration()
                     if self.waveform.get() == "LSV": seconds += (len(rates)-1)*self.reset_settling.float()
                     self.rate_summary.setText(f"{len(rates)} rates · {cycles * len(rates)} sweeps/cycles · program time ≈ {_format_duration(seconds)} (plus approach, settling and retract)")
                 except (ValueError, ZeroDivisionError, OverflowError):
                     self.rate_summary.setText("Enter positive scan rates and a valid waveform.")
 
             self.rate_editor.changed.connect(refresh_rates)
+            self.conditioning.change.textChanged.connect(refresh_rates)
             for field in (self.cycles, self.cv_start, self.vertex1, self.vertex2, self.reset_settling):
                 field.entry.textChanged.connect(refresh_rates)
             refresh_rates()
@@ -1416,6 +1421,7 @@ class ApproachCVPage(ManagedExperimentPage):
     def parameters(self) -> ApproachCVParameters:
         """Parse positioning, contact, settling, CV, and retract controls."""
         return ApproachCVParameters(
+            **self.conditioning.values,
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
             feedback_threshold_na=self.threshold.float() / PA_PER_NA, greater_than=True,
@@ -1467,8 +1473,8 @@ class ApproachCVPage(ManagedExperimentPage):
                         self._display_rate = rate_index
                         rate = experiment.params.cv_rates[rate_index]
                         self.rate_readout.setText(f"Rate {rate_index + 1}/{len(experiment.params.cv_rates)} · {rate:g} V/s · latest rate shown; all rates are recorded")
-            is_cv_sample = stage.startswith("cv") or (not stage and state_before == ExperimentState.CV)
-            if self.rate_series and not hardware: is_cv_sample = sample.cv_rate_index >= 0
+            is_cv_sample = (stage.startswith("cv") or (not stage and state_before == ExperimentState.CV)) and sample.measurement_phase not in (1,3)
+            if self.rate_series and not hardware: is_cv_sample = sample.cv_rate_index >= 0 and sample.measurement_phase not in (1,3)
             if is_cv_sample:
                 self.cv_plot.append(sample.voltage1_v, sample.current1_na, redraw=False); cv_changed = True
         # Advance once after handling the already-acquired batch.
@@ -1522,6 +1528,7 @@ class ApproachITPage(ManagedExperimentPage):
         self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return duration", "0.25", "s"), 2, 1)
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
+        self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
         preview, self.program_preview = _program_card(
             "I–t potential profile", "Potential E1 (V)",
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
@@ -1544,6 +1551,7 @@ class ApproachITPage(ManagedExperimentPage):
     def parameters(self) -> ApproachITParameters:
         """Parse positioning, contact, settling, I–t, and retract controls."""
         return ApproachITParameters(
+            **self.conditioning.values,
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=True,
             feedback_mode="magnitude", settling_time_s=self.settling_time.float(),
@@ -1575,7 +1583,7 @@ class ApproachITPage(ManagedExperimentPage):
             if stage == "approach" or (not experiment._hardware and state_before == ExperimentState.APPROACHING):
                 self.approach_curve.append(sample.z_um, current, redraw=False)
                 self.approach_history.append_timed(sample.elapsed_s, sample.z_um, current, redraw=False)
-            if stage.startswith("it"):
+            if stage.startswith("it") and sample.measurement_phase not in (1,3):
                 self._it_t0 = sample.elapsed_s if self._it_t0 is None else self._it_t0; elapsed = sample.elapsed_s - self._it_t0
                 self.voltage_plot.append(elapsed, sample.voltage1_v, redraw=False); self.it_plot.append(elapsed, sample.current1_na, redraw=False)
         if experiment._hardware: update = experiment.tick_samples(samples)
@@ -1624,6 +1632,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.scan_rate = add_field(g, Field("Scan rate", "2", "V/s"), 2, 0); self.cycles = add_field(g, Field("Cycles", "1"), 2, 1)
         g.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         hl.addWidget(electrochemistry)
+        self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1658,6 +1667,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
     def parameters(self) -> ScanHoppingCVParameters:
         """Parse grid, path, contact, CV, retraction, and map controls."""
         return ScanHoppingCVParameters(
+            **self.conditioning.values,
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold_na=self.threshold.float() / PA_PER_NA,
@@ -1722,7 +1732,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
                     self.approach_curve.clear(); self._approach_point = point_index
                 self.approach_curve.append(sample.z_um, current, redraw=False)
                 self.approach_history.append_timed(elapsed, sample.z_um, current, redraw=False)
-            if stage == "cv" and point_index >= 0:
+            if stage == "cv" and point_index >= 0 and sample.measurement_phase not in (1,3):
                 if point_index != self._cv_point:
                     self.cv_plot.clear(); self._cv_point = point_index; row, column = experiment.params.execution_grid()[point_index][:2]
                     self.cv_pixel_label.setText("Orientation marker (not an array hop)" if experiment.params.is_marker(point_index) else f"Hop {point_index + 1} · row {row + 1}, column {column + 1}")
@@ -1772,6 +1782,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return duration", "0.25", "s"), 2, 1)
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
+        self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1801,6 +1812,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
     def parameters(self) -> ScanHoppingITParameters:
         """Parse grid, path, contact, I–t, retraction, and map controls."""
         return ScanHoppingITParameters(
+            **self.conditioning.values,
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=True,
@@ -1854,7 +1866,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
                     self.approach_curve.clear(); self._approach_point = point
                 self.approach_curve.append(sample.z_um, current, redraw=False)
                 self.approach_history.append_timed(elapsed, sample.z_um, current, redraw=False)
-            if stage.startswith("it") and point >= 0:
+            if stage.startswith("it") and point >= 0 and sample.measurement_phase not in (1,3):
                 if point != self._it_point: self._it_point, self._it_t0 = point, sample.elapsed_s; self.voltage_plot.clear(); self.it_plot.clear()
                 elapsed = sample.elapsed_s - (self._it_t0 if self._it_t0 is not None else sample.elapsed_s)
                 self.voltage_plot.append(elapsed, sample.voltage1_v, redraw=False); self.it_plot.append(elapsed, sample.current1_na, redraw=False)

@@ -170,6 +170,13 @@ def estimate_landings(dataset, config=RetractionConfig(), *, cancelled=lambda: F
             z = surface.matrix[:, surface.columns.index('z_um')]
             if np.isfinite(z).all() and np.ptp(z) <= config.z_tolerance_um*2:
                 end = float(surface.matrix[-1, surface.columns.index('elapsed_s')])
+                # Retraction begins after post-conditioning, not after the CV.
+                # Keep the electrochemical holds out of the constant-E test.
+                if 'measurement_phase' in group.rows.columns:
+                    m=group.rows.matrix; cols=group.rows.columns
+                    post=m[m[:,cols.index('measurement_phase')]==3]
+                    if len(post):
+                        end=max(end,float(post[-1,cols.index('elapsed_s')]))
                 # The deployed recorder converts the ±10 V ADC input using
                 # V/nA sensitivity. Do not infer a rail from the observed peak.
                 settings = dataset.metadata.get('settings', {})

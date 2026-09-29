@@ -61,6 +61,7 @@ class WECSPMDriver:
 
     supports_cv_rate_series = True
     supports_lsv = True
+    supports_conditioning = True
     supports_contact_snapshot = True
     supports_method_contact_snapshot = True
 
@@ -568,6 +569,15 @@ class WECSPMDriver:
             for offset in range(0, len(data), SAMPLE_WORDS)
         ]
         self._observe_contacts(samples)
+        from .conditioning import phase_code
+        for sample in samples:
+            if self._owner == 'approach-cv':
+                context = self.approach_context(sample.line_number)
+            elif self._owner == 'scan-hopping-cv':
+                _, context = self.scan_context(sample.line_number)
+            else:
+                _, context = self.method_context(sample.line_number)
+            sample.measurement_phase = phase_code(context)
         return samples
 
     def _discard_acquisition_words(self) -> None:
@@ -919,6 +929,7 @@ class WECSPMDriver:
         followup_count = hold_frame_count(params.settling_time_s) + int(params.retract_after)
         followup_count += (2 * len(params.cv_rates) + (len(params.cv_rates) - 1) * hold_frame_count(params.reset_settling_s)
                            if params.waveform == "LSV" else 1 + 3 * params.total_cv_cycles)
+        followup_count += params.conditioning_frames()
         if followup_count + 2 + int(params.feedback_mode == "baseline_relative") > 32767:
             raise ValueError("Reduce the rate count or settling time: the program exceeds the verified line-tag span.")
         if params.scan_rates_v_s is not None or params.waveform == "LSV":
@@ -1046,7 +1057,7 @@ class WECSPMDriver:
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
         retract_index = len(compiled.waypoints) - 1 if params.retract_after else None
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
-        settle_count = hold_frame_count(params.settling_time_s)
+        settle_count = next((i for i,c in enumerate(contexts) if c.startswith('cv')),len(contexts))
         self._approach_history.append((self._program_baseline, contexts))
         self._sequence = _Sequence(self._program_baseline, len(compiled.waypoints), settle_count,
                                    retract_index - 1 if retract_index is not None else len(compiled.waypoints) - 1,
@@ -1157,6 +1168,9 @@ class WECSPMDriver:
             return {"stage": "complete", "detail": "FPGA approach, CV, and retract complete", "progress": 1.0}
         index = min(max(0, completed), sequence.total - 1)
         progress = min(0.99, completed / max(1, sequence.total))
+        context = self._approach_history[-1][1][index]
+        if context in {'pre_hold','post_hold'}:
+            return {'stage':'settling','detail':context.replace('_',' ').capitalize(),'progress':progress}
         if sequence.retract_index is not None and index >= sequence.retract_index:
             return {"stage": "retracting", "detail": "CV complete; retracting Z", "progress": progress}
         if index < sequence.cv_first:
@@ -1199,7 +1213,7 @@ class WECSPMDriver:
         baseline = int(self._read_register("LineNumber"))
         baseline_frames = int(params.feedback_mode == "baseline_relative")
         total = 1 + sum(4 + baseline_frames + 3 * params.for_point(i).cycles
-                        + hold_frame_count(params.settling_time_s)
+                        + hold_frame_count(params.settling_time_s) + params.for_point(i).conditioning_frames()
                         for i in range(params.execution_point_count))
         if baseline < 0 or baseline + total > 32767:
             raise ValueError("Scan line tags would exceed the verified I16 range. Reinitialize the target before scanning.")
@@ -1331,7 +1345,9 @@ class WECSPMDriver:
         if point + 1 < params.execution_point_count and not low_z <= contact_z <= high_z:
             contact_z = self._scan_last_approach_z.get(point, params.end_z_um)
         settle_plan = timed_hold_plan(params.settling_time_s)
-        plan = settle_plan + cyclic_voltammetry_plan(
+        pre, pre_labels = potential_step_plan(params.conditioning_steps('pre'))
+        post, post_labels = potential_step_plan(params.conditioning_steps('post'))
+        cv_plan = cyclic_voltammetry_plan(
             start_v=params.cv_start_v,
             vertex1_v=params.cv_vertex1_v,
             vertex2_v=params.cv_vertex2_v,
@@ -1343,13 +1359,16 @@ class WECSPMDriver:
             ),
             retract_rate_um_s=params.retract_rate_um_s,
         )
+        plan = settle_plan + pre + cv_plan[:-1] + post + cv_plan[-1:]
         compiled = self.compiler.compile(plan, current)
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
         settle_count = len(settle_plan)
         descriptors = (
             [(point, "settling")] * settle_count
-            + [(point, "cv")] * (len(compiled.waypoints) - settle_count - 1)
+            + [(point, label) for label in pre_labels]
+            + [(point, "cv")] * (len(cv_plan) - 1)
+            + [(point, label) for label in post_labels]
             + [(point, "retract")]
         )
         self._scan_sequence = _ScanSequence(self._program_baseline, descriptors)
@@ -1450,7 +1469,7 @@ class WECSPMDriver:
         index = self._sample_waypoint_index(current_line, sequence.baseline_line)
         if 0 <= index < len(sequence.descriptors):
             point_index, point_stage = sequence.descriptors[index]
-        stage = ("approaching" if point_stage == "approach" else "settling" if point_stage == "settling"
+        stage = ("approaching" if point_stage == "approach" else "settling" if point_stage in {"settling","pre_hold","post_hold"}
                  else "cv" if point_stage == "cv" else "retracting" if point_stage == "retract"
                  else "preposition" if self._scan_phase == "approach" else self._scan_phase)
         phase_fraction = min(0.9, completed / max(1, len(sequence.descriptors)))

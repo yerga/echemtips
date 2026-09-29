@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from .conditioning import conditioned, tick_conditioning, set_phase, phase_code
 
 from .backends import InstrumentBackend
 from .models import (
@@ -93,6 +94,7 @@ class ApproachCVExperiment:
 
     def start(self, params: ApproachCVParameters) -> None:
         """Validate and start either the FPGA sequence or host simulation."""
+        self._conditioning_pending = None
         clear_scene = getattr(self.backend, "clear_hopping_scene", None)
         if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
@@ -147,6 +149,7 @@ class ApproachCVExperiment:
         self.detail = f"Operator accepted contact at Z = {sample.z_um:.3f} um"
         self._begin_settling()
 
+    @conditioned('pre')
     def _begin_cv(self) -> None:
         p = self.params
         if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('sweep', p.cv_rates[0])
@@ -171,6 +174,16 @@ class ApproachCVExperiment:
         self._settle_deadline = self.backend.experiment_time() + self.params.settling_time_s
         self.state = ExperimentState.SETTLING
         self.detail = f"Contact confirmed; settling for {self.params.settling_time_s:g} s"
+
+    @conditioned('post')
+    def _finish_cv(self):
+        """Return only after the optional post-hold; retain its potential."""
+        p=self.params
+        if p.retract_after:
+            self.backend.move('Z',p.start_z_um,max(10.,p.approach_rate_um_s))
+            self.state,self.detail=ExperimentState.RETRACTING,'Measurement complete; retracting to start Z'
+        else:
+            self.state,self.detail=ExperimentState.COMPLETE,'Approach and measurement complete'
 
     def tag_cv_sample(self, sample: Sample) -> int:
         """Assign a rate-block ID only to samples acquired during series CV."""
@@ -206,6 +219,8 @@ class ApproachCVExperiment:
             self.progress = update.progress
             return ExperimentUpdate(self.state, self.detail, self.progress)
 
+        if tick_conditioning(self):
+            return ExperimentUpdate(self.state,self.detail,self.progress)
         now = self.backend.experiment_time()
         dt = min(now - self._last_tick, 0.25)
         self._last_tick = now
@@ -248,6 +263,7 @@ class ApproachCVExperiment:
             if self._lsv_reset_pending:
                 self._lsv_reset_pending = False
                 self.backend.set_cv_voltage(p.cv_start_v, self._segment_index)
+                set_phase(self.backend,2)
                 self.state = ExperimentState.CV
             else:
                 self._begin_cv()
@@ -276,18 +292,15 @@ class ApproachCVExperiment:
                 self._cv_voltage = target
                 self._segment_index += 1
                 if self._segment_index >= len(self._segments):
-                    if p.retract_after:
-                        self.backend.move("Z", p.start_z_um, max(10.0, p.approach_rate_um_s))
-                        self.state = ExperimentState.RETRACTING
-                        self.detail = "CV complete; retracting to start Z"
-                    else:
-                        self.state = ExperimentState.COMPLETE
-                        self.detail = "Approach and CV complete"
-                    self.progress = 0.96 if p.retract_after else 1.0
+                    self.backend.set_voltage(1,self._cv_voltage)
+                    self._finish_cv()
+                    self.progress = 0.96 if self.active else 1.0
+                    return ExperimentUpdate(self.state,self.detail,self.progress)
                 else:
                     self.detail = p.cycle_description(self._segment_index // (1 if p.waveform == "LSV" else 3))
                     if p.waveform == "LSV":
                         self.backend.set_voltage(1, p.cv_start_v)
+                        set_phase(self.backend,0)
                         self._cv_voltage = p.cv_start_v
                         self._lsv_reset_pending = True
                         self._settle_deadline = now + p.reset_settling_s
@@ -361,6 +374,7 @@ class ScanHoppingCVExperiment:
 
     def start(self, params: ScanHoppingCVParameters) -> None:
         """Validate/reset maps and start hardware or simulated hopping CV."""
+        self._conditioning_pending = None
         clear_scene = getattr(self.backend, "clear_hopping_scene", None)
         if clear_scene is not None: clear_scene()
         errors = params.validate(self.settings)
@@ -442,6 +456,7 @@ class ScanHoppingCVExperiment:
         self.state = ExperimentState.PREPOSITION
         self.detail = f"Point {self.point_index + 1}/{p.execution_point_count} · positioning ({row + 1}, {column + 1})"
 
+    @conditioned('pre')
     def _begin_simulated_cv(self) -> None:
         p = self.params.for_point(self.point_index)
         if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('sweep', p.cv_scan_rate_v_s)
@@ -491,6 +506,7 @@ class ScanHoppingCVExperiment:
     def _tick_simulated(self, sample: Sample) -> None:
         p = self.params.for_point(self.point_index)
         self._tag(sample, self.point_index)
+        if tick_conditioning(self): return
         row, column, x, y = self._grid[self.point_index]
         tolerance = 0.08
         if self.state == ExperimentState.PREPOSITION and self._positioning_z:
@@ -553,12 +569,9 @@ class ScanHoppingCVExperiment:
                 self._segment_index += 1
                 if self._segment_index >= len(self._segments):
                     self._finish_point_metrics(self.point_index)
-                    contact_z = self.contact_z[self._point_key()]
-                    self._retract_target_z = p.scan_retract_z(self.point_index, contact_z, self.settings.z_range_um)
-                    self.backend.move("Z", self._retract_target_z, p.retract_rate_um_s)
-                    self.state = ExperimentState.RETRACTING
-                    self.detail = ("Returning toward initial Z" if self.point_index + 1 == p.execution_point_count
-                                   else f"Point {self.point_index + 1}/{p.execution_point_count} · retracting")
+                    self.backend.set_voltage(1,self._cv_voltage)
+                    self._finish_simulated_cv()
+                    return
                 else:
                     self.backend.set_voltage(1, self._cv_voltage)
             else:
@@ -585,6 +598,14 @@ class ScanHoppingCVExperiment:
         if self.active:
             self.progress = min(0.99, self.point_index / max(1, p.execution_point_count))
 
+    @conditioned('post')
+    def _finish_simulated_cv(self):
+        """Withdraw at the final program potential, after optional conditioning."""
+        p=self.params.for_point(self.point_index)
+        self._retract_target_z=p.scan_retract_z(self.point_index,self.contact_z[self._point_key()],self.settings.z_range_um)
+        self.backend.move('Z',self._retract_target_z,p.retract_rate_um_s)
+        self.state,self.detail=ExperimentState.RETRACTING,'Measurement complete; retracting'
+
     def _ingest_hardware_sample(self, sample: Sample) -> None:
         point, stage = self.backend.hardware_scan_context(sample.line_number)
         if not 0 <= point < len(self._grid):
@@ -606,7 +627,7 @@ class ScanHoppingCVExperiment:
             )
             if hit:
                 self._hardware_contact_seen.add(point)
-        elif stage in {"settling", "cv"}:
+        elif stage in {"settling", "cv", "pre_hold", "post_hold"}:
             early_stop = self._last_approach_z is not None and abs(self._last_approach_z - self.params.end_z_um) >= 0.08
             if self._hardware_stage == "approach" and self._last_approach_z is not None and (
                 point in self._hardware_contact_seen or early_stop
@@ -961,6 +982,7 @@ class ApproachITExperiment:
         if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('step')
         potential, duration, label = self._steps[0]
         self.backend.set_voltage(1, potential)
+        set_phase(self.backend,phase_code(label))
         self._step_index, self.it_label = 0, label
         self._step_deadline = self.backend.experiment_time() + duration
         self.state, self.detail = ExperimentState.IT, f"I-t segment 1/{len(self._steps)} · {label}"
@@ -1011,6 +1033,7 @@ class ApproachITExperiment:
             if self.state == ExperimentState.IT and self.backend.experiment_time() >= self._step_deadline:
                 self._step_index += 1
                 if self._step_index >= len(self._steps):
+                    set_phase(self.backend,0)
                     if p.retract_after:
                         self.backend.move("Z", p.start_z_um, p.retract_rate_um_s)
                         self.state, self.detail = ExperimentState.RETRACTING, "I-t complete; retracting"
@@ -1019,6 +1042,7 @@ class ApproachITExperiment:
                 else:
                     potential, duration, label = self._steps[self._step_index]
                     self.backend.set_voltage(1, potential)
+                    set_phase(self.backend,phase_code(label))
                     self.it_label = label
                     self._step_deadline = self.backend.experiment_time() + duration
                     self.detail = f"I-t segment {self._step_index + 1}/{len(self._steps)} · {label}"
@@ -1126,6 +1150,7 @@ class ScanHoppingITExperiment:
         if hasattr(self.backend, 'simulated_waveform'): self.backend.simulated_waveform('step')
         potential, duration, label = self._steps[0]
         self.backend.stop_motion(); self.backend.set_voltage(1, potential)
+        set_phase(self.backend,phase_code(label))
         self._step_index, self.it_label = 0, label
         self._step_deadline = self.backend.experiment_time() + duration
         self.state, self.detail = ExperimentState.IT, f"Point {self.point_index + 1}/{self.params.execution_point_count} · I-t {label}"
@@ -1222,6 +1247,7 @@ class ScanHoppingITExperiment:
                 if self.backend.experiment_time() >= self._step_deadline:
                     self._step_index += 1
                     if self._step_index >= len(self._steps):
+                        set_phase(self.backend,0)
                         self._finish_pulse_map(self.point_index)
                         contact_z = self.contact_z[self._key(self.point_index)]
                         self._retract_target_z = p.scan_retract_z(self.point_index, contact_z, self.settings.z_range_um)
@@ -1232,6 +1258,7 @@ class ScanHoppingITExperiment:
                     else:
                         potential, duration, label = self._steps[self._step_index]
                         self.backend.set_voltage(1, potential); self.it_label = label
+                        set_phase(self.backend,phase_code(label))
                         self._step_deadline = self.backend.experiment_time() + duration
             retract_target = p.start_z_um if self.it_label == "no-contact" else self._retract_target_z
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < .08:

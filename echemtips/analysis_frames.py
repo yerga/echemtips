@@ -73,7 +73,11 @@ def it_surface_rows(dataset, selection):
     except (KeyError,TypeError,ValueError): return None
     if not np.isfinite(levels+holds).all() or not 1<=cycles<=10000: return None
     if min(holds)<0 or holds[0]<=0 or holds[1]<=0 or abs(levels[0]-levels[1])<.005: return None
-    rows=selection.rows; m,c=rows.matrix,rows.columns
+    rows=selection.rows
+    if 'measurement_phase' in rows.columns:
+        from .analysis_core import NumericRows
+        rows=NumericRows(rows.columns,rows.matrix[rows.matrix[:,rows.columns.index('measurement_phase')]==2])
+    m,c=rows.matrix,rows.columns
     t=m[:,c.index("elapsed_s")]; e=m[:,c.index("voltage1_v")]
     if len(t)<3 or not np.isfinite(t).all() or np.any(np.diff(t)<=0): return None
     dt=float(np.median(np.diff(t))); total=sum(holds)*cycles

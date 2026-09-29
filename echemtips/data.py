@@ -144,6 +144,9 @@ class DataRecorder:
                 "software": self._software_metadata(),
                 "parameters": self._json_value(parameters),
             }
+            if 'measurement_phase' in self._csv_fieldnames:
+                from .conditioning import PHASES
+                self._metadata['measurement_phases'] = PHASES
             if isinstance(parameters, ApproachCVParameters) and parameters.scan_rates_v_s is not None:
                 self._metadata["acquisition_rate_tags"] = True
             scan_grid = self._scan_grid_metadata(parameters)
@@ -271,6 +274,9 @@ class DataRecorder:
         }
         if isinstance(parameters, ApproachCVParameters) and parameters.scan_rates_v_s is not None:
             metadata["acquisition_rate_tags"] = True
+        if 'measurement_phase' in fieldnames:
+            from .conditioning import PHASES
+            metadata['measurement_phases'] = PHASES
         scan_grid = self._scan_grid_metadata(parameters)
         if scan_grid is not None:
             metadata["scan_grid"] = self._scan_grid_metadata(parameters, status)
@@ -388,6 +394,8 @@ class DataRecorder:
     @classmethod
     def _fields_for_parameters(cls, parameters: Any) -> tuple[str, ...]:
         omitted = set(cls._PER_SAMPLE_OMISSIONS)
+        if not (getattr(parameters,'pre_hold_enabled',False) or getattr(parameters,'post_hold_enabled',False)):
+            omitted.add('measurement_phase')
         if not isinstance(parameters, ApproachCVParameters) or parameters.scan_rates_v_s is None:
             omitted.add("cv_rate_index")
         if not isinstance(parameters, (ScanHoppingCVParameters, ScanHoppingITParameters)) and not hasattr(parameters, "attempts"):

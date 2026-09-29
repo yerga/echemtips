@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 from typing import Any
+from .conditioning import ConditioningParameters, HOLD_FIELDS
 
 
 def _default_bitfile() -> str:
@@ -274,6 +275,7 @@ class Sample:
     commanded_y_um: float = math.nan
     commanded_z_um: float = math.nan
     cv_rate_index: int = -1
+    measurement_phase: int = 0
 
     def as_row(self) -> dict[str, float | int]:
         """Return every runtime field as a flat mapping."""
@@ -281,7 +283,7 @@ class Sample:
 
 
 @dataclass(slots=True)
-class ApproachCVParameters:
+class ApproachCVParameters(ConditioningParameters):
     """Motion, contact, CV, and optional preposition values for Approach + CV."""
     start_z_um: float = 10.0
     end_z_um: float = 90.0
@@ -332,7 +334,7 @@ class ApproachCVParameters:
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate approach, contact, waveform, and hardware representability."""
-        errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_conditioning(settings)
         if not math.isfinite(self.start_z_um) or not 0 <= self.start_z_um <= settings.z_range_um:
             errors.append("Start Z is outside the configured Z range.")
         if not math.isfinite(self.end_z_um) or not 0 <= self.end_z_um <= settings.z_range_um:
@@ -472,7 +474,7 @@ class ApproachParameters:
 
 
 @dataclass(slots=True)
-class ApproachITParameters(ApproachParameters):
+class ApproachITParameters(ApproachParameters, ConditioningParameters):
     """Approach parameters extended with an initial/pulse/return I–t program."""
     initial_potential_v: float = -0.1
     initial_hold_s: float = 0.25
@@ -491,11 +493,11 @@ class ApproachITParameters(ApproachParameters):
                 (self.step_potential_v, self.step_hold_s, "pulse"),
                 (self.return_potential_v, self.return_hold_s, "return"),
             ))
-        return steps
+        return self.conditioning_steps('pre') + steps + self.conditioning_steps('post')
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate the approach and every potential/hold in the I–t program."""
-        errors = ApproachParameters.validate(self, settings)
+        errors = ApproachParameters.validate(self, settings) + self.validate_conditioning(settings)
         if not isinstance(self.cycles, int) or not 1 <= self.cycles <= 10_000:
             errors.append("IT cycles must be between 1 and 10,000.")
         for name, potential, duration in (
@@ -624,7 +626,7 @@ class BoundedScanRetraction:
 
 
 @dataclass(slots=True)
-class ScanHoppingCVParameters(BoundedScanRetraction):
+class ScanHoppingCVParameters(BoundedScanRetraction, ConditioningParameters):
     """Physical grid, hopping motion, contact, and per-pixel CV configuration."""
     recipes: list[dict[str, Any]] = field(default_factory=list)
     recipe_assignment: list[int] = field(default_factory=list)
@@ -734,7 +736,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
         ) / self.cv_scan_rate_v_s
         if self.waveform == "LSV":
             cv_per_point = abs(self.cv_vertex1_v - self.cv_start_v) / self.cv_scan_rate_v_s
-        return lateral + repeated_approaches + retracts + self.execution_point_count * (self.settling_time_s + cv_per_point)
+        return lateral + repeated_approaches + retracts + self.execution_point_count * (self.settling_time_s + cv_per_point + self.conditioning_duration())
 
     @staticmethod
     def _axis_values(start: float, end: float, count: int) -> list[float]:
@@ -759,7 +761,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
         if self.recipes or self.recipe_assignment:
             from .combinatorial import validate_recipes
             return validate_recipes(self, settings)
-        errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_conditioning(settings)
         for name, low, high, limit in (
             ("X", self.x_start_um, self.x_end_um, settings.x_range_um),
             ("Y", self.y_start_um, self.y_end_um, settings.y_range_um),
@@ -809,7 +811,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
             errors.append("Map potential must lie inside the LSV sweep range.")
         waypoints = 1 + self.execution_point_count * (
             4 + int(self.feedback_mode == "baseline_relative")
-            + 3 * self.cycles + hold_frame_count(self.settling_time_s)
+            + 3 * self.cycles + hold_frame_count(self.settling_time_s) + (self.conditioning_frames() if not errors else 0)
         )
         if settings.mode == "NI FPGA" and waypoints > 32767:
             errors.append(
@@ -827,7 +829,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction):
 
 
 @dataclass(slots=True)
-class ScanHoppingITParameters(BoundedScanRetraction):
+class ScanHoppingITParameters(BoundedScanRetraction, ConditioningParameters):
     """Physical grid, hopping motion, contact, and per-pixel I–t configuration."""
     recipes: list[dict[str, Any]] = field(default_factory=list)
     recipe_assignment: list[int] = field(default_factory=list)
@@ -949,7 +951,7 @@ class ScanHoppingITParameters(BoundedScanRetraction):
                 (self.step_potential_v, self.step_hold_s, "pulse"),
                 (self.return_potential_v, self.return_hold_s, "return"),
             ))
-        return steps
+        return self.conditioning_steps('pre') + steps + self.conditioning_steps('post')
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate geometry, motion, contact, I–t, retraction, and tag limits."""
@@ -966,6 +968,7 @@ class ScanHoppingITParameters(BoundedScanRetraction):
             step_potential_v=self.step_potential_v, step_hold_s=self.step_hold_s,
             return_potential_v=self.return_potential_v, return_hold_s=self.return_hold_s,
             cycles=self.cycles,
+            **{key:getattr(self,key) for key in HOLD_FIELDS},
         )
         errors = approach.validate(settings)
         for name, low, high, limit in (
@@ -984,7 +987,7 @@ class ScanHoppingITParameters(BoundedScanRetraction):
             errors.append("Raster extra line retract must be finite and non-negative.")
         if not math.isfinite(self.footprint_diameter_um) or self.footprint_diameter_um <= 0:
             errors.append("Meniscus footprint diameter must be finite and positive.")
-        hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps())
+        hold_frames = sum(max(1, math.ceil(duration * 1_000_000 / 32767)) for _potential, duration, _label in self.it_steps()) if not errors else 0
         total_tags = 1 + self.execution_point_count * (
             3 + int(self.feedback_mode == "baseline_relative")
             + hold_frames + hold_frame_count(self.settling_time_s)
