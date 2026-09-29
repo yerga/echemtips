@@ -283,6 +283,9 @@ class SimulationBackend(InstrumentBackend):
         self._cell = SimulatedCell()
         self._standalone_cell = False
         self._sim_wet = False
+        # Illustrative meniscus extension, not a prediction of real geometry.
+        # At 5 µm/s this gives ample attached/detached samples for diagnostics.
+        self.simulated_detachment_distance_um = 5.0
 
     @_synchronized_io
     def simulated_waveform(self, mode: str, rate: float = .25, *, standalone: bool = False) -> None:
@@ -430,7 +433,7 @@ class SimulationBackend(InstrumentBackend):
         z = self._positions["Z"]
         v = self.settings.polarity_factor * self._voltage[1]
         surface_z = self.surface_z_at(self._positions["X"], self._positions["Y"])
-        if z < surface_z-.2: self._sim_wet = False
+        if z < surface_z-self.simulated_detachment_distance_um: self._sim_wet = False
         elif z >= surface_z: self._sim_wet = True
         wet, activity = self._sim_wet or self._standalone_cell, 1.
         if getattr(self, "adaptive_scene", False):
@@ -445,7 +448,7 @@ class SimulationBackend(InstrumentBackend):
                            or self._targets["Z"] == end)
             # Latch meniscus contact until retract: stopping Z on the transient
             # must not immediately turn the cell back into an open circuit.
-            if pixel < 0 or failed or depth < -.2 or self._adaptive_wet_pixel != pixel:
+            if pixel < 0 or failed or depth < -self.simulated_detachment_distance_um or self._adaptive_wet_pixel != pixel:
                 self._adaptive_wet_pixel = None
             if pixel >= 0 and not failed and depth >= 0 and approaching and self._adaptive_wet_pixel is None:
                 self._adaptive_wet_pixel = pixel

@@ -54,6 +54,8 @@ class CombinatorialContactTests(unittest.TestCase):
             backend.stop_motion(); now[0]+=1
             self.assertGreater(abs(backend.read_sample().current1_na),.005)
             backend._positions['Z']=backend._targets['Z']=surface-1
+            self.assertGreater(abs(backend.read_sample().current1_na),.005)
+            backend._positions['Z']=backend._targets['Z']=surface-backend.simulated_detachment_distance_um-.1
             self.assertLess(abs(backend.read_sample().current1_na),.005)
             backend.begin_hopping_point(1); backend.adaptive_failure_pixel=1
             backend._positions['Z']=surface; backend._targets['Z']=p.end_z_um

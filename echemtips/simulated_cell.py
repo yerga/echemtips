@@ -39,7 +39,9 @@ class SimulatedCell:
             # Diffusion-like sqrt(scan-rate) peak scaling, separated branches.
             peak_e = .18 if self.direction>0 else .04
             peak = self.direction * .16 * math.sqrt(max(.001,self.rate)/.25) * math.exp(-.5*((e-peak_e)/.075)**2)
-            return charging + activity*(peak + .008*self.direction*self.rate + .002*(e-.1))
+            # Small conductive background remains at a nonzero held potential,
+            # allowing a wet-to-dry transition to be resolved during withdrawal.
+            return charging + activity*(peak + .008*self.direction*self.rate + .04*e)
         age = max(0,t-self.step_t)
         step = self.step_delta * (.16*math.exp(-age/.06) + .035/math.sqrt(1+age/.025))
         return charging + activity*(.012 + .008*math.tanh((e-.1)*5) + step)

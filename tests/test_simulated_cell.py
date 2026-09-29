@@ -8,6 +8,57 @@ from echemtips.models import AppSettings
 
 
 class CellTests(unittest.TestCase):
+    def test_completed_scan_supports_footprint_analysis(self):
+        from dataclasses import asdict
+        from pathlib import Path
+        from echemtips.experiments import ScanHoppingCVExperiment, ExperimentState
+        from echemtips.models import ScanHoppingCVParameters
+        from echemtips.analysis_core import AnalysisDataset, NumericRows
+        from echemtips.analysis_area import estimate_landings
+        clock = [1000.]
+        columns = ('elapsed_s','z_um','voltage1_v','current1_na','scan_pixel','x_um','y_um')
+        values = []
+        with patch('time.monotonic',side_effect=lambda:clock[0]):
+            b = SimulationBackend(AppSettings()); b.connect()
+            e = ScanHoppingCVExperiment(b,b.settings)
+            p = ScanHoppingCVParameters(x_points=2,y_points=2,marker_enabled=False,retract_rate_um_s=5.)
+            e.start(p)
+            for _ in range(60000):
+                clock[0] += .01
+                sample = b.read_sample(); e.tick_samples([sample])
+                values.append([getattr(sample,c) for c in columns])
+                if not e.active: break
+        self.assertEqual(e.state,ExperimentState.COMPLETE,e.detail)
+        data = AnalysisDataset(Path('simulation.csv'),columns,NumericRows(columns,np.array(values)),
+                               {'parameters':asdict(p)})
+        results = estimate_landings(data)
+        self.assertEqual(len(results),4)
+        for result in results:
+            self.assertEqual(result['status'],'estimated',result)
+            self.assertAlmostEqual(result['diameter_um'],5.,delta=.3)
+
+    def test_backend_retraction_has_resolvable_known_detachment(self):
+        from echemtips.analysis_area import detect_retraction
+        from echemtips.analysis_core import NumericRows
+        clock = [1000.]
+        with patch('time.monotonic', side_effect=lambda: clock[0]):
+            b = SimulationBackend(AppSettings()); b.connect()
+            b.surface_z_at = lambda x,y: 50.
+            b._positions['Z'] = b._targets['Z'] = 50.
+            b.simulated_waveform('sweep'); b.set_voltage(1,-.2)
+            b.read_sample(); clock[0] += 2.
+            surface = b.read_sample()
+            b.move('Z',40.,5.)
+            values = []
+            for _ in range(240):
+                clock[0] += .01
+                s = b.read_sample()
+                values.append([s.elapsed_s,s.z_um,s.voltage1_v,s.current1_na])
+            rows = NumericRows(('elapsed_s','z_um','voltage1_v','current1_na'),np.array(values))
+            result = detect_retraction(rows,surface.elapsed_s,50.)
+            self.assertEqual(result['status'],'estimated',result)
+            self.assertAlmostEqual(result['diameter_um'],b.simulated_detachment_distance_um,delta=.15)
+
     def test_contact_spike_and_retraction(self):
         cell=SimulatedCell()
         self.assertEqual(cell.current(0,.1,False),0)

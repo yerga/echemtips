@@ -65,6 +65,8 @@ class AdaptiveTests(unittest.TestCase):
         self.assertGreater(abs(settled.current1_na),p.feedback_threshold_na)
         self.assertLess(abs(settled.current1_na),abs(contact.current1_na))
         backend._positions['Z']=backend._targets['Z']=surface-1
+        self.assertGreater(abs(backend.read_sample().current1_na),p.feedback_threshold_na)
+        backend._positions['Z']=backend._targets['Z']=surface-backend.simulated_detachment_distance_um-.1
         self.assertLess(abs(backend.read_sample().current1_na),p.feedback_threshold_na)
         self.assertEqual(p.feedback_threshold_na,.005)
 

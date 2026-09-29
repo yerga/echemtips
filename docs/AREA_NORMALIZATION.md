@@ -31,6 +31,9 @@ landings remain gaps. Raw current channels remain available alongside density.
 This first implementation requires `scan_pixel` identifiers and recognizable
 stationary surface-program data for automatic per-landing detection. It supports
 multiple CV cycles and uses the last complete surface cycle before retraction.
+If waveform extraction includes approach motion (possible with LSV start-level
+noise), the detector attempts to recover the stationary sweep instead. It still
+requires stable measured Z; a waveform label alone is not evidence of contact.
 Incomplete or ambiguous programs, untagged standalone recordings, and recordings
 with too few retraction samples cannot provide automatic diameter estimates.
 Orientation-marker landings are excluded by the usual analysis selectors.
@@ -48,6 +51,10 @@ show a substantial current departure from that baseline followed by a sharp,
 sustained return into the noise band. Both current signs and nonzero baseline
 offsets are supported. Current recovery, unstable baselines, Z reversals,
 potential changes, invalid timestamps and insufficient data are rejected.
+For NI FPGA recordings with saved amplifier sensitivity, current within 0.1%
+of the ADC input rail (±10 V divided by V/nA sensitivity) is rejected as possible
+saturation. This cannot detect clipping below the ADC rail inside an amplifier.
+Rejection reasons are shown in the results table and exported diagnostics.
 The detector settings are adjustable, but loosening them does not improve the
 physical accuracy of the area model.
 
@@ -119,6 +126,16 @@ of the paper's complete protocol.
   activity, roughness, transport limitations, changing chemistry or active area.
 
 ## Acceptance checklist
+
+For a simulation check, use a hopping CV with a **10 µm retract distance** and
+**5 µm/s retract speed**, ending at a nonzero potential (for example −0.2 V).
+The illustrative simulator now keeps a meniscus attached for **5 µm** of withdrawal
+before returning to the dry baseline. With sufficiently frequent samples, the
+d=h estimate should be close to 5 µm, within its sampling bracket. This is a
+synthetic test distance, not a pipette-size prediction. Old simulation files are
+unchanged and may remain unresolved. At 50 µm/s a 10 µm retract lasts only 0.2 s;
+slow acquisition can legitimately produce too few samples for the default
+seven-sample persistence window (at least 28 retraction samples are required).
 
 1. Inspect a clear positive-current and negative-current break; verify the marked
    transition and plausible Z displacement.
