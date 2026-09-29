@@ -769,6 +769,10 @@ class WatchPage(BasePage):
         try:
             if self.app.recorder.active:
                 raise BackendError("A recording is already active.")
+            from .experiment_details import request_details
+            details = request_details(self.app)
+            if details is None: return
+            self.app.recorder.operator_details = details
             self.app.recorder.start("Watch Current", self.app.settings)
             self.set_live_view(True)
             self.app._sync_action_states()
@@ -912,6 +916,10 @@ class WatchPositionPage(BasePage):
         try:
             if self.app.recorder.active:
                 raise BackendError("A recording is already active.")
+            from .experiment_details import request_details
+            details = request_details(self.app)
+            if details is None: return
+            self.app.recorder.operator_details = details
             self.app.recorder.start("Watch Position", self.app.settings)
             self.set_live_view(True)
             self.app._sync_action_states()
@@ -1946,6 +1954,8 @@ class SettingsPage(BasePage):
         data_row = QtWidgets.QWidget(); data_layout = _hbox(data_row); self.save_directory = Field("Data folder", app.settings.save_directory); data_layout.addWidget(self.save_directory, 1); data_layout.addWidget(button("Browse…", self.browse_data_folder), 0, QtCore.Qt.AlignmentFlag.AlignBottom)
         self.auto_save = Check("Automatically save completed experiments", app.settings.auto_save)
         sv.addWidget(data_row); sv.addWidget(self.auto_save)
+        from .experiment_details import request_details
+        sv.addWidget(button("Experiment details defaults…", lambda: request_details(app, defaults=True)))
         display = Card("Display", help_text="Plot buffers are decimated for responsive viewing; recordings retain every acquired sample.")
         dg = _grid(display.body)
         self.display_max_points = add_field(dg, Field("Non-rolling display buffer", str(app.settings.display_max_points), "points/plot"), 0, 0)

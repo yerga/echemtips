@@ -39,7 +39,7 @@ class AdaptiveUITests(unittest.TestCase):
             window.settings.save_directory=folder
             window.backend.connect(); window._set_connection_ui(True)
             page.confirm.set(True)
-            with patch.object(window,'show_error',side_effect=AssertionError): page.start()
+            with patch.object(window,'show_error',side_effect=AssertionError), patch('echemtips.experiment_details.request_details', return_value={}): page.start()
             self.assertTrue(window.recorder.active)
             self.assertEqual(page.experiment.phase,'approval')
             self.assertFalse(window.next_waypoint_button.isEnabled())
@@ -50,7 +50,7 @@ class AdaptiveUITests(unittest.TestCase):
             it=window.pages['Adaptive hopping + I-t']
             window.show_page(it.recording_name)
             it.confirm.set(True)
-            with patch.object(window,'show_error',side_effect=AssertionError): it.start()
+            with patch.object(window,'show_error',side_effect=AssertionError), patch('echemtips.experiment_details.request_details', return_value={}): it.start()
             self.assertTrue(window.experiments['adaptive_it'].active)
             self.assertFalse(window.next_waypoint_button.isEnabled())
             self.assertEqual(window.recorder.name,it.recording_name)

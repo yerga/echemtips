@@ -70,6 +70,8 @@ class DataRecorder:
         self._writes_since_sync = 0
         self._elapsed_origin_s: float | None = None
         self._csv_fieldnames = self._fields_for_parameters(None)
+        self.operator_details: dict[str, str] = {}
+        self._operator_snapshot: dict[str, str] = {}
 
     @property
     def active(self) -> bool:
@@ -97,6 +99,7 @@ class DataRecorder:
         if self.active:
             self.finish(status="aborted")
         self.samples.clear()
+        self._operator_snapshot = dict(self.operator_details)
         self.name = name
         self.started_at = datetime.now()
         self._settings = settings
@@ -135,7 +138,10 @@ class DataRecorder:
                 "recording_schema_version": 2,
                 "csv_columns": list(self._csv_fieldnames),
                 "csv_numeric_formats": dict(self.CSV_NUMERIC_FORMATS),
-                "settings": self._json_value(settings),
+                "settings": self._reproduction_settings(settings),
+                "operator_metadata": dict(self._operator_snapshot),
+                "operator_metadata_source": "operator-entered; not instrument-verified",
+                "software": self._software_metadata(),
                 "parameters": self._json_value(parameters),
             }
             if isinstance(parameters, ApproachCVParameters) and parameters.scan_rates_v_s is not None:
@@ -220,7 +226,7 @@ class DataRecorder:
         if self._csv_writer is not None:
             if settings is not None:
                 self._settings = settings
-                self._metadata["settings"] = self._json_value(settings)
+                # Retain acquisition settings captured at start, not later UI edits.
             if parameters is not None:
                 self._parameters = parameters
                 self._metadata["parameters"] = self._json_value(parameters)
@@ -257,7 +263,10 @@ class DataRecorder:
             "recording_schema_version": 2,
             "csv_columns": list(fieldnames),
             "csv_numeric_formats": dict(self.CSV_NUMERIC_FORMATS),
-            "settings": self._json_value(settings),
+            "settings": self._reproduction_settings(settings),
+            "operator_metadata": dict(self._operator_snapshot),
+            "operator_metadata_source": "operator-entered; not instrument-verified",
+            "software": self._software_metadata(),
             "parameters": self._json_value(parameters),
         }
         if isinstance(parameters, ApproachCVParameters) and parameters.scan_rates_v_s is not None:
@@ -272,6 +281,26 @@ class DataRecorder:
             metadata['orientation_diagram'] = diagram.name
         csv_path.with_suffix(".json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         return csv_path
+
+    @staticmethod
+    def _reproduction_settings(settings):
+        """Keep acquisition/calibration settings without presentation preferences."""
+        keys = ('mode', 'resource', 'bitfile', 'hardware_transport',
+                'x_range_um', 'y_range_um', 'z_range_um',
+                'x_bipolar', 'y_bipolar', 'z_bipolar', 'polarity_convention',
+                'command_voltage_ratio', 'current1_v_per_na', 'current2_v_per_na',
+                'sample_time_us', 'samples_per_point', 'hardware_ready_timeout_s',
+                'hardware_watchdog_margin_s')
+        return {**{key: getattr(settings, key) for key in keys},
+                'effective_period_s': settings.effective_period_s}
+
+    @staticmethod
+    def _software_metadata():
+        """Identify the acquisition application and runtime without host identifiers."""
+        import platform
+        from . import __version__
+        return {'name': 'eChemTips', 'version': __version__,
+                'python': platform.python_version(), 'platform': platform.system()}
 
     def _finish_stream(self, status: str) -> None:
         self._metadata["sample_count"] = self._sample_count

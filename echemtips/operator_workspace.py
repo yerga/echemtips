@@ -123,9 +123,8 @@ class OperatorWorkspace(QtCore.QObject):
         Q.QMessageBox.information(self.app, 'Latest position snapshot', '\n'.join(lines) + '\n\nA difference is not automatically a fault; check calibration and settling. This is a snapshot, not a live control.')
 
     def review(self, page, params):
-        """Require an explicit output/recording review for real-device starts."""
+        """Review optional annotations and hardware safety in one start dialog."""
         if self.recovery_required: raise ValueError(self.reason())
-        if self.app.settings.mode == 'Simulation': return True
         from dataclasses import asdict
         values = asdict(params)
         summary = f'{page.recording_name}\n{self.app.backend.label} · {self.app.settings.polarity_convention}\nData folder: {self.app.settings.save_directory}\n'
@@ -136,10 +135,10 @@ class OperatorWorkspace(QtCore.QObject):
             if key in values: summary += f"\n{caption}: {values[key]}"
         if 'feedback_threshold_na' in values:
             summary += f"\nContact threshold: {values['feedback_threshold_na'] * 1000:g} pA"
-        summary += '\n\nFull parameter snapshot is available under Show Details.'
-        box = Q.QMessageBox(Q.QMessageBox.Icon.Warning, 'Review hardware experiment', summary, parent=self.app)
-        box.setInformativeText('Confirm the wiring, safe travel path and polarity before starting. Emergency stop remains available in the main window.')
-        box.setDetailedText(json.dumps(values, indent=2, default=str))
-        box.setStandardButtons(Q.QMessageBox.StandardButton.Ok | Q.QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(Q.QMessageBox.StandardButton.Cancel)
-        return box.exec() == Q.QMessageBox.StandardButton.Ok
+        if self.app.settings.mode != 'Simulation':
+            summary += '\n\nConfirm wiring, safe travel path and polarity before starting.'
+        from .experiment_details import request_details
+        details = request_details(self.app, summary, json.dumps(values, indent=2, default=str))
+        if details is None: return False
+        self.app.recorder.operator_details = details
+        return True
