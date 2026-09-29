@@ -4,6 +4,8 @@ os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
+from types import SimpleNamespace
 import numpy as np
 from PySide6 import QtWidgets as Q
 from echemtips.analysis_area import estimate_landings, normalize_dataset, RetractionConfig
@@ -41,6 +43,26 @@ class AreaWorkflowTests(unittest.TestCase):
         d.metadata['scan_grid']['pixels'][0]['contact_detected']=False
         self.assertEqual(estimate_landings(d)[0]['status'],'unavailable')
 
+    def test_motion_contaminated_cycle_uses_stationary_fallback(self):
+        d = scan_fixture()
+        # Reproduce an extracted LSV interval that incorrectly includes motion.
+        contaminated = SimpleNamespace(rows=d.rows)
+        from echemtips.analysis_surface_z import hop_dataset
+        surfaces = [extract_cv_cycles(hop_dataset(d,g))[-1].rows for g in hop_selections(d)]
+        with patch('echemtips.analysis_core.extract_cv_cycles', return_value=[contaminated]), \
+             patch('echemtips.analysis_surface_z.stationary_sweep_rows', side_effect=surfaces) as fallback:
+            results = estimate_landings(d)
+        self.assertEqual(fallback.call_count, 3)
+        self.assertEqual([r['status'] for r in results], ['estimated','estimated','unavailable'])
+
+    def test_recorded_sensitivity_supplies_saturation_limit(self):
+        d = scan_fixture()
+        d.metadata['settings'] = dict(mode='NI FPGA',current1_v_per_na=.5)
+        with patch('echemtips.analysis_area.detect_retraction', return_value={}) as detector:
+            estimate_landings(d)
+        self.assertEqual(detector.call_count, 3)
+        self.assertTrue(all(c.kwargs['current_limit_na']==20. for c in detector.call_args_list))
+
     def test_worker_raw_detection_smoothed_density_and_cycles(self):
         d=scan_fixture(); original=d.rows.matrix.copy()
         task=LoadRecording(1,d.path,source=d,smoothing_window=11,
@@ -76,6 +98,7 @@ class AreaWorkflowTests(unittest.TestCase):
                 self.assertEqual(panel.map.base_unit,'mA/cm²');self.assertEqual(len(panel.points),2)
                 w.area_panel.set_dataset(raw,results,dict(mode='none'))
                 self.assertEqual(w.area_panel.table.rowCount(),3)
+                self.assertEqual(w.area_panel.table.item(2,5).text(),results[2]['reason'])
                 self.assertIn('Detected break',[s[0] for s in w.area_panel.plot.series])
                 w.area_panel.table.setCurrentCell(2,0)
                 self.assertNotIn('Detected break',[s[0] for s in w.area_panel.plot.series])

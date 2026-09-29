@@ -61,8 +61,8 @@ class AreaPanel(Q.QWidget):
         self.notice=label('Press Detect / apply to inspect recorded retractions. No acquisition settings are changed.',word_wrap=True)
         layout.addWidget(self.notice)
         split=Q.QSplitter(QtCore.Qt.Orientation.Horizontal); layout.addWidget(split,1)
-        self.table=Q.QTableWidget(0,5)
-        self.table.setHorizontalHeaderLabels(['Hop','d (µm)','Area (µm²)','h (µm)','Result'])
+        self.table=Q.QTableWidget(0,6)
+        self.table.setHorizontalHeaderLabels(['Hop','d (µm)','Area (µm²)','h (µm)','Result','Reason'])
         self.table.setEditTriggers(Q.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(Q.QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(Q.QAbstractItemView.SelectionMode.SingleSelection)
@@ -142,10 +142,12 @@ class AreaPanel(Q.QWidget):
         self._groups={g.pixel:g for g in hop_selections(dataset)} if 'scan_pixel' in dataset.columns else {}
         self.table.setRowCount(len(results))
         for i,r in enumerate(results):
-            values=[str(r['scan_pixel']+1),*(f'{r[k]:.5g}' if r.get(k) is not None else '—' for k in ('diameter_um','area_um2','stretch_um')),r['status']]
+            values=[str(r['scan_pixel']+1),*(f'{r[k]:.5g}' if r.get(k) is not None else '—' for k in ('diameter_um','area_um2','stretch_um')),r['status'],r['reason']]
             for j,value in enumerate(values):
                 item=Q.QTableWidgetItem(value); item.setToolTip(r['reason']); self.table.setItem(i,j,item)
         self.table.resizeColumnsToContents()
+        self.table.setColumnWidth(5,260)
+        self.table.resizeRowsToContents()
         ok=sum(r['status']=='estimated' for r in results)
         self.notice.setText(f'{ok}/{len(results)} retraction estimates. Unavailable estimates are not failed-landings verdicts. '
             'Density channels appear in CV, Explore, maps and movies when normalization is applied; original currents remain available.' if results else

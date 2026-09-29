@@ -55,6 +55,14 @@ class AreaTests(unittest.TestCase):
         self.assertAlmostEqual(result['area_um2'],np.pi*result['diameter_um']**2/4)
         with self.assertRaises(AnalysisError): RetractionConfig(slope=0).validate()
 
+    def test_recorded_current_rail_is_rejected_for_both_signs(self):
+        for sign in (-1, 1):
+            rows = fixture(sign)
+            m = rows.matrix.copy(); m[:400,3] = sign*19.999
+            result = detect_retraction(NumericRows(rows.columns,m), .8, 50, current_limit_na=20.)
+            self.assertEqual(result['status'], 'unavailable')
+            self.assertIn('saturation', result['reason'])
+
     def test_density_preserves_raw_and_gaps(self):
         rows=fixture(); m=rows.matrix.copy(); m[600:,4]=1
         data=AnalysisDataset(Path('test.csv'),rows.columns,NumericRows(rows.columns,m),{})

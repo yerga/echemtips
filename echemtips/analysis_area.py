@@ -43,7 +43,7 @@ def _mad(values):
     return float(1.4826 * np.median(np.abs(values - np.median(values))))
 
 
-def detect_retraction(rows, surface_end_s, surface_z_um, config=RetractionConfig()):
+def detect_retraction(rows, surface_end_s, surface_z_um, config=RetractionConfig(), *, current_limit_na=None):
     """Detect a persistent sharp return to a stable tail baseline after surface data.
 
     Uses measured Z (decreasing on withdrawal), raw signed current and recorded
@@ -74,6 +74,8 @@ def detect_retraction(rows, surface_end_s, surface_z_um, config=RetractionConfig
     t, z, e, current = (a[start:] for a in (t, z, e, current))
     if len(t) < 4*w or not all(np.isfinite(a).all() for a in (z, e, current)):
         return reject('Too few finite retraction samples')
+    if current_limit_na is not None and np.any(np.abs(current) >= current_limit_na * .999):
+        return reject('Current reaches the recorded input range; possible saturation')
     if np.max(np.abs(e - np.median(e))) > config.potential_tolerance_v:
         return reject('Potential changes during the candidate retraction')
     for channel in ('x_um', 'y_um'):
@@ -151,7 +153,16 @@ def estimate_landings(dataset, config=RetractionConfig(), *, cancelled=lambda: F
             results.append(dict(row, reason='Landing marked failed or incomplete')); continue
         sub = hop_dataset(dataset, group)
         cycles = extract_cv_cycles(sub)
-        surface = cycles[-1].rows if cycles else stationary_sweep_rows(sub, group)
+        def stationary(surface):
+            """A waveform label alone does not prove that approach motion ended."""
+            if surface is None or not len(surface) or 'z_um' not in surface.columns:
+                return False
+            z = surface.matrix[:, surface.columns.index('z_um')]
+            return np.isfinite(z).all() and np.ptp(z) <= config.z_tolerance_um*2
+
+        surface = cycles[-1].rows if cycles else None
+        if not stationary(surface):
+            surface = stationary_sweep_rows(sub, group)
         if surface is None:
             found = it_surface_rows(sub, group)
             surface = found[0] if found is not None else stationary_pulse_rows(sub, group)
@@ -159,7 +170,15 @@ def estimate_landings(dataset, config=RetractionConfig(), *, cancelled=lambda: F
             z = surface.matrix[:, surface.columns.index('z_um')]
             if np.isfinite(z).all() and np.ptp(z) <= config.z_tolerance_um*2:
                 end = float(surface.matrix[-1, surface.columns.index('elapsed_s')])
-                row.update(detect_retraction(group.rows, end, float(np.median(z)), config))
+                # The deployed recorder converts the ±10 V ADC input using
+                # V/nA sensitivity. Do not infer a rail from the observed peak.
+                settings = dataset.metadata.get('settings', {})
+                sensitivity = settings.get(config.channel.replace('_na', '_v_per_na'))
+                limit = None
+                if settings.get('mode') == 'NI FPGA' and isinstance(sensitivity, (int, float)) and np.isfinite(sensitivity) and sensitivity > 0:
+                    limit = 10. / sensitivity
+                row.update(detect_retraction(group.rows, end, float(np.median(z)), config,
+                                             current_limit_na=limit))
         results.append(row)
     return results
 
