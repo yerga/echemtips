@@ -21,7 +21,9 @@ the bounds above document the rounding introduced.
 Per-sample elapsed times are retained: nominal sample settings in JSON cannot
 reconstruct actual FPGA intervals, gaps, or timing changes reliably. Nine decimal
 places preserve the deployed FPGA's 25 ns ticks, including multi-hour runs.
-The columns and units are unchanged, so the schema remains version 2.
+The core channel units are unchanged, so the schema remains version 2.
+Programs with optional [pre/post holds](CONDITIONING.md) add the integer
+`measurement_phase` column and a JSON code dictionary; holds-off recordings do not.
 
 On Windows, atomic JSON replacement retries access-denied and sharing-lock
 errors (WinError 5, 32, 33) up to five times, waiting a total of 0.62 seconds.
