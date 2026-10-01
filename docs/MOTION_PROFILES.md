@@ -1,8 +1,10 @@
 # Two-speed Z motion profiles
 
-Approach and retraction experiments offer a **Z motion profile…** button. Both
-profiles are off by default. Their settings are kept in a dialog rather than
-adding fields to the measurement page, and are included in experiment presets.
+Approach and retraction experiments offer a collapsible **Z motion profiles**
+section inside their motion setup card. Both profiles are off by default and
+the fields start hidden. Expand the section to edit using the app's standard
+controls. Collapse it to recover space without disabling the options; its header
+summarizes enabled profiles. Settings are included in experiment presets.
 XY motion retains its existing constant speed.
 
 ## Approach

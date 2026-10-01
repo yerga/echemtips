@@ -1,7 +1,10 @@
 # Optional pre/post measurement holds
 
-Use **Pre/post holds… · Off** below the electrochemistry controls. The compact
-button opens a dialog; no extra potential/time fields occupy the experiment page.
+Expand **Pre/post measurement holds · Off** inside the electrochemistry setup
+card. The inline section uses the same controls as the rest of setup and starts
+collapsed. Collapse it again to recover space; enabled holds and entered values
+are retained and summarized in its header. Disabling a hold uses its checkbox,
+not the disclosure button. Fields are locked while an experiment is running.
 Enable either hold independently, choose its E1 potential and duration, and check
 the complete sequence preview before pressing OK. Cancel leaves the setup unchanged.
 
