@@ -6,6 +6,7 @@ independent of Qt. This module owns only operator interaction and rendering.
 
 from __future__ import annotations
 from .conditioning_ui import ConditioningControl
+from .motion_profile_ui import MotionProfileControl
 
 import math
 import os
@@ -1235,6 +1236,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.retract_rate = add_field(form, Field("Retract speed", "10", "µm/s"), 1, 1)
         self.retract = Check("Retract after approach", True); form.addWidget(self.retract, 2, 0, 1, 2)
         left_layout.addWidget(movement)
+        self.motion_profile=MotionProfileControl(self); left_layout.addWidget(self.motion_profile)
 
         contact = Card("2 · Contact detection", "The approach ends automatically when the selected current crosses the threshold.")
         form = _grid(contact.body)
@@ -1275,6 +1277,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
     def parameters(self) -> ApproachParameters:
         """Parse approach, contact, retract, and optional XY fields."""
         return ApproachParameters(
+            **self.motion_profile.values,
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             retract_rate_um_s=self.retract_rate.float(), approach_voltage_v=self.potential.float(),
             feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA,
@@ -1355,6 +1358,7 @@ class ApproachCVPage(ManagedExperimentPage):
         cg.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         controls_layout.addWidget(cv)
         self.conditioning=ConditioningControl(self); controls_layout.addWidget(self.conditioning)
+        self.motion_profile=MotionProfileControl(self); controls_layout.addWidget(self.motion_profile)
         if self.rate_series:
             cg.removeWidget(self.scan_rate)
             self.scan_rate.hide()
@@ -1421,6 +1425,7 @@ class ApproachCVPage(ManagedExperimentPage):
     def parameters(self) -> ApproachCVParameters:
         """Parse positioning, contact, settling, CV, and retract controls."""
         return ApproachCVParameters(
+            **self.motion_profile.values,
             **self.conditioning.values,
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(),
             approach_voltage_v=self.approach_voltage.float(), feedback_channel=self.feedback_channel.get(),
@@ -1529,6 +1534,7 @@ class ApproachITPage(ManagedExperimentPage):
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
         self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
+        self.motion_profile=MotionProfileControl(self); hl.addWidget(self.motion_profile)
         preview, self.program_preview = _program_card(
             "I–t potential profile", "Potential E1 (V)",
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
@@ -1551,6 +1557,7 @@ class ApproachITPage(ManagedExperimentPage):
     def parameters(self) -> ApproachITParameters:
         """Parse positioning, contact, settling, I–t, and retract controls."""
         return ApproachITParameters(
+            **self.motion_profile.values,
             **self.conditioning.values,
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
             approach_voltage_v=self.approach_v.float(), feedback_channel=self.feedback_channel.get(), feedback_threshold=self.threshold.float() / PA_PER_NA, greater_than=True,
@@ -1633,6 +1640,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         g.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         hl.addWidget(electrochemistry)
         self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
+        self.motion_profile=MotionProfileControl(self); hl.addWidget(self.motion_profile)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1667,6 +1675,7 @@ class ScanHoppingCVPage(ManagedExperimentPage):
     def parameters(self) -> ScanHoppingCVParameters:
         """Parse grid, path, contact, CV, retraction, and map controls."""
         return ScanHoppingCVParameters(
+            **self.motion_profile.values,
             **self.conditioning.values,
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.lateral_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
@@ -1783,6 +1792,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
         self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
+        self.motion_profile=MotionProfileControl(self); hl.addWidget(self.motion_profile)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1812,6 +1822,7 @@ class ScanHoppingITPage(ManagedExperimentPage):
     def parameters(self) -> ScanHoppingITParameters:
         """Parse grid, path, contact, I–t, retraction, and map controls."""
         return ScanHoppingITParameters(
+            **self.motion_profile.values,
             **self.conditioning.values,
             x_start_um=self.x_start.float(), x_end_um=self.x_end.float(), x_points=self.x_points.integer(), y_start_um=self.y_start.float(), y_end_um=self.y_end.float(), y_points=self.y_points.integer(),
             start_z_um=self.start_z.float(), end_z_um=self.end_z.float(), lateral_rate_um_s=self.xy_rate.float(), approach_rate_um_s=self.approach_rate.float(), retract_rate_um_s=self.retract_rate.float(),
@@ -1904,6 +1915,8 @@ class MovePiezoPage(BasePage):
             self.app.require_connection()
             if self.app.any_experiment_active: raise BackendError("Stop the experiment before commanding a manual move.")
             axis, target, speed = self.axis.get(), self.target.float(), self.speed.float()
+            if hasattr(self.app.backend, 'clear_hopping_scene'):
+                self.app.backend.clear_hopping_scene()
             self.app.backend.move(axis, target, speed)
             self.status_label.setText(f"Moving {axis} to {target:g} µm at {speed:g} µm/s")
             self.app.toast("Command accepted", "success")

@@ -9,6 +9,7 @@ import time
 from typing import Any, Callable
 
 from .host import ExecutionSnapshot, ExecutionState, WaypointStreamer
+from .motion_driver import MotionProfileDriver
 from .models import (
     AppSettings, ApproachCVParameters, ApproachITParameters, ApproachParameters,
     CVParameters, FeedbackConfiguration, Sample, ScanHoppingCVParameters, ScanHoppingITParameters,
@@ -56,12 +57,13 @@ class _ScanSequence:
     descriptors: list[tuple[int, str]]
 
 
-class WECSPMDriver:
+class WECSPMDriver(MotionProfileDriver):
     """Native host driver for the FIFO protocol in WEC-SPM FPGA Target.vi."""
 
     supports_cv_rate_series = True
     supports_lsv = True
     supports_conditioning = True
+    supports_motion_profiles = True
     supports_contact_snapshot = True
     supports_method_contact_snapshot = True
 
@@ -229,6 +231,11 @@ class WECSPMDriver:
         return exponents
 
     def _enqueue(self, waypoints: list[Waypoint], expected_duration_s: float | None) -> None:
+        waypoints = self._profile_approach_waypoints(waypoints)
+        if getattr(getattr(self, '_profile_params', None), 'approach_profile_enabled', False) and waypoints and waypoints[-1].line_type == 2:
+            expected_duration_s = (expected_duration_s or 0.) + self.settings.z_range_um / self._profile_params.approach_slow_um_s
+        if getattr(self, '_profile_internal', False) and int(self._read_register('LineNumber')) + len(waypoints) > 32767:
+            raise ValueError('Program would exceed signed acquisition line tags; reconnect before continuing.')
         payload = [word for waypoint in waypoints for word in waypoint.words()]
         if len(waypoints) > 65535:
             raise ValueError("A single streamed program cannot exceed the verified 16-bit sample-tag span.")
@@ -569,6 +576,7 @@ class WECSPMDriver:
             for offset in range(0, len(data), SAMPLE_WORDS)
         ]
         self._observe_contacts(samples)
+        self._profile_observe_samples(samples)
         from .conditioning import phase_code
         for sample in samples:
             if self._owner == 'approach-cv':
@@ -705,6 +713,7 @@ class WECSPMDriver:
         """
         if not self._stopped:
             self._check_target_health()
+            self._service_motion_profiles()
         if self._submitted and not self._stopped:
             for _ in range(4):
                 if self.streamer.complete:
@@ -938,6 +947,7 @@ class WECSPMDriver:
             self.compiler.compile(plan, self._current_targets())
         self._prepare_command()
         baseline_line = int(self._read_register("LineNumber"))
+        self._begin_motion_profiles(params)
         total_tags = (
             2 + int(params.feedback_mode == "baseline_relative")
             + followup_count
@@ -1053,9 +1063,10 @@ class WECSPMDriver:
         current = self._current_targets()
         self.approach_contact_z_um = raw_to_position(current["Z"], self.settings.z_range_um, self.settings.z_bipolar)
         plan, contexts = approach_cv_followup_plan(params)
+        plan, contexts = self._profile_followup(plan, contexts)
         compiled = self.compiler.compile(plan, current)
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
-        retract_index = len(compiled.waypoints) - 1 if params.retract_after else None
+        retract_index = len(compiled.waypoints) - 1 if contexts[-1] == 'retract' else None
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
         settle_count = next((i for i,c in enumerate(contexts) if c.startswith('cv')),len(contexts))
         self._approach_history.append((self._program_baseline, contexts))
@@ -1118,6 +1129,7 @@ class WECSPMDriver:
         if self._cancelled:
             return {"stage": "aborted", "detail": self._cancel_detail or "FPGA sequence cancelled", "progress": 0.0}
         self.service()
+        sequence = self._sequence
         current_line = int(self._read_register("LineNumber"))
         completed = (current_line - sequence.baseline_line) & ((1 << 64) - 1)
         if self._approach_phase == "baseline":
@@ -1206,6 +1218,7 @@ class WECSPMDriver:
         ):
             raise ValueError("A requested potential exceeds AO3 after applying the command-voltage ratio.")
         self._prepare_command()
+        self._begin_motion_profiles(params)
         self._owner = "scan-hopping-cv"
         # The source exports a U64 counter but I16 sample tags. Until the
         # target's narrowing conversion is verified, do not rely on wrapping
@@ -1360,17 +1373,13 @@ class WECSPMDriver:
             retract_rate_um_s=params.retract_rate_um_s,
         )
         plan = settle_plan + pre + cv_plan[:-1] + post + cv_plan[-1:]
+        labels = ['settling'] * len(settle_plan) + pre_labels + ['cv'] * (len(cv_plan)-1) + post_labels + ['retract']
+        plan, labels = self._profile_followup(plan, labels, point)
         compiled = self.compiler.compile(plan, current)
         self._pending_scalers = tuple(compiled.scaler_exponents[name] for name in ("X", "Y", "Z", "V", "V2"))
         self._enqueue(compiled.waypoints, compiled.expected_duration_s)
         settle_count = len(settle_plan)
-        descriptors = (
-            [(point, "settling")] * settle_count
-            + [(point, label) for label in pre_labels]
-            + [(point, "cv")] * (len(cv_plan) - 1)
-            + [(point, label) for label in post_labels]
-            + [(point, "retract")]
-        )
+        descriptors = [(point, label) for label in labels]
         self._scan_sequence = _ScanSequence(self._program_baseline, descriptors)
         self._scan_history.append(self._scan_sequence)
         self._scan_phase = "cv"
@@ -1397,6 +1406,7 @@ class WECSPMDriver:
                 "point_stage": "aborted",
             }
         self.service()
+        sequence = self._scan_sequence
         current_line = int(self._read_register("LineNumber"))
         completed = (current_line - sequence.baseline_line) & ((1 << 64) - 1)
         point_total = len(self._scan_grid)
@@ -1566,6 +1576,7 @@ class WECSPMDriver:
                 )
         self._reset_method(name, parameters)
         self._owner = name.replace("_", "-")
+        self._begin_motion_profiles(parameters)
 
         if name == "cv":
             if not isinstance(parameters, CVParameters):
@@ -1703,6 +1714,8 @@ class WECSPMDriver:
                 retract_z = params.start_z_um
             plan.append(PhysicalWaypoint(z_um=retract_z, z_rate_um_s=params.retract_rate_um_s))
             descriptors.append((point, "retract"))
+        plan, labels = self._profile_followup(plan, [c for _, c in descriptors], point)
+        descriptors = [(point, c) for c in labels]
         self._submit_method_plan(plan, descriptors, "it", resume=True)
 
     def _submit_method_retract(self, params: ApproachParameters | ApproachITParameters | ScanHoppingITParameters) -> None:
@@ -1736,6 +1749,8 @@ class WECSPMDriver:
                 if params.retract_after:
                     plan.append(PhysicalWaypoint(z_um=params.start_z_um, z_rate_um_s=params.retract_rate_um_s))
                     descriptors.append((point, "retract"))
+                    plan, labels = self._profile_followup(plan, [c for _,c in descriptors], point)
+                    descriptors = [(point,c) for c in labels]
                     self._submit_method_plan(plan, descriptors, "contact_followup", resume=True)
                 elif plan:
                     self._submit_method_plan(plan, descriptors, "contact_followup", resume=True)

@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 from typing import Any
 from .conditioning import ConditioningParameters, HOLD_FIELDS
+from .motion_profiles import MotionProfileParameters, PROFILE_FIELDS
 
 
 def _default_bitfile() -> str:
@@ -283,7 +284,7 @@ class Sample:
 
 
 @dataclass(slots=True)
-class ApproachCVParameters(ConditioningParameters):
+class ApproachCVParameters(ConditioningParameters, MotionProfileParameters):
     """Motion, contact, CV, and optional preposition values for Approach + CV."""
     start_z_um: float = 10.0
     end_z_um: float = 90.0
@@ -334,7 +335,7 @@ class ApproachCVParameters(ConditioningParameters):
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate approach, contact, waveform, and hardware representability."""
-        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_conditioning(settings)
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_conditioning(settings) + self.validate_motion_profiles(settings)
         if not math.isfinite(self.start_z_um) or not 0 <= self.start_z_um <= settings.z_range_um:
             errors.append("Start Z is outside the configured Z range.")
         if not math.isfinite(self.end_z_um) or not 0 <= self.end_z_um <= settings.z_range_um:
@@ -422,7 +423,7 @@ class CVParameters:
 
 
 @dataclass(slots=True)
-class ApproachParameters:
+class ApproachParameters(MotionProfileParameters):
     """Standalone contact approach with optional XY position and retract."""
     start_z_um: float = 10.0
     end_z_um: float = 90.0
@@ -445,7 +446,7 @@ class ApproachParameters:
 
     def validate(self, settings: AppSettings) -> list[str]:
         """Validate travel, rates, contact settings, potential, and XY targets."""
-        errors = validate_contact_options(self.feedback_mode, self.settling_time_s)
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_motion_profiles(settings)
         for name, value in (("Start Z", self.start_z_um), ("End Z", self.end_z_um)):
             if not math.isfinite(value) or not 0 <= value <= settings.z_range_um:
                 errors.append(f"{name} is outside the configured Z range.")
@@ -626,7 +627,7 @@ class BoundedScanRetraction:
 
 
 @dataclass(slots=True)
-class ScanHoppingCVParameters(BoundedScanRetraction, ConditioningParameters):
+class ScanHoppingCVParameters(BoundedScanRetraction, ConditioningParameters, MotionProfileParameters):
     """Physical grid, hopping motion, contact, and per-pixel CV configuration."""
     recipes: list[dict[str, Any]] = field(default_factory=list)
     recipe_assignment: list[int] = field(default_factory=list)
@@ -721,12 +722,12 @@ class ScanHoppingCVParameters(BoundedScanRetraction, ConditioningParameters):
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
         repeated_approaches = sum(
-            self.retract_distance_for_point(point - 1) / self.approach_rate_um_s
+            self.motion_duration(self.retract_distance_for_point(point - 1), 'approach', self.approach_rate_um_s)
             for point in range(1, self.execution_point_count)
         )
         retracts = sum(
-            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.execution_point_count
-             else self.retract_distance_for_point(point)) / self.retract_rate_um_s
+            self.motion_duration((abs(self.end_z_um - self.start_z_um) if point + 1 == self.execution_point_count
+             else self.retract_distance_for_point(point)), 'retract', self.retract_rate_um_s)
             for point in range(self.execution_point_count)
         )
         cv_per_point = self.cycles * (
@@ -761,7 +762,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction, ConditioningParameters):
         if self.recipes or self.recipe_assignment:
             from .combinatorial import validate_recipes
             return validate_recipes(self, settings)
-        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_conditioning(settings)
+        errors = validate_contact_options(self.feedback_mode, self.settling_time_s) + self.validate_conditioning(settings) + self.validate_motion_profiles(settings)
         for name, low, high, limit in (
             ("X", self.x_start_um, self.x_end_um, settings.x_range_um),
             ("Y", self.y_start_um, self.y_end_um, settings.y_range_um),
@@ -829,7 +830,7 @@ class ScanHoppingCVParameters(BoundedScanRetraction, ConditioningParameters):
 
 
 @dataclass(slots=True)
-class ScanHoppingITParameters(BoundedScanRetraction, ConditioningParameters):
+class ScanHoppingITParameters(BoundedScanRetraction, ConditioningParameters, MotionProfileParameters):
     """Physical grid, hopping motion, contact, and per-pixel I–t configuration."""
     recipes: list[dict[str, Any]] = field(default_factory=list)
     recipe_assignment: list[int] = field(default_factory=list)
@@ -919,12 +920,12 @@ class ScanHoppingITParameters(BoundedScanRetraction, ConditioningParameters):
             for previous, current in zip(grid, grid[1:])
         ) / self.lateral_rate_um_s
         repeated_approaches = sum(
-            self.retract_distance_for_point(point - 1) / self.approach_rate_um_s
+            self.motion_duration(self.retract_distance_for_point(point - 1), 'approach', self.approach_rate_um_s)
             for point in range(1, self.execution_point_count)
         )
         retracts = sum(
-            (abs(self.end_z_um - self.start_z_um) if point + 1 == self.execution_point_count
-             else self.retract_distance_for_point(point)) / self.retract_rate_um_s
+            self.motion_duration((abs(self.end_z_um - self.start_z_um) if point + 1 == self.execution_point_count
+             else self.retract_distance_for_point(point)), 'retract', self.retract_rate_um_s)
             for point in range(self.execution_point_count)
         )
         it_per_point = sum(duration for _potential, duration, _label in self.it_steps())
@@ -969,6 +970,7 @@ class ScanHoppingITParameters(BoundedScanRetraction, ConditioningParameters):
             return_potential_v=self.return_potential_v, return_hold_s=self.return_hold_s,
             cycles=self.cycles,
             **{key:getattr(self,key) for key in HOLD_FIELDS},
+            **{key:getattr(self,key) for key in PROFILE_FIELDS},
         )
         errors = approach.validate(settings)
         for name, low, high, limit in (

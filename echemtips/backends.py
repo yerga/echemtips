@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 from .host import ExecutionSnapshot, ExecutionState
+from .motion_simulation import MotionProfileSimulation
 from .models import AppSettings, ApproachCVParameters, FeedbackConfiguration, Sample, ScanHoppingCVParameters
 from .ni_protocol import (
     DEPLOYED_STARTUP_RAW_OUTPUTS,
@@ -258,7 +259,7 @@ class InstrumentBackend(ABC):
             raise SafetyError("Movement speed must be positive.")
 
 
-class SimulationBackend(InstrumentBackend):
+class SimulationBackend(MotionProfileSimulation, InstrumentBackend):
     """Deterministic, stateful virtual microscope with a simulated surface."""
 
     def __init__(self, settings: AppSettings, seed: int = 8102) -> None:
@@ -367,6 +368,9 @@ class SimulationBackend(InstrumentBackend):
     @_synchronized_io
     def clear_hopping_scene(self) -> None:
         """Prevent a combinatorial scene leaking into another experiment."""
+        self._profile_params = None
+        self._profile_approach_switch = None
+        self._profile_retraction = None
         self._standalone_cell = False
         self._cell.mode = 'contact'
         self._cell.wet = False
@@ -425,6 +429,7 @@ class SimulationBackend(InstrumentBackend):
             current, target = self._positions[axis], self._targets[axis]
             delta = target - current
             step = self._speeds[axis] * dt
+            step = self._profile_step_limit(axis, current, delta, step)
             if abs(delta) <= step:
                 self._positions[axis] = target
                 self._speeds[axis] = 0.0
@@ -482,7 +487,7 @@ class SimulationBackend(InstrumentBackend):
             capacitance_nf = 0.025 if self._diagnostic_mode == "resistor" else 0.12
             current1 = 1000.0 * v / resistance + capacitance_nf * scan_rate + self._rng.gauss(0.0, 0.00015)
             current2 = 0.5 * current1 + self._rng.gauss(0.0, 0.00012)
-        return Sample(
+        sample = Sample(
             elapsed_s=elapsed,
             x_um=self._positions["X"],
             y_um=self._positions["Y"],
@@ -499,6 +504,8 @@ class SimulationBackend(InstrumentBackend):
             commanded_z_um=self._positions["Z"],
             scan_pixel=(-1 if getattr(self, "_hopping_scene", False) else getattr(self, "adaptive_pixel", -1)),
         )
+        self._profile_sample(sample)
+        return sample
 
     @_synchronized_io
     def move(self, axis: str, target: float, speed: float) -> None:
@@ -511,7 +518,7 @@ class SimulationBackend(InstrumentBackend):
             self.set_voltage(2, target)
             return
         self._targets[axis] = target
-        self._speeds[axis] = speed
+        self._speeds[axis] = self._profile_move(axis, target, speed)
         self._line_number += 1
 
     @_synchronized_io
@@ -520,6 +527,11 @@ class SimulationBackend(InstrumentBackend):
         self._tick()
         self._targets = dict(self._positions)
         self._speeds = {"X": 0.0, "Y": 0.0, "Z": 0.0}
+        self._profile_approach_switch = None
+        profile = getattr(self, '_profile_retraction', None)
+        if profile is not None and profile.event['reason'] == 'pending':
+            profile.event['reason'] = 'motion stopped before switch'
+        self._profile_retraction = None
 
     @_synchronized_io
     def set_voltage(self, channel: int, voltage: float) -> None:
@@ -593,6 +605,8 @@ class NIFPGABackend(InstrumentBackend):
         """Fail before motion if a site driver could silently omit enabled holds."""
         if (getattr(params,'pre_hold_enabled',False) or getattr(params,'post_hold_enabled',False)) and getattr(self._driver,'supports_conditioning',False) is not True:
             raise BackendError('The selected FPGA driver does not support pre/post holds. Use the native driver.')
+        if (getattr(params,'approach_profile_enabled',False) or getattr(params,'retract_profile_enabled',False)) and getattr(self._driver,'supports_motion_profiles',False) is not True:
+            raise BackendError('The selected FPGA driver does not support Z motion profiles. Use the native driver.')
 
     @property
     def label(self) -> str:

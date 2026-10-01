@@ -15,6 +15,7 @@ def form_values(page):
         elif isinstance(widget, Q.QCheckBox): result[name] = widget.isChecked()
     if hasattr(page, 'rate_editor'): result['scan_rates'] = page.rate_editor.values()
     if hasattr(page,'conditioning'): result['conditioning'] = dict(page.conditioning.values)
+    if hasattr(page,'motion_profile'): result['motion_profile'] = dict(page.motion_profile.values)
     if getattr(page, 'combinatorial', False):
         result['recipe_plan'] = deepcopy(page._recipe_plan)
         result['recipe_options'] = getattr(page, '_recipe_options', None)
@@ -24,6 +25,7 @@ def form_values(page):
 def restore_form(page, values):
     """Restore known fields only; callers validate the complete configuration."""
     if hasattr(page,'conditioning'): page.conditioning.set_values(values.get('conditioning',{}))
+    if hasattr(page,'motion_profile'): page.motion_profile.set_values(values.get('motion_profile',{}))
     for name, value in values.items():
         widget = getattr(page, name, None)
         if isinstance(widget, Field): widget.entry.setText(str(value))

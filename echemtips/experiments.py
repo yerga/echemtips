@@ -107,6 +107,7 @@ class ApproachCVExperiment:
         if not self.backend.hardware_approach_cv_required and not self.backend.motion_available:
             raise RuntimeError("This backend cannot move the probe.")
         self.params = params
+        if hasattr(self.backend, 'configure_motion_profiles'): self.backend.configure_motion_profiles(params)
         self._last_tick = self.backend.experiment_time()
         self._segments = []
         self._lsv_reset_pending = False
@@ -384,6 +385,7 @@ class ScanHoppingCVExperiment:
             raise RuntimeError("This FPGA connection does not expose the Scan Hopping + CV waypoint interface.")
         self.params = params
         self._grid = params.execution_grid()
+        if hasattr(self.backend, 'configure_motion_profiles'): self.backend.configure_motion_profiles(params)
         params.retraction_events.clear()
         params.marker_result.clear()
         self.contact_z.clear()
@@ -802,6 +804,7 @@ class ApproachExperiment:
         if errors:
             raise ValueError("\n".join(errors))
         self.params, self.contact_z, self._no_contact = params, None, False
+        if hasattr(self.backend, 'configure_motion_profiles'): self.backend.configure_motion_profiles(params)
         self._feedback_baseline = None
         self._hardware = self.backend.hardware_approach_cv_required
         if self._hardware:
@@ -934,6 +937,7 @@ class ApproachITExperiment:
         if errors:
             raise ValueError("\n".join(errors))
         self.params, self.contact_z, self._no_contact = params, None, False
+        if hasattr(self.backend, 'configure_motion_profiles'): self.backend.configure_motion_profiles(params)
         self._hardware = self.backend.hardware_approach_cv_required
         self._steps = params.it_steps()
         self._step_index, self.it_label, self.progress = 0, "", 0.0
@@ -1093,6 +1097,7 @@ class ScanHoppingITExperiment:
         if errors:
             raise ValueError("\n".join(errors))
         self.params, self._grid = params, params.execution_grid()
+        if hasattr(self.backend, 'configure_motion_profiles'): self.backend.configure_motion_profiles(params)
         params.retraction_events.clear()
         params.marker_result.clear()
         self.contact_z.clear(); self.current_at_pulse.clear(); self._pulse_samples.clear(); self._last_approach_z.clear()

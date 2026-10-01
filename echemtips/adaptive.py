@@ -416,6 +416,8 @@ class AdaptiveExperiment:
             self.detail = "No confirmed contact; scan stopped. "+self.child.detail
             self.close()
             return
+        p.motion_events.extend({**event, 'point':self._attempt['scan_pixel']}
+                              for event in getattr(getattr(self.child, 'params', None), 'motion_events', []))
         channel = 1 if p.objective_channel == "Current 1" else 2
         from .adaptive_waveforms import score_cv,score_it
         sensitivity=getattr(self.settings,f'current{channel}_v_per_na')
@@ -557,6 +559,10 @@ class AdaptiveExperiment:
         model=ApproachITParameters if isinstance(p,AdaptiveITParameters) else ApproachCVParameters
         child_params = model(**{f.name:getattr(p,f.name) for f in fields(model)})
         child_params.start_z_um = self._travel_z
+        child_params.motion_events = []
+        if self.plane is not None:
+            child_params.expected_contact_z_um = float(self.plane.height(self._attempt['xy'])) - 3*self.plane.residual_um
+            child_params.approach_clearance_um = max(p.approach_clearance_um,p.relief_allowance_um)
         self.child = (ApproachITExperiment if isinstance(p,AdaptiveITParameters) else ApproachCVExperiment)(self.backend,self.settings)
         with self.backend.io_lock:
             self.child.start(child_params)
