@@ -1236,7 +1236,7 @@ class StandaloneApproachPage(ManagedExperimentPage):
         self.retract_rate = add_field(form, Field("Retract speed", "10", "µm/s"), 1, 1)
         self.retract = Check("Retract after approach", True); form.addWidget(self.retract, 2, 0, 1, 2)
         left_layout.addWidget(movement)
-        self.motion_profile=MotionProfileControl(self); left_layout.addWidget(self.motion_profile)
+        self.motion_profile=MotionProfileControl(self); form.addWidget(self.motion_profile, 3, 0, 1, 2)
 
         contact = Card("2 · Contact detection", "The approach ends automatically when the selected current crosses the threshold.")
         form = _grid(contact.body)
@@ -1357,8 +1357,8 @@ class ApproachCVPage(ManagedExperimentPage):
         self.retract = Check("Retract to start Z after CV", True); cg.addWidget(self.retract, 2, 1)
         cg.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         controls_layout.addWidget(cv)
-        self.conditioning=ConditioningControl(self); controls_layout.addWidget(self.conditioning)
-        self.motion_profile=MotionProfileControl(self); controls_layout.addWidget(self.motion_profile)
+        self.conditioning=ConditioningControl(self); cg.addWidget(self.conditioning, 4, 0, 1, 2)
+        self.motion_profile=MotionProfileControl(self); ag.addWidget(self.motion_profile, 5, 0, 1, 2)
         if self.rate_series:
             cg.removeWidget(self.scan_rate)
             self.scan_rate.hide()
@@ -1533,8 +1533,8 @@ class ApproachITPage(ManagedExperimentPage):
         self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return duration", "0.25", "s"), 2, 1)
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
-        self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
-        self.motion_profile=MotionProfileControl(self); hl.addWidget(self.motion_profile)
+        self.conditioning=ConditioningControl(self); g.addWidget(self.conditioning, 4, 0, 1, 2)
+        self.motion_profile=MotionProfileControl(self); movement.body.layout().addWidget(self.motion_profile, 3, 0, 1, 2)
         preview, self.program_preview = _program_card(
             "I–t potential profile", "Potential E1 (V)",
             (self.initial_v, self.step_v, self.return_v), ("Initial", "Pulse", "Return"), stepped=True,
@@ -1639,8 +1639,8 @@ class ScanHoppingCVPage(ManagedExperimentPage):
         self.scan_rate = add_field(g, Field("Scan rate", "2", "V/s"), 2, 0); self.cycles = add_field(g, Field("Cycles", "1"), 2, 1)
         g.addWidget(_waveform_controls(self), 3, 0, 1, 2)
         hl.addWidget(electrochemistry)
-        self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
-        self.motion_profile=MotionProfileControl(self); hl.addWidget(self.motion_profile)
+        self.conditioning=ConditioningControl(self); g.addWidget(self.conditioning, 4, 0, 1, 2)
+        self.motion_profile=MotionProfileControl(self); movement.body.layout().addWidget(self.motion_profile, 7, 0, 1, 2)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -1791,8 +1791,8 @@ class ScanHoppingITPage(ManagedExperimentPage):
         self.return_v = add_field(g, Field("Return potential", "-0.1", "V"), 2, 0); self.return_t = add_field(g, Field("Return duration", "0.25", "s"), 2, 1)
         self.cycles = add_field(g, Field("Cycles", "1"), 3, 0)
         hl.addWidget(electrochemistry)
-        self.conditioning=ConditioningControl(self); hl.addWidget(self.conditioning)
-        self.motion_profile=MotionProfileControl(self); hl.addWidget(self.motion_profile)
+        self.conditioning=ConditioningControl(self); g.addWidget(self.conditioning, 4, 0, 1, 2)
+        self.motion_profile=MotionProfileControl(self); movement.body.layout().addWidget(self.motion_profile, 7, 0, 1, 2)
         self.scan_pattern.currentTextChanged.connect(self._sync_scan_pattern); self._sync_scan_pattern()
         hl.addWidget(_scan_marker_card(self, controls_host))
         summary, self.spacing_label, self.duration_label = _scan_summary_card(
@@ -2204,6 +2204,9 @@ class EChemTipsApp(QtWidgets.QMainWindow):
         from .about import install_help_menu
         install_help_menu(self)
         self.poll_timer = QtCore.QTimer(self); self.poll_timer.setInterval(80); self.poll_timer.timeout.connect(self._poll); self.poll_timer.start()
+        from .optional_setup import OptionalSetup
+        for editor in self.findChildren(OptionalSetup):
+            self.poll_timer.timeout.connect(editor._lock_during_run)
 
     def launch_analysis(self, *, last_recording: bool = False, path: Path | None = None) -> None:
         """Launch an independent analysis process without touching instrument state."""

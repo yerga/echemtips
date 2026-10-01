@@ -137,8 +137,10 @@ def create_adaptive_page(app, *, it=False):
                     self.confirm.setToolTip('Initial Z must be safely retracted across the entire selected region and the path from the current XY position. Piezo limits alone do not establish a safe sample region.')
                     grid.addWidget(self.confirm,3,0,1,2)
                     grid.addWidget(label('The tilt estimate always requires approval. Budgets include survey landings; a running landing finishes and retracts safely. Stop uses the existing FPGA stop and may require reconnection.','muted',word_wrap=True),4,0,1,2)
+                if title.startswith('2'):
+                    self.motion_profile=MotionProfileControl(self)
+                    grid.addWidget(self.motion_profile, grid.rowCount(), 0, 1, 2)
                 setup.addWidget(card)
-            self.motion_profile=MotionProfileControl(self); setup.addWidget(self.motion_profile)
             setup.addStretch(1)
             root.addWidget(_left_scroll(left,380))
             right = QtWidgets.QWidget(); content = _vbox(right)

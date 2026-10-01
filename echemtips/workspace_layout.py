@@ -50,8 +50,9 @@ def preset(page, save):
     dialog = Q.QFileDialog.getSaveFileName if save else Q.QFileDialog.getOpenFileName
     path, _ = dialog(page, 'Save measurement preset' if save else 'Load measurement preset', '', 'Measurement preset (*.json)')
     if not path: return
-    before = form_values(page)
+    before = None
     try:
+        before = form_values(page)
         if save:
             params = page.parameters(); errors = params.validate(page.app.settings)
             if errors: raise ValueError('\n'.join(errors))
@@ -71,7 +72,8 @@ def preset(page, save):
             if errors: raise ValueError('\n'.join(errors))
         page.app.toast('Preset saved' if save else 'Preset loaded and validated; no movement commanded', 'success')
     except (OSError, ValueError, TypeError, KeyError, IndexError) as exc:
-        restore_form(page, before); page.app.show_error(str(exc))
+        if before is not None: restore_form(page, before)
+        page.app.show_error(str(exc))
 
 
 class LayoutWorkspace(QtCore.QObject):
