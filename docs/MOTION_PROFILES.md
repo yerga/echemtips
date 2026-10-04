@@ -12,7 +12,9 @@ XY motion retains its existing constant speed.
 Enable two-speed approach and enter fast and slow rates. Without a usable
 contact-height prediction, the complete approach uses the slow rate. Ordinary
 scans need at least three non-collinear prior contacts to fit a plane; adaptive
-scans can use their approved surface estimate. The fast segment ends before
+scans can use their approved surface estimate only when optional surface tilt
+checks are enabled. With tilt checks off, adaptive two-speed approach remains
+slow throughout because no surface-height prediction is fitted. The fast segment ends before
 predicted contact, with a configurable clearance (default 5 µm). Uncertainty
 reduces the predicted safe fast-travel distance.
 

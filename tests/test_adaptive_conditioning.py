@@ -28,7 +28,7 @@ class ConditioningTests(TestCase):
                         if e.phase!='conditioning': break
                     self.assertEqual(start.called,not persistent)
                     if persistent:
-                        self.assertEqual(e.phase,'return')
+                        self.assertEqual(e.phase,'return_rejected')
                         self.assertFalse(e.params.attempts[0]['valid'])
                 e.close()
 
@@ -39,7 +39,7 @@ class ConditioningTests(TestCase):
         e=AdaptiveExperiment(b,b.settings)
         with tempfile.TemporaryDirectory() as folder:
             e.configure_recording(Path(folder)/'run.csv')
-            e.start(AdaptiveParameters(region_confirmed=True,approve_each=False))
+            e.start(AdaptiveParameters(region_confirmed=True,approve_each=False,tilt_enabled=True))
             e.tick_samples([b.read_sample()])
             e._attempt['contact_z_um']=e.params.start_z_um+.02
             e.child=SimpleNamespace(state=ExperimentState.COMPLETE)

@@ -39,6 +39,7 @@ class AdaptiveSearchParameters:
     clearance_um: float = 10.0
     relief_allowance_um: float = 5.0
     plane_tolerance_um: float = 3.0
+    tilt_enabled: bool = False
     approve_each: bool = True
     region_confirmed: bool = False
     pre_approach_settling_s: float = 0.25
@@ -49,7 +50,9 @@ class AdaptiveSearchParameters:
         errors = []
         names = ("x_min_um", "x_max_um", "y_min_um", "y_max_um", "minimum_spacing_um",
                  "max_duration_s", "xy_speed_um_s",
-                 "clearance_um", "relief_allowance_um", "plane_tolerance_um", "pre_approach_settling_s")
+                 "pre_approach_settling_s")
+        if self.tilt_enabled:
+            names += ("clearance_um", "relief_allowance_um", "plane_tolerance_um")
         if not all(math.isfinite(getattr(self, n)) for n in names):
             return errors + ["Adaptive settings must be finite."]
         for axis in "xy":
@@ -62,10 +65,13 @@ class AdaptiveSearchParameters:
             errors.append("Adaptive XY is controlled by the travel planner, not the child approach.")
         if self.end_z_um <= self.start_z_um:
             errors.append("This workflow requires increasing Z toward the surface.")
-        for n in ("minimum_spacing_um", "max_duration_s", "xy_speed_um_s", "clearance_um", "plane_tolerance_um"):
+        positive = ("minimum_spacing_um", "max_duration_s", "xy_speed_um_s")
+        if self.tilt_enabled:
+            positive += ("clearance_um", "plane_tolerance_um")
+        for n in positive:
             if getattr(self, n) <= 0:
                 errors.append(f"{n} must be positive.")
-        if self.relief_allowance_um < 0:
+        if self.tilt_enabled and self.relief_allowance_um < 0:
             errors.append("Unresolved relief allowance cannot be negative.")
         if self.pre_approach_settling_s < 0.05:
             errors.append("Pre-approach settling must be at least 0.05 s; Z stays stationary during this interval.")
@@ -203,7 +209,11 @@ def propose(params, attempts):
         return {"xy": None, "reason": "No unvisited candidates satisfy minimum separation."}
     valid = [a for a in attempts if a.get("valid")]
     if len(valid) < 3:
-        raise ValueError("Fewer than three usable LSV objectives; cannot train spatial model.")
+        # Fresh-site exploration can replace rejected seed measurements without
+        # pretending that an electrochemical model has already been trained.
+        distance = np.min(np.linalg.norm(candidates[:,None]-old[None,:],axis=2),axis=1) if len(old) else np.ones(len(candidates))
+        selected = int(np.argmax(np.where(legal,distance,-np.inf)))
+        return {"xy": candidates[selected].tolist(), "reason": "Fresh-site exploration: fewer than three usable objectives"}
     span = np.array([params.x_max_um-params.x_min_um,params.y_max_um-params.y_min_um])
     x = np.array([a["xy"] for a in valid])/span
     query = candidates/span
@@ -312,7 +322,7 @@ class AdaptiveExperiment:
         self._next_survey()
 
     def _next_survey(self):
-        self.proposal = {"xy":self.params.survey_points()[len(self.params.attempts)].tolist(),"reason":"Conservative tilt survey"}
+        self.proposal = {"xy":self.params.survey_points()[len(self.params.attempts)].tolist(),"reason":"Initial seed measurement"}
         self._present()
 
     def _present(self):
@@ -432,7 +442,7 @@ class AdaptiveExperiment:
         if contact is None: self._attempt.update(valid=False,reason="Missing commanded contact coordinate")
         if self._attempt.get("quality_warning"):
             self._attempt.update(valid=False,reason=self._attempt["quality_warning"])
-        if self._attempt['valid'] and contact - p.start_z_um < p.clearance_um+p.relief_allowance_um:
+        if p.tilt_enabled and self._attempt['valid'] and contact - p.start_z_um < p.clearance_um+p.relief_allowance_um:
             self._attempt.update(valid=False, reason='Initial Z does not provide the requested clearance; inspect the sample')
         if self._attempt['valid'] and self.plane is not None and abs(contact-float(self.plane.height(self._attempt['xy'])))>p.plane_tolerance_um:
             self._attempt.update(valid=False, reason='New contact lies outside the approved plane tolerance; survey must be revised')
@@ -440,14 +450,19 @@ class AdaptiveExperiment:
         self.child = None
         if not self.backend.hardware_approach_cv_required:
             self.backend.adaptive_pixel = -1
-        if not self._attempt["valid"] or self._attempt.get("quality_warning"):
+        if p.tilt_enabled and not self._attempt["valid"]:
             self._finish("Quality check requires operator review: "+(self._attempt.get("quality_warning") or self._attempt["reason"]),success=False)
             return
+        self._after_landing()
+
+    def _after_landing(self):
+        """Advance using all attempts for budgets and only valid data for fitting."""
+        p = self.params
         if len(p.attempts)>=p.max_landings:
             self._finish("Landing budget reached")
         elif len(p.attempts)<len(p.survey_points()):
             self._next_survey()
-        elif self.plane is None:
+        elif p.tilt_enabled and self.plane is None:
             self.plane = TiltEnvelope.fit(p.attempts,p.plane_tolerance_um)
             self._log("tilt_fit",plane=asdict(self.plane))
             self.phase = "tilt_approval"
@@ -496,8 +511,10 @@ class AdaptiveExperiment:
                     self.proposal = self.model
                     self._present()
             elif time.monotonic()-self._model_started>30: raise RuntimeError("Spatial model timed out; probe remains retracted.")
-        elif self.phase in {"travel_z","travel_x","travel_y","return"} and self._motion_done():
-            if self.phase == "return":
+        elif self.phase in {"travel_z","travel_x","travel_y","return","return_rejected"} and self._motion_done():
+            if self.phase == "return_rejected":
+                self._after_landing()
+            elif self.phase == "return":
                 self.phase = "done"
                 self.state = ExperimentState.COMPLETE if self._return_success else ExperimentState.ABORTED
                 self.progress = 1
@@ -535,7 +552,13 @@ class AdaptiveExperiment:
                 if not all(math.isfinite(i) and abs(i)<abs(p.feedback_threshold_na) for i in currents):
                     self._attempt.update(valid=False,reason='Current already exceeds contact threshold before approach; inspect baseline or increase pre-approach settling')
                     self._log('landing_result',**self._attempt)
-                    self._finish(self._attempt['reason'],success=False)
+                    if p.tilt_enabled:
+                        self._finish(self._attempt['reason'],success=False)
+                    else:
+                        self._move('Z',p.start_z_um,self._retract_speed())
+                        self.phase = 'return_rejected'
+                        self.state = ExperimentState.RETRACTING
+                        self.detail = 'Rejected unsettled-current landing; returning to initial Z before continuing'
                 else:
                     self._start_child()
             elif self.backend.experiment_time()>self._conditioning_deadline:

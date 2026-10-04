@@ -16,6 +16,37 @@ from echemtips.data import DataRecorder
 
 
 class AdaptiveTests(unittest.TestCase):
+    def test_operator_led_seed_completion_and_rejected_objective_continue(self):
+        from types import SimpleNamespace
+        for valid in (True,False):
+            with self.subTest(valid=valid), tempfile.TemporaryDirectory() as folder:
+                backend=SimulationBackend(AppSettings()); backend.connect()
+                e=AdaptiveExperiment(backend,backend.settings)
+                e.configure_recording(Path(folder)/'run.csv')
+                e.start(AdaptiveParameters(region_confirmed=True,approve_each=False))
+                self.assertFalse(e.params.tilt_enabled)
+                e.tick_samples([backend.read_sample()])
+                # An early contact has no requested-clearance margin. It is not
+                # rejected by a disabled plane/clearance prediction.
+                e._attempt['contact_z_um']=e.params.start_z_um
+                e.child=SimpleNamespace(state=ExperimentState.COMPLETE)
+                result=dict(valid=valid,objective_na=.01,reason='Complete' if valid else 'Clipped',quality_warning='')
+                with patch('echemtips.adaptive.score_lsv',return_value=result): e._landing_done()
+                self.assertEqual(e.params.attempts[0]['valid'],valid)
+                self.assertEqual(e.phase,'ready')
+                self.assertIsNone(e.plane)
+                # Finish seeding without ever fitting or approving a Z plane.
+                e.params.attempts.extend(dict(e.params.attempts[0],xy=xy.tolist()) for xy in e.params.survey_points()[1:])
+                with patch.object(e,'_plan') as plan: e._after_landing(); plan.assert_called_once()
+                e.close()
+
+    def test_fresh_site_fallback_when_seed_objectives_are_rejected(self):
+        p=AdaptiveParameters()
+        attempts=[dict(xy=xy.tolist(),valid=False) for xy in p.survey_points()]
+        result=propose(p,attempts)
+        self.assertIn('Fresh-site',result['reason'])
+        self.assertTrue(all(np.linalg.norm(np.asarray(result['xy'])-a['xy'])>=p.minimum_spacing_um for a in attempts))
+
     def test_default_approach_span_reaches_surface_with_200_um_piezo(self):
         # Realistic clock progression also exercises settling and the charging
         # transient, unlike tests that fast-forward only motion/LSV internals.
@@ -74,7 +105,7 @@ class AdaptiveTests(unittest.TestCase):
         p = AdaptiveParameters(region_confirmed=True)
         self.assertEqual(p.validate(AppSettings()),[])
         for changes in ({'region_confirmed':False},{'minimum_spacing_um':50},{'max_landings':4},
-                        {'x_max_um':101},{'objective_window_v':2},{'waveform':'invalid'}, {'clearance_um':0}):
+                        {'x_max_um':101},{'objective_window_v':2},{'waveform':'invalid'}, {'clearance_um':0,'tilt_enabled':True}):
             self.assertTrue(replace(p,**changes).validate(AppSettings()))
 
     def test_plane_path_and_no_clamping(self):
@@ -113,7 +144,7 @@ class AdaptiveTests(unittest.TestCase):
         experiment = AdaptiveExperiment(backend,settings)
         params = AdaptiveParameters(region_confirmed=True,approve_each=False,max_landings=7,
                                     approach_rate_um_s=60,xy_speed_um_s=100,settling_time_s=0,
-                                    cv_scan_rate_v_s=.5,objective_window_v=.04)
+                                    cv_scan_rate_v_s=.5,objective_window_v=.04,tilt_enabled=True)
         with tempfile.TemporaryDirectory() as folder:
             settings.save_directory=folder
             recorder=DataRecorder()

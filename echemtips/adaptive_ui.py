@@ -136,10 +136,15 @@ def create_adaptive_page(app, *, it=False):
                     self.confirm = Check('Safe region and entry path verified',False)
                     self.confirm.setToolTip('Initial Z must be safely retracted across the entire selected region and the path from the current XY position. Piezo limits alone do not establish a safe sample region.')
                     grid.addWidget(self.confirm,3,0,1,2)
-                    grid.addWidget(label('The tilt estimate always requires approval. Budgets include survey landings; a running landing finishes and retracts safely. Stop uses the existing FPGA stop and may require reconnection.','muted',word_wrap=True),4,0,1,2)
+                    grid.addWidget(label('Budgets include initial seed landings. Optional tilt checks require plane approval. Initial Z is operator-verified clearance, not proof of droplet detachment.','muted',word_wrap=True),4,0,1,2)
                 if title.startswith('2'):
                     self.motion_profile=MotionProfileControl(self)
                     grid.addWidget(self.motion_profile, grid.rowCount(), 0, 1, 2)
+                    self.tilt_enabled = Check('Use optional surface tilt checks', False)
+                    self.tilt_enabled.setToolTip('Off: travel at initial Z without plane fitting or contact-height rejection. On: fit and approve the seed-contact plane and enforce its clearance checks.')
+                    grid.addWidget(self.tilt_enabled, grid.rowCount(), 0, 1, 2)
+                    self.tilt_enabled.toggled.connect(self._tilt_changed)
+                    self._tilt_changed()
                 setup.addWidget(card)
             setup.addStretch(1)
             root.addWidget(_left_scroll(left,380))
@@ -178,6 +183,11 @@ def create_adaptive_page(app, *, it=False):
             self.survey.currentIndexChanged.connect(self._preview)
             if not it: self._waveform_changed()
 
+        def _tilt_changed(self,*_):
+            for key in ('clearance_um','relief_allowance_um','plane_tolerance_um'):
+                self.fields[key].setVisible(self.tilt_enabled.get())
+                self.fields[key].setEnabled(self.tilt_enabled.get())
+
         def _waveform_changed(self,*_):
             cv=self.waveform.get()=='CV'
             for key in ('cv_vertex2_v','cycles','objective_cycle'): self.fields[key].setEnabled(cv)
@@ -205,7 +215,7 @@ def create_adaptive_page(app, *, it=False):
             else: values.update(waveform=self.waveform.get(),objective_segment=self.segment.currentIndex())
             values.update(self.motion_profile.values)
             values.update(survey=self.survey.get(),strategy=self.strategy.get(),feedback_channel=self.feedback.get(),
-                          objective_channel=self.objective_channel.get(),approve_each=self.approval.get(),region_confirmed=self.confirm.get())
+                          objective_channel=self.objective_channel.get(),approve_each=self.approval.get(),region_confirmed=self.confirm.get(),tilt_enabled=self.tilt_enabled.get())
             return (AdaptiveITParameters if it else AdaptiveParameters)(**values)
 
         def start(self):

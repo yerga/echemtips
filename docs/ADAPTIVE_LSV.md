@@ -6,7 +6,9 @@ After positioning, the approach potential is applied and acknowledged while Z
 stays at its safe travel height. **Settling before approach** (default 0.25 s,
 minimum 0.05 s) precedes feedback arming. Three fresh final current samples must
 be below the contact-magnitude threshold. An unsettled or above-threshold signal
-stops the run without advancing toward the surface. This is separate from
+rejects the location without advancing toward the surface, withdraws to initial
+Z and continues at a fresh location in the default mode. Missing fresh samples
+still stop the run; optional tilt-check mode also stops for unsettled current. This is separate from
 settling after contact and requires no FPGA bitfile change. Clearance-rejected
 landings are marked invalid in the decision log and metadata.
 
@@ -19,10 +21,11 @@ no bitfile changes are required. Hardware operation still needs staged testing.
 
 1. Survey four corners and the center, or a 3 × 3 grid, at a conservative initial
    travel Z. Every survey landing includes the same measurement as later landings.
-2. Fit a plane to **commanded contact Z**, captured by the native driver after
+2. By default, use initial Z for travel without fitting a surface plane. If
+   **Use optional surface tilt checks** is enabled, fit a plane to **commanded contact Z**, captured by the native driver after
    confirmed contact and before the follow-up sweep. Sensor Z remains a separate
    measured trace; sensor offsets must not enter commanded clearance calculations.
-3. Require explicit approval of the slopes and maximum residual. This approval
+3. Only with tilt checks enabled, require explicit approval of the slopes and maximum residual. This approval
    is required even when individual-landing approval is disabled.
 4. Fit a Gaussian process to usable electrochemical objectives off the GUI
    thread, then propose the next unvisited XY location.
@@ -65,7 +68,11 @@ particles, steps, protrusions, unexpected topography, tilt changes or drift.
 - **Minimum separation:** center-to-center exclusion around **every attempted
   landing**, including rejected/failed attempts. It is not automatically derived
   from the meniscus diameter. Choose it to allow for wetting and residue.
-- **Travel clearance / relief allowance / plane deviation:** the commanded
+- **Use optional surface tilt checks:** off by default. Initial points seed the
+  electrochemical model, not a mandatory tilt determination. The operator verifies
+  initial-Z clearance across the sample and entry path. When enabled, the following
+  three fields become visible and the plane must be approved.
+- **Travel clearance / relief allowance / plane deviation (optional):** the commanded
   lateral travel Z is the lowest predicted contact Z on the full X-then-Y path,
   minus all three allowances. The intermediate corner is checked, not just the
   source and destination. If this requires Z below zero, the run fails closed;
@@ -95,9 +102,13 @@ objective-window MAD flags very noisy results. These tests cannot establish
 constant contact area or distinguish all leakage/false-contact events.
 
 A no-contact landing stops the scan; on real hardware the existing cancellation
-may require reconnection. Invalid/noisy electrochemistry causes a controlled
-return and an aborted result for operator review. New contact heights outside the
-approved tolerance also stop further proposals. Operator **Stop experiment** and
+may require reconnection. In default operator-led mode, invalid/noisy electrochemistry
+is recorded as rejected, excluded from model fitting, and followed by a fresh
+location; rejected attempts still consume budget and reserve their locations.
+With fewer than three usable objectives, fresh-site space-filling exploration
+continues until a model can be fitted. No contact-height tolerance is applied.
+With optional tilt checks enabled, quality/clearance failures and contact heights
+outside the approved tolerance stop further proposals. Operator **Stop experiment** and
 **Emergency stop** retain their existing strong-stop behavior on `main`; the
 experimental recoverable-stop branch is not included. The global **End waypoint**
 action is disabled during adaptive acquisition to prevent bypassing motion gates.
@@ -141,10 +152,11 @@ metadata for quantitative spatial analysis of adaptive data.
    not a quantitative meniscus model. Thresholds are never adjusted automatically;
    an excessively high threshold can still produce a genuine no-contact result.
    Approve each survey point. Inspect the LSV and contact-height result.
-3. Check and approve the fitted plane. Inspect the next proposal and uncertainty
+3. With the default tilt checks off, confirm no plane approval is requested.
+   Repeat with tilt checks on and check/approve the fitted plane. Inspect the next proposal and uncertainty
    map. Complete the run and verify initial Z, CSV/JSON, journal and report.
 4. Repeat with approval disabled, with Mapping and Hotspots, and with a small
-   time budget. Tilt approval remains mandatory.
+   time budget. Tilt approval is mandatory only when tilt checks are enabled.
 5. For an offline equal-budget comparison (not instrument validation), run:
 
    ```sh
@@ -181,8 +193,8 @@ provide extension points without giving a model direct access to hardware.
 
 1. Start in **Simulation**, with the default 5 pA threshold and 0.25 s settling
    before approach. Select a seven-landing budget: five survey points plus two
-   adaptive proposals. Confirm the safe region, then approve landings and the
-   tilt fit when requested.
+   adaptive proposals. Confirm the safe region, then approve landings. A tilt
+   fit is requested only if optional surface tilt checks are enabled.
 2. In **Adaptive hopping + CV / LSV**, select CV, two cycles, objective cycle 2,
    and segment 2. Watch the full CV in the measurement tab and verify seven
    valid results in the decision log. Repeat in LSV mode.

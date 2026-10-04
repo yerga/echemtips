@@ -36,6 +36,12 @@ class AdaptiveUITests(unittest.TestCase):
             self.assertEqual(page.decisions.rowCount(),1)
             self.assertTrue(page.approval.get())
             self.assertFalse(page.confirm.get())
+            self.assertFalse(page.tilt_enabled.get())
+            self.assertFalse(page.fields['plane_tolerance_um'].isVisible())
+            page.tilt_enabled.set(True); app.processEvents()
+            self.assertTrue(page.parameters().tilt_enabled)
+            self.assertTrue(page.fields['plane_tolerance_um'].isVisible())
+            page.tilt_enabled.set(False)
             window.settings.save_directory=folder
             window.backend.connect(); window._set_connection_ui(True)
             page.confirm.set(True)
