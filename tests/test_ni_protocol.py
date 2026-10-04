@@ -968,7 +968,7 @@ class NativeDriverTests(unittest.TestCase):
         self.session.registers["Applied Z"].value = position_to_raw(70, self.settings.z_range_um, self.settings.z_bipolar)
         self.driver._submit_scan_cv(1)
         final = self.session.fifos["Host_To_FPGA_Positions"].writes[-1][-14:]
-        self.assertEqual(final[8], position_to_raw(53, self.settings.z_range_um, self.settings.z_bipolar))
+        self.assertEqual(final[8], position_to_raw(params.start_z_um, self.settings.z_range_um, self.settings.z_bipolar))
 
     def test_approach_status_uses_recorded_line_baseline(self) -> None:
         self.driver.start_approach_cv(ApproachCVParameters(cycles=1))
@@ -1054,14 +1054,14 @@ class NativeDriverTests(unittest.TestCase):
                     d.read_samples()
                     self.assertEqual(status()["stage"], "complete")
 
-    def test_scan_bounded_retract_and_no_travel_interlock(self) -> None:
+    def test_scan_bounded_retract_and_no_travel_continuation(self) -> None:
         for method in ("cv", "it"):
-            for contact in (0.0, 8.0, 50.0):
-                with self.subTest(method=method, contact=contact):
+            for initial,contact in ((0,0),(0,8),(0,50),(10,10),(10,15),(10,50)):
+                with self.subTest(method=method, contact=contact,initial=initial):
                     self.setUp()
                     d, regs = self.driver, self.session.registers
                     cls = ScanHoppingCVParameters if method == "cv" else ScanHoppingITParameters
-                    p = cls(start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    p = cls(start_z_um=initial, end_z_um=90, x_points=2, y_points=1)
                     if method == "cv":
                         d.start_scan_hopping_cv(p)
                     else:
@@ -1078,21 +1078,14 @@ class NativeDriverTests(unittest.TestCase):
                     finish()
                     self.assertEqual(status()["stage"], method)
                     target = d._program_waypoints[-1].z_position
-                    self.assertEqual(target, position_to_raw(max(0, contact - 10), 100, False))
+                    self.assertEqual(target, position_to_raw(max(initial, contact - 10), 100, False))
                     regs["Applied Z"].value = target
                     finish()
                     writes = len(d.positions_fifo.writes)
                     result = status()
-                    if contact == 0:
-                        self.assertEqual(result["stage"], "aborted")
-                        self.assertIn("no Z retraction", result["detail"])
-                        status()
-                        self.assertEqual(len(d.positions_fifo.writes), writes)
-                        self.assertFalse(regs["External Stop"].value)
-                    else:
-                        self.assertNotEqual(result["stage"], "aborted")
-                        self.assertEqual(len(d.positions_fifo.writes), writes + 1)
-                    self.assertEqual(bool(p.retraction_events), contact < 10)
+                    self.assertNotEqual(result["stage"], "aborted")
+                    self.assertEqual(len(d.positions_fifo.writes), writes + 1)
+                    self.assertEqual(bool(p.retraction_events), contact - initial < 10)
 
     def test_scan_hopping_submits_cv_only_after_each_confirmed_contact(self) -> None:
         params = ScanHoppingCVParameters(marker_enabled=False, x_points=2, y_points=2, cycles=1)

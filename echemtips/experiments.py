@@ -581,10 +581,6 @@ class ScanHoppingCVExperiment:
                 self.backend.set_voltage(1, self._cv_voltage)
         retract_target = p.start_z_um if self._no_contact_after_retract else self._retract_target_z
         if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < tolerance:
-            if not self._no_contact_after_retract and p.retract_has_no_travel(self.point_index):
-                self.state = ExperimentState.ABORTED
-                self.detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
-                return
             if self._no_contact_after_retract:
                 self.state = ExperimentState.ABORTED
                 self.detail = f"Scan stopped at point {self.point_index + 1}: End Z reached without contact"
@@ -1267,9 +1263,7 @@ class ScanHoppingITExperiment:
                         self._step_deadline = self.backend.experiment_time() + duration
             retract_target = p.start_z_um if self.it_label == "no-contact" else self._retract_target_z
             if self.state == ExperimentState.RETRACTING and abs(sample.z_um - retract_target) < .08:
-                if self.it_label != "no-contact" and p.retract_has_no_travel(self.point_index):
-                    self.state, self.detail = ExperimentState.ABORTED, "Scan stopped: no Z retraction available; inspect clearance before moving XY"
-                elif self.it_label == "no-contact":
+                if self.it_label == "no-contact":
                     self.state, self.detail = ExperimentState.ABORTED, f"No contact at point {self.point_index + 1}; I-t not run"
                 else:
                     self.point_index += 1

@@ -176,23 +176,24 @@ retracts by a positive distance away from the measured contact Z.
   standalone CV does not move Z. Stop/fault behaviour on the production branch
   is unchanged and does not automatically return Z.
 - Both hopping CV and hopping I–t allow an initial Z of zero. Retraction is
-  calculated at contact, then limited to the configured 0–Z maximum command
-  range. For an increasing-Z approach, contact at 8 µm with a 10 µm retract
-  results in a target of 0 µm; contact at 80 µm results in 70 µm. The same limit
+  calculated at contact, then limited at **initial Z** and the configured piezo
+  command range. For initial Z = 10 µm and an increasing-Z approach, contact at
+  15 µm with a 10 µm retract results in a target of 10 µm; contact at 80 µm
+  results in 70 µm. The same limit
   applies to raster flyback extra retraction and, in the opposite direction,
-  to the upper Z boundary. Subsequent hops use the bounded retract position.
+  to initial Z as the upper withdrawal boundary. Subsequent hops use the bounded retract position.
 - A shortened retract is shown in the scan status and recorded in the JSON
   `parameters.retraction_events` list, using zero-based `scan_pixel` indices.
   Entries include contact/target Z, requested/available command travel, and a
   `no_travel` flag. Hardware calculations use the applied Z output at contact;
   the sensor Z in the CSV remains a separate measurement. These events describe
   commanded clearance, not independently verified physical movement.
-- If no usable retract travel remains (including travel within one hardware
-  output increment), the scan stops after the point's electrochemical program
-  without submitting another XY move. Inspect clearance before manually moving
-  or starting again; the generic Resume button does not restart this scan.
-  A shortened, nonzero retract can continue, so choose scan bounds and flyback
-  clearance conservatively. A command limit does not prove meniscus detachment.
+- A shortened or zero-distance retract does **not** stop the scan. Once the
+  retract waypoint is complete, move to the next XY location and approach again.
+  The operator must choose initial Z that clears the full region and entry path;
+  reaching that command does not prove meniscus detachment and may permit droplet
+  dragging if clearance is insufficient. Hardware errors and approach limits
+  remain enforced; no FPGA bitfile change is required.
 - The duration estimate includes deterministic CV, settling, lateral, repeated
   approach, and retract time. It excludes the initial move and first approach.
 - Square cells show the sampled grid; circular footprints show the configured

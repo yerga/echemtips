@@ -1461,11 +1461,6 @@ class WECSPMDriver(MotionProfileDriver):
                 return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
                         "point_index": self._scan_point, "point_stage": "no-contact"}
         elif self._scan_phase == "cv" and not self._submitted and self._hardware_complete:
-            if self._scan_params.retract_has_no_travel(self._scan_point):
-                self._cancelled = True
-                self._cancel_detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
-                return {"stage": "aborted", "detail": self._cancel_detail, "progress": base_progress,
-                        "point_index": self._scan_point, "point_stage": "retract-blocked"}
             if self._scan_point + 1 >= point_total:
                 self._scan_params.update_marker(self._scan_point, 'complete')
                 self._scan_phase = "complete"
@@ -1842,10 +1837,7 @@ class WECSPMDriver(MotionProfileDriver):
                 )
         elif not self._submitted and self._hardware_complete:
             if self._method_name == "scan_hopping_it" and self._method_phase == "it" and not self._method_no_contact:
-                if self._method_params.retract_has_no_travel(self._method_point):
-                    self._method_terminal = "aborted"
-                    self._method_detail = "Scan stopped: no Z retraction available; inspect clearance before moving XY"
-                elif self._method_point + 1 < len(self._method_grid):
+                if self._method_point + 1 < len(self._method_grid):
                     self._method_point += 1
                     self._submit_method_scan_approach(initial=False)
                 else:

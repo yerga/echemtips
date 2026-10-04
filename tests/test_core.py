@@ -743,6 +743,18 @@ class ExperimentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 p.bounded_retract_z(0, -1, 100)
 
+    def test_scan_retraction_is_limited_at_initial_z_in_both_directions(self):
+        for cls in (ScanHoppingCVParameters, ScanHoppingITParameters):
+            p=cls(start_z_um=10,end_z_um=90)
+            self.assertEqual(p.bounded_retract_z(0,15,100),10)
+            self.assertEqual(p.bounded_retract_z(0,10,100),10)
+            self.assertTrue(p.retract_has_no_travel(0))
+            self.assertEqual(p.bounded_retract_z(0,8,100),8)  # never move toward surface
+            p.start_z_um,p.end_z_um=90,10
+            self.assertEqual(p.bounded_retract_z(0,85,100),90)
+            self.assertEqual(p.bounded_retract_z(0,90,100),90)
+            self.assertEqual(p.bounded_retract_z(0,92,100),92)
+
     def test_simulated_final_hop_returns_to_initial_before_complete(self) -> None:
         for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
                                 (ScanHoppingITExperiment, ScanHoppingITParameters)):
@@ -767,16 +779,16 @@ class ExperimentTests(unittest.TestCase):
             experiment.tick_samples([Sample(1, 35, 35, 0, 0, 0, 0, 0)])
             self.assertEqual(experiment.state, ExperimentState.COMPLETE)
 
-    def test_simulated_scans_reuse_bounded_target_and_stop_without_travel(self) -> None:
+    def test_simulated_scans_reuse_bounded_target_and_continue_without_travel(self) -> None:
         for cls, params_cls in ((ScanHoppingCVExperiment, ScanHoppingCVParameters),
                                 (ScanHoppingITExperiment, ScanHoppingITParameters)):
-            for contact in (0, 8):
+            for initial,contact in ((0,0),(0,8),(10,10),(10,15)):
                 with self.subTest(method=cls.__name__, contact=contact):
                     settings = AppSettings(polarity_convention="Instrument-native", )
                     backend = SimulationBackend(settings)
                     backend.connect()
                     experiment = cls(backend, settings)
-                    p = params_cls(marker_enabled=False, start_z_um=0, end_z_um=90, x_points=2, y_points=1)
+                    p = params_cls(marker_enabled=False, start_z_um=initial, end_z_um=90, x_points=2, y_points=1)
                     experiment.start(p)
                     experiment.contact_z[(0, 0)] = contact
                     if cls is ScanHoppingCVExperiment:
@@ -789,15 +801,11 @@ class ExperimentTests(unittest.TestCase):
                         experiment._step_deadline = -1
                     with patch.object(backend, "move", wraps=backend.move) as move:
                         experiment.tick_samples([Sample(0, 35, 35, contact, 0, 0, 0, 0)])
-                        self.assertEqual(experiment._retract_target_z, 0)
-                        experiment.tick_samples([Sample(1, 35, 35, 0, 0, 0, 0, 0)])
-                        if contact == 0:
-                            self.assertEqual(experiment.state, ExperimentState.ABORTED)
-                            self.assertEqual(experiment.point_index, 0)
-                            self.assertFalse(any(call.args[0] in ("X", "Y") for call in move.call_args_list))
-                        else:
-                            self.assertEqual(experiment.point_index, 1)
-                            self.assertEqual(experiment._z_position_target, 0)
+                        self.assertEqual(experiment._retract_target_z, initial)
+                        experiment.tick_samples([Sample(1, 35, 35, initial, 0, 0, 0, 0)])
+                        self.assertNotEqual(experiment.state, ExperimentState.ABORTED)
+                        self.assertEqual(experiment.point_index, 1)
+                        self.assertEqual(experiment._z_position_target, initial)
 
     def test_limited_retraction_is_checkpointed_in_metadata(self) -> None:
         with TemporaryDirectory() as folder:

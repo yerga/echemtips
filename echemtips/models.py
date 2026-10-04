@@ -603,6 +603,10 @@ class BoundedScanRetraction:
             raise ValueError("Contact Z is outside the configured range.")
         requested = self.retract_distance_for_point(point)
         target = max(0.0, min(maximum_z, self.retract_z_for_point(point, contact_z)))
+        # Initial Z is the full-withdrawal limit, in either approach direction.
+        # Never turn a false contact beyond that limit into motion toward surface.
+        target = (min(contact_z, max(self.start_z_um, target)) if self.end_z_um > self.start_z_um
+                  else max(contact_z, min(self.start_z_um, target)))
         actual = abs(target - contact_z)
         self.retraction_events[:] = [e for e in self.retraction_events if e["scan_pixel"] != point]
         if actual < requested - 1e-9 or actual <= minimum_travel_um:
@@ -614,7 +618,7 @@ class BoundedScanRetraction:
         return target
 
     def retract_has_no_travel(self, point: int) -> bool:
-        """Block automatic continuation when the contact is at the retract limit."""
+        """Diagnose zero withdrawal; it does not block operator-led continuation."""
         return any(e["scan_pixel"] == point and e["no_travel"] for e in self.retraction_events)
 
     def retraction_notice(self) -> str:
