@@ -27,6 +27,7 @@ classifiers = [
 
 [project.optional-dependencies]
 fpga = ["nifpga>=22.0.0"]
+picomotor = ["pythonnet>=3.0,<4; sys_platform == 'win32'"]
 analysis = ["nptdms>=1.7"]
 movies = ["imageio-ffmpeg>=0.5,<1"]
 docs = [
@@ -39,6 +40,7 @@ docs = [
 echemtips = "echemtips.app:main"
 echemtips-analysis = "echemtips.analysis:main"
 echemtips-hardware-check = "echemtips.hardware_check:main"
+echemtips-picomotor-test = "echemtips.picomotor_test:main"
 
 [project.urls]
 Repository = "https://github.com/yerga/echemtips"

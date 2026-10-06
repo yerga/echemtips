@@ -43,6 +43,7 @@ nav:
   - Combinatorial scans: COMBINATORIAL_SCANS.md
   - Pre/post measurement holds: CONDITIONING.md
   - Two-speed Z motion: MOTION_PROFILES.md
+  - Standalone Z picomotor tester: PICOMOTOR_TEST.md
   - Interface tour: USER_INTERFACE.md
   - UX acceptance checklist: UX_TEST_CHECKLIST.md
   - Analysis workbench: ANALYSIS_GUIDE.md
