@@ -41,6 +41,7 @@ echemtips = "echemtips.app:main"
 echemtips-analysis = "echemtips.analysis:main"
 echemtips-hardware-check = "echemtips.hardware_check:main"
 echemtips-picomotor-test = "echemtips.picomotor_test:main"
+echemtips-picomotor-only-test = "echemtips.picomotor_only_test:main"
 
 [project.urls]
 Repository = "https://github.com/yerga/echemtips"

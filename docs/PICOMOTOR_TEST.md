@@ -49,6 +49,38 @@ controllers, not a hardware interlock; lost USB communication can prevent it.
    gains, potential ratio, polarity and acquisition settings in that file before
    hardware connection. The tester shows a summary in its Connection tab.
 
+## Picomotor alone: no FPGA or piezo connection
+
+For initial USB/direction checks, use the separate command-line tester. It does
+not import the FPGA backend, load settings, reset the FPGA or command the piezo.
+Install Newport's driver as described above, close its application and keep the
+pipette safely clear. From the repository with your Python environment activated:
+
+```powershell
+python -m pip install -e ".[picomotor]"
+python -m echemtips.picomotor_only_test --check-only
+python -m echemtips.picomotor_only_test --steps 1
+python -m echemtips.picomotor_only_test --steps -1
+```
+
+Each movement requires typing **MOVE**; connection checking sends no motion
+commands. Test one sign at a time and observe it independently. Default motor
+port is fixed to Z=3, rate is 100 steps/s, timeout is 10 s, and each commissioning
+move is limited to 1–50 steps in magnitude. There is no automatic reversal,
+homing or command retry. A negative move is not guaranteed to undo the same
+physical displacement because the actuator is open-loop.
+
+If your DLL installation differs, add
+`--dll-directory "C:\actual\Newport USB Driver\Bin"`. Multiple discovered devices
+require `--device-key "actual-key"`. The installed launcher is also available as
+`echemtips-picomotor-only-test`. Newport DLL hardware operation remains unverified.
+
+Ctrl+C during a move or a motion failure attempts controller-wide `AB`, then
+closes USB. This is not an independent physical-stop confirmation or a hardware
+interlock; keep physical controls accessible. The reported position is a pulse
+counter, not measured displacement. This small tester prints results to the
+terminal rather than producing an experiment recording.
+
 ## First try simulation
 
 ```powershell
